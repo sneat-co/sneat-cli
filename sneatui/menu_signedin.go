@@ -19,14 +19,7 @@ func newMenuSignedIn() tea.Model {
 	}
 	// Use similar safe defaults and styling as unsigned menu
 	h, v := docStyle.GetFrameSize()
-	defaultW := 80 - h
-	defaultH := 24 - v
-	if defaultW < 20 {
-		defaultW = 20
-	}
-	if defaultH < 5 {
-		defaultH = 5
-	}
+	defaultW, defaultH := calculateDefaultSize(h, v)
 	m := menuSignedIn{list: list.New(items, list.NewDefaultDelegate(), defaultW, defaultH)}
 	m.list.SetShowTitle(true)
 	m.list.SetShowFilter(false)

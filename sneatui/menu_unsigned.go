@@ -8,6 +8,20 @@ import (
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2)
 
+// calculateDefaultSize computes safe default dimensions for a list given frame margins.
+// It ensures minimum sizes are respected for usability.
+func calculateDefaultSize(horizontalMargin, verticalMargin int) (width, height int) {
+	width = 80 - horizontalMargin
+	height = 24 - verticalMargin
+	if width < 20 {
+		width = 20
+	}
+	if height < 5 {
+		height = 5
+	}
+	return width, height
+}
+
 type item struct {
 	title, desc string
 }
@@ -28,14 +42,7 @@ func newMenuUnassigned() tea.Model {
 	// Provide safe default size so items render even before any WindowSizeMsg arrives.
 	// Typical terminal is at least 80x24; subtract docStyle margins to size the list.
 	h, v := docStyle.GetFrameSize()
-	defaultW := 80 - h
-	defaultH := 24 - v
-	if defaultW < 20 {
-		defaultW = 20
-	}
-	if defaultH < 5 {
-		defaultH = 5
-	}
+	defaultW, defaultH := calculateDefaultSize(h, v)
 	m := menuUnsigned{
 		list: list.New(items, list.NewDefaultDelegate(), defaultW, defaultH),
 	}
