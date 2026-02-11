@@ -14,3 +14,11 @@ func TestItemMethods(t *testing.T) {
 		t.Fatalf("FilterValue() = %q, want %q", got, "T")
 	}
 }
+
+func TestMenuUnsigned_Init(t *testing.T) {
+	m := newMenuUnassigned().(menuUnsigned)
+	cmd := m.Init()
+	if cmd != nil {
+		t.Fatalf("Init() returned non-nil cmd, want nil")
+	}
+}
