@@ -158,25 +158,25 @@ func TestAbout_Init_ErrorPath_WhenFileNotFound(t *testing.T) {
 		t.Fatalf("failed to get current dir: %v", err)
 	}
 	defer os.Chdir(origDir)
-	
+
 	// Change to /tmp where README.md won't exist
 	if err := os.Chdir("/tmp"); err != nil {
 		t.Fatalf("failed to change to /tmp: %v", err)
 	}
-	
+
 	a := newAboutModel().(aboutModel)
 	cmd := a.Init()
 	if cmd == nil {
 		t.Fatalf("Init() returned nil cmd")
 	}
-	
+
 	// Execute the command - it should fail to load ../README.md from /tmp
 	msg := cmd()
 	loadedMsg, ok := msg.(aboutLoadedMsg)
 	if !ok {
 		t.Fatalf("cmd() returned %T, want aboutLoadedMsg", msg)
 	}
-	
+
 	// The message should contain error text
 	content := string(loadedMsg)
 	if !strings.Contains(content, "unavailable") {
