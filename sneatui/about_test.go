@@ -116,8 +116,7 @@ func TestAbout_WindowSize_SavesDimensions(t *testing.T) {
 
 func TestAbout_OtherKeys_NoAction(t *testing.T) {
 	a := newAboutModel().(aboutModel)
-	model, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	a = model.(aboutModel)
+	_, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd != nil {
 		msg := cmd()
 		// Should not return navBackToUnsignedMsg
@@ -157,7 +156,11 @@ func TestAbout_Init_ErrorPath_WhenFileNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get current dir: %v", err)
 	}
-	defer os.Chdir(origDir)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Errorf("failed to restore directory: %v", err)
+		}
+	}()
 
 	// Change to /tmp where README.md won't exist
 	if err := os.Chdir("/tmp"); err != nil {
