@@ -77,3 +77,55 @@ func TestSignedIn_SignOut_ReturnsUnsigned(t *testing.T) {
 		t.Fatalf("after Sign-out, active=%q, want unsigned", am.active)
 	}
 }
+
+func TestMenuSignedIn_Init(t *testing.T) {
+	m := newMenuSignedIn().(menuSignedIn)
+	cmd := m.Init()
+	if cmd != nil {
+		t.Fatalf("Init() returned non-nil cmd, want nil")
+	}
+}
+
+func TestMenuSignedIn_CtrlC_Quits(t *testing.T) {
+	m := newMenuSignedIn().(menuSignedIn)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if _, ok := model.(menuSignedIn); !ok {
+		t.Fatalf("Update returned %T, want menuSignedIn", model)
+	}
+	if cmd == nil {
+		t.Fatalf("cmd is nil, want tea.Quit")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Fatalf("cmd() returned %T, want tea.QuitMsg", msg)
+	}
+}
+
+func TestMenuSignedIn_EnterOnNonSignOut_DoesNotNavigate(t *testing.T) {
+	m := newMenuSignedIn().(menuSignedIn)
+	// Select first item (Calendar)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if _, ok := model.(menuSignedIn); !ok {
+		t.Fatalf("Update returned %T, want menuSignedIn", model)
+	}
+	// cmd should not be a navigation command (would return navSignOutMsg if Sign-out was selected)
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(navSignOutMsg); ok {
+			t.Fatalf("selecting Calendar returned navSignOutMsg")
+		}
+	}
+}
+
+func TestMenuSignedIn_WindowSize_AdjustsListSize(t *testing.T) {
+	m := newMenuSignedIn().(menuSignedIn)
+	hMargin, vMargin := docStyle.GetFrameSize()
+	msg := tea.WindowSizeMsg{Width: 100, Height: 40}
+	model, _ := m.Update(msg)
+	sm := model.(menuSignedIn)
+	wantW := msg.Width - hMargin
+	wantH := msg.Height - vMargin
+	if sm.list.Width() != wantW || sm.list.Height() != wantH {
+		t.Fatalf("list size = (%d,%d), want (%d,%d)", sm.list.Width(), sm.list.Height(), wantW, wantH)
+	}
+}
