@@ -2,35 +2,34 @@ package main
 
 import (
 	"errors"
-	tea "github.com/charmbracelet/bubbletea"
 	"testing"
 )
 
-type fakeProgram struct{ run func() (tea.Model, error) }
+type fakeApplication struct{ run func() error }
 
-func (f fakeProgram) Run() (tea.Model, error) { return f.run() }
+func (f fakeApplication) Run() error { return f.run() }
 
-func TestNewProgram_NotNil(t *testing.T) {
-	p := newProgram()
-	if p == nil {
-		t.Fatalf("newProgram() returned nil")
+func TestNewApplication_NotNil(t *testing.T) {
+	app := newApplication()
+	if app == nil {
+		t.Fatalf("newApplication() returned nil")
 	}
 }
 
 func TestMain_RunSuccess_NoExit(t *testing.T) {
 	// Save and restore hooks
-	oldGet := getProgram
+	oldGet := getApplication
 	oldExit := exit
 	defer func() {
-		getProgram = oldGet
+		getApplication = oldGet
 		exit = oldExit
 	}()
 
 	exitCalled := false
 	exit = func(code int) { exitCalled = true }
 
-	getProgram = func() program {
-		return fakeProgram{run: func() (tea.Model, error) { return nil, nil }}
+	getApplication = func() application {
+		return fakeApplication{run: func() error { return nil }}
 	}
 
 	main()
@@ -40,10 +39,10 @@ func TestMain_RunSuccess_NoExit(t *testing.T) {
 }
 
 func TestMain_RunError_ExitCalled(t *testing.T) {
-	oldGet := getProgram
+	oldGet := getApplication
 	oldExit := exit
 	defer func() {
-		getProgram = oldGet
+		getApplication = oldGet
 		exit = oldExit
 	}()
 
@@ -51,8 +50,8 @@ func TestMain_RunError_ExitCalled(t *testing.T) {
 	exitCode := 0
 	exit = func(code int) { exitCalled = true; exitCode = code }
 
-	getProgram = func() program {
-		return fakeProgram{run: func() (tea.Model, error) { return nil, errors.New("boom") }}
+	getApplication = func() application {
+		return fakeApplication{run: func() error { return errors.New("boom") }}
 	}
 
 	main()

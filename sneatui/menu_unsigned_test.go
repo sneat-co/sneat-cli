@@ -1,64 +1,47 @@
 package sneatui
 
-import "testing"
+import (
+	"testing"
 
-func TestItemMethods(t *testing.T) {
-	i := item{title: "T", desc: "D"}
-	if got := i.Title(); got != "T" {
-		t.Fatalf("Title() = %q, want %q", got, "T")
-	}
-	if got := i.Description(); got != "D" {
-		t.Fatalf("Description() = %q, want %q", got, "D")
-	}
-	if got := i.FilterValue(); got != "T" {
-		t.Fatalf("FilterValue() = %q, want %q", got, "T")
+	"github.com/rivo/tview"
+)
+
+func TestNewMenuUnsigned_NotNil(t *testing.T) {
+	app := NewApp()
+	menu := newMenuUnsigned(app)
+	if menu == nil {
+		t.Fatalf("newMenuUnsigned() returned nil")
 	}
 }
 
-func TestMenuUnsigned_Init(t *testing.T) {
-	m := newMenuUnassigned().(menuUnsigned)
-	cmd := m.Init()
-	if cmd != nil {
-		t.Fatalf("Init() returned non-nil cmd, want nil")
+func TestNewMenuUnsigned_IsList(t *testing.T) {
+	app := NewApp()
+	menu := newMenuUnsigned(app)
+	if _, ok := menu.(*tview.List); !ok {
+		t.Fatalf("newMenuUnsigned() did not return a *tview.List")
 	}
 }
 
-func TestCalculateDefaultSize_Normal(t *testing.T) {
-	w, h := calculateDefaultSize(4, 2)
-	if w != 76 || h != 22 {
-		t.Fatalf("calculateDefaultSize(4, 2) = (%d, %d), want (76, 22)", w, h)
+func TestMenuUnsigned_HasSignInItem(t *testing.T) {
+	app := NewApp()
+	menu := newMenuUnsigned(app).(*tview.List)
+	if menu.GetItemCount() < 1 {
+		t.Fatalf("menu has no items")
+	}
+	mainText, _ := menu.GetItemText(0)
+	if mainText != "Sign-in" {
+		t.Fatalf("first item = %q, want 'Sign-in'", mainText)
 	}
 }
 
-func TestCalculateDefaultSize_SmallWidth(t *testing.T) {
-	// Test when 80 - h < 20, should clamp to 20
-	w, h := calculateDefaultSize(65, 2)
-	if w != 20 {
-		t.Fatalf("calculateDefaultSize(65, 2) width = %d, want 20", w)
+func TestMenuUnsigned_HasAboutItem(t *testing.T) {
+	app := NewApp()
+	menu := newMenuUnsigned(app).(*tview.List)
+	if menu.GetItemCount() < 2 {
+		t.Fatalf("menu has less than 2 items")
 	}
-	if h != 22 {
-		t.Fatalf("calculateDefaultSize(65, 2) height = %d, want 22", h)
-	}
-}
-
-func TestCalculateDefaultSize_SmallHeight(t *testing.T) {
-	// Test when 24 - v < 5, should clamp to 5
-	w, h := calculateDefaultSize(4, 20)
-	if w != 76 {
-		t.Fatalf("calculateDefaultSize(4, 20) width = %d, want 76", w)
-	}
-	if h != 5 {
-		t.Fatalf("calculateDefaultSize(4, 20) height = %d, want 5", h)
-	}
-}
-
-func TestCalculateDefaultSize_BothSmall(t *testing.T) {
-	// Test when both dimensions are below minimum
-	w, h := calculateDefaultSize(100, 30)
-	if w != 20 {
-		t.Fatalf("calculateDefaultSize(100, 30) width = %d, want 20", w)
-	}
-	if h != 5 {
-		t.Fatalf("calculateDefaultSize(100, 30) height = %d, want 5", h)
+	mainText, _ := menu.GetItemText(1)
+	if mainText != "About" {
+		t.Fatalf("second item = %q, want 'About'", mainText)
 	}
 }
