@@ -1,154 +1,83 @@
 package sneatui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
-	"strings"
 	"testing"
+
+	"github.com/rivo/tview"
 )
 
-func TestUnsigned_EnterOnSignIn_OpensLoginViaApp(t *testing.T) {
-	m := InitialModel().(appModel)
-	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	am := model.(appModel)
-	if cmd != nil {
-		msg := cmd()
-		model, _ = am.Update(msg)
-		am = model.(appModel)
-	}
-	if am.active != "login" {
-		t.Fatalf("after Enter on Sign-in, active=%q, want login", am.active)
+func TestNewLoginPage_NotNil(t *testing.T) {
+	app := NewApp()
+	login := newLoginPage(app)
+	if login == nil {
+		t.Fatalf("newLoginPage() returned nil")
 	}
 }
 
-func TestLogin_EscReturnsToUnsignedMenu_ViaApp(t *testing.T) {
-	m := InitialModel().(appModel)
-	// Go to login
-	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	am := model.(appModel)
-	if cmd != nil {
-		msg := cmd()
-		model, _ = am.Update(msg)
-		am = model.(appModel)
-	}
-	// Send ESC from login
-	model, cmd = am.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	am = model.(appModel)
-	if cmd != nil {
-		msg := cmd()
-		model, _ = am.Update(msg)
-		am = model.(appModel)
-	}
-	if am.active != "unsigned" {
-		t.Fatalf("after ESC from login, active=%q, want unsigned", am.active)
+func TestNewLoginPage_IsForm(t *testing.T) {
+	app := NewApp()
+	login := newLoginPage(app)
+	if _, ok := login.(*tview.Form); !ok {
+		t.Fatalf("newLoginPage() did not return a *tview.Form")
 	}
 }
 
-func TestLogin_ViewNotEmpty(t *testing.T) {
-	m := newLoginModel().(loginModel)
-	if m.View() == "" {
-		t.Fatalf("login view is empty")
+func TestLoginPage_HasEmailField(t *testing.T) {
+	app := NewApp()
+	form := newLoginPage(app).(*tview.Form)
+	if form.GetFormItemCount() < 2 {
+		t.Fatalf("form has less than 2 fields")
+	}
+	// First field should be email
+	item := form.GetFormItem(0)
+	if inputField, ok := item.(*tview.InputField); ok {
+		label := inputField.GetLabel()
+		if label != "Email:" {
+			t.Fatalf("first field label = %q, want 'Email:'", label)
+		}
+	} else {
+		t.Fatalf("first field is not an InputField")
 	}
 }
 
-func TestUnsigned_SelectionPreserved_AfterLoginEsc(t *testing.T) {
-	am := InitialModel().(appModel)
-	// Move selection down
-	model, _ := am.Update(tea.KeyMsg{Type: tea.KeyDown})
-	am = model.(appModel)
-	idxBefore := am.unsigned.list.Index()
-	// Enter to open login
-	model, cmd := am.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	am = model.(appModel)
-	if cmd != nil {
-		msg := cmd()
-		model, _ = am.Update(msg)
-		am = model.(appModel)
+func TestLoginPage_HasPasswordField(t *testing.T) {
+	app := NewApp()
+	form := newLoginPage(app).(*tview.Form)
+	if form.GetFormItemCount() < 2 {
+		t.Fatalf("form has less than 2 fields")
 	}
-	// ESC back
-	model, cmd = am.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	am = model.(appModel)
-	if cmd != nil {
-		msg := cmd()
-		model, _ = am.Update(msg)
-		am = model.(appModel)
-	}
-	if am.unsigned.list.Index() != idxBefore {
-		t.Fatalf("selection index after return = %d, want %d", am.unsigned.list.Index(), idxBefore)
-	}
-	view := am.View()
-	if !strings.Contains(view, "Sneat.app - main menu") || !strings.Contains(view, "Sign-in") {
-		t.Fatalf("menu view after return missing expected content; view=\n%s", view)
+	// Second field should be password
+	item := form.GetFormItem(1)
+	if inputField, ok := item.(*tview.InputField); ok {
+		label := inputField.GetLabel()
+		if label != "Password:" {
+			t.Fatalf("second field label = %q, want 'Password:'", label)
+		}
+	} else {
+		t.Fatalf("second field is not an InputField")
 	}
 }
 
-func TestLogin_Init_ReturnsBlink(t *testing.T) {
-	m := newLoginModel().(loginModel)
-	cmd := m.Init()
-	if cmd == nil {
-		t.Fatalf("Init() returned nil, want textinput.Blink")
+func TestLoginPage_HasSignInButton(t *testing.T) {
+	app := NewApp()
+	form := newLoginPage(app).(*tview.Form)
+	if form.GetButtonCount() < 1 {
+		t.Fatalf("form has no buttons")
+	}
+	button := form.GetButton(0)
+	if button.GetLabel() != "Sign in" {
+		t.Fatalf("first button label = %q, want 'Sign in'", button.GetLabel())
 	}
 }
 
-func TestLogin_Tab_SwitchesFromEmailToPassword(t *testing.T) {
-	m := newLoginModel().(loginModel)
-	if m.focused != 0 {
-		t.Fatalf("initial focused = %d, want 0", m.focused)
+func TestLoginPage_HasCancelButton(t *testing.T) {
+	app := NewApp()
+	form := newLoginPage(app).(*tview.Form)
+	if form.GetButtonCount() < 2 {
+		t.Fatalf("form has less than 2 buttons")
 	}
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = model.(loginModel)
-	if m.focused != 1 {
-		t.Fatalf("focused after Tab = %d, want 1", m.focused)
-	}
-}
-
-func TestLogin_ShiftTab_SwitchesFromPasswordToEmail(t *testing.T) {
-	m := newLoginModel().(loginModel)
-	// First move to password
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = model.(loginModel)
-	if m.focused != 1 {
-		t.Fatalf("focused after Tab = %d, want 1", m.focused)
-	}
-	// Now shift+tab back
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	m = model.(loginModel)
-	if m.focused != 0 {
-		t.Fatalf("focused after Shift+Tab = %d, want 0", m.focused)
-	}
-}
-
-func TestLogin_WindowSize_AdjustsInputWidth(t *testing.T) {
-	m := newLoginModel().(loginModel)
-	model, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
-	m = model.(loginModel)
-	if m.winW != 100 || m.winH != 40 {
-		t.Fatalf("window size = (%d,%d), want (100,40)", m.winW, m.winH)
-	}
-}
-
-func TestLogin_WindowSize_SmallWidth_UsesMinimum(t *testing.T) {
-	m := newLoginModel().(loginModel)
-	model, _ := m.Update(tea.WindowSizeMsg{Width: 10, Height: 40})
-	m = model.(loginModel)
-	if m.email.Width < 20 || m.password.Width < 20 {
-		t.Fatalf("input widths (%d,%d) should be at least 20", m.email.Width, m.password.Width)
-	}
-}
-
-func TestLogin_OtherKeys_ForwardedToActiveInput(t *testing.T) {
-	m := newLoginModel().(loginModel)
-	// Type something in email
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m = model.(loginModel)
-	if m.email.Value() == "" {
-		t.Fatalf("email value is empty, want 'a'")
-	}
-	// Move to password and type
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = model.(loginModel)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	m = model.(loginModel)
-	if m.password.Value() == "" {
-		t.Fatalf("password value is empty, want 'b'")
+	button := form.GetButton(1)
+	if button.GetLabel() != "Cancel" {
+		t.Fatalf("second button label = %q, want 'Cancel'", button.GetLabel())
 	}
 }
