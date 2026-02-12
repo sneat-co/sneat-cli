@@ -18,6 +18,13 @@ func TestApp_PagesNotNil(t *testing.T) {
 	}
 }
 
+func TestApp_ApplicationNotNil(t *testing.T) {
+	app := NewApp()
+	if app.Application == nil {
+		t.Fatalf("app.Application is nil")
+	}
+}
+
 func TestApp_ShowLogin(t *testing.T) {
 	app := NewApp()
 	app.ShowLogin()
@@ -137,3 +144,16 @@ func TestApp_NavigationFlow_SignedToUnsigned(t *testing.T) {
 		t.Fatalf("after ShowUnsigned, page = %q, want 'unsigned'", name)
 	}
 }
+
+func TestApp_AllPagesExist(t *testing.T) {
+	app := NewApp()
+
+	// Check that all expected pages are registered
+	expectedPages := []string{"unsigned", "login", "about", "signed"}
+	for _, pageName := range expectedPages {
+		if !app.pages.HasPage(pageName) {
+			t.Fatalf("missing page: %q", pageName)
+		}
+	}
+}
+
