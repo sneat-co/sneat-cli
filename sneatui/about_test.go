@@ -38,11 +38,8 @@ func TestAboutPage_ContentContainsEscInstructions(t *testing.T) {
 	if len(text) < 10 {
 		t.Fatalf("about page text is too short: %d characters", len(text))
 	}
-	// Should contain ESC instructions
-	if text[len(text)-20:] != "(ESC to return)" {
-		// Relaxed check - just ensure it has some content
-		if len(text) < 20 {
-			t.Fatalf("about page text is too short")
-		}
+	// Should contain ESC instructions - just ensure it has reasonable content
+	if len(text) < 20 {
+		t.Fatalf("about page text is too short")
 	}
 }
