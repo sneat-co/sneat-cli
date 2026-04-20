@@ -3,7 +3,7 @@ module github.com/sneat-co/sneat-tui
 go 1.24.4
 
 require (
-	github.com/gdamore/tcell/v2 v2.13.8
+	github.com/gdamore/tcell/v2 v2.13.9
 	github.com/rivo/tview v0.42.0
 )
 
