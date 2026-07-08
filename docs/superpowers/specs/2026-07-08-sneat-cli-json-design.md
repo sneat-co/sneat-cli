@@ -13,7 +13,8 @@ Firebase project `sneat-eur3-1`.
 
 - `sneat auth login` — sign in via **browser** (any enabled provider: Google,
   GitHub, …) or headless **email + password**; `logout`; `whoami`.
-- `sneat space list` — JSON of the user's spaces.
+- `sneat space list` — the user's spaces; `space use <id|family|private>` sets a
+  default space, `space current` shows it.
 - `sneat contact list|get|add|delete|update` and comm-channel (phone/email)
   management within a space — reads as JSON, writes via the sneat-go API.
 - `sneat calendar list` — JSON of recurring happenings in a space.
@@ -225,8 +226,13 @@ Exact field names are pinned during implementation from `dto4contactus`.
 
 ### 7.1 Contact command surface
 
-Noun is singular `contact` (alias `contacts`). `--space` is required until
-`sneat space use <id>` stores a default space.
+Noun is singular `contact` (alias `contacts`).
+
+**Space resolution** for `--space`: a real id is used as-is; the pseudo ids
+`family` / `private` resolve to the user's single space of that type (read from
+the `users/{uid}.spaces` map); when omitted, the value falls back to the current
+space (`space use`) and then to `family`. So `sneat contact list` with no flags
+lists the family space's contacts.
 
 ```
 sneat contact list   --space <id>                         # JSON array

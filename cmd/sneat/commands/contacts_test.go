@@ -34,6 +34,12 @@ func (f *fakeContactsReader) GetContact(_ context.Context, spaceID, contactID st
 func contactsEnv(reader ContactsReader) Env {
 	env := testEnv(&fakeStore{load: &session.Session{UID: "u1"}}, sneatauth.Result{})
 	env.NewContactsReader = func(config.Config) (ContactsReader, error) { return reader, nil }
+	env.NewSpacesReader = func(config.Config) (SpacesReader, error) {
+		return &fakeSpacesReader{spaces: map[string]any{
+			"famID":  map[string]any{"type": "family"},
+			"privID": map[string]any{"type": "private"},
+		}}, nil
+	}
 	return env
 }
 
@@ -76,13 +82,46 @@ func TestContacts_AliasListsContacts(t *testing.T) {
 	}
 }
 
-func TestContactList_RequiresSpace(t *testing.T) {
-	env := contactsEnv(&fakeContactsReader{})
+func TestContactList_DefaultsToFamilySpace(t *testing.T) {
+	reader := &fakeContactsReader{}
+	env := contactsEnv(reader)
+	root := Root(env)
+	root.AddCommand(Contact(env))
+	root.SetArgs([]string{"contact", "list"}) // no --space -> family
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if reader.gotSpace != "famID" {
+		t.Fatalf("default space = %q, want famID", reader.gotSpace)
+	}
+}
+
+func TestContactList_PseudoPrivateSpace(t *testing.T) {
+	reader := &fakeContactsReader{}
+	env := contactsEnv(reader)
+	root := Root(env)
+	root.AddCommand(Contact(env))
+	root.SetArgs([]string{"contact", "list", "--space", "private"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if reader.gotSpace != "privID" {
+		t.Fatalf("private space = %q, want privID", reader.gotSpace)
+	}
+}
+
+func TestContactList_CurrentSpaceUsedWhenNoFlag(t *testing.T) {
+	reader := &fakeContactsReader{}
+	env := contactsEnv(reader)
+	env.Store = &fakeStore{load: &session.Session{UID: "u1", CurrentSpace: "chosenID"}}
 	root := Root(env)
 	root.AddCommand(Contact(env))
 	root.SetArgs([]string{"contact", "list"})
-	if err := root.Execute(); err == nil {
-		t.Fatalf("expected error when --space missing")
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if reader.gotSpace != "chosenID" {
+		t.Fatalf("space = %q, want chosenID (current space)", reader.gotSpace)
 	}
 }
 

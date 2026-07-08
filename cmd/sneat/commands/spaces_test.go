@@ -51,6 +51,20 @@ func TestSpacesList_PrintsSpacesForCurrentUser(t *testing.T) {
 	}
 }
 
+func TestSpaceUse_SetsCurrentSpace(t *testing.T) {
+	store := &fakeStore{load: &session.Session{UID: "u1"}}
+	env := testEnv(store, sneatauth.Result{})
+	root := Root(env)
+	root.AddCommand(Space(env))
+	root.SetArgs([]string{"space", "use", "family"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if store.saved == nil || store.saved.CurrentSpace != "family" {
+		t.Fatalf("current space not saved: %+v", store.saved)
+	}
+}
+
 func TestSpaces_AliasListsSpaces(t *testing.T) {
 	reader := &fakeSpacesReader{spaces: map[string]any{"ao58m": map[string]any{"type": "private"}}}
 	env := testEnv(&fakeStore{load: &session.Session{UID: "u1"}}, sneatauth.Result{})

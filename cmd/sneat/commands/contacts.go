@@ -35,11 +35,15 @@ func contactListCmd(env Env, use, short string) *cobra.Command {
 		Use:   use,
 		Short: short,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			spaceID, err := resolveSpaceID(cmd, env, space)
+			if err != nil {
+				return err
+			}
 			reader, err := env.NewContactsReader(configFromCmd(cmd, env.Getenv))
 			if err != nil {
 				return err
 			}
-			contacts, err := reader.ListContacts(cmd.Context(), space)
+			contacts, err := reader.ListContacts(cmd.Context(), spaceID)
 			if err != nil {
 				return err
 			}
@@ -47,8 +51,7 @@ func contactListCmd(env Env, use, short string) *cobra.Command {
 			return output(cmd, contacts, headers, rows)
 		},
 	}
-	cmd.Flags().StringVar(&space, "space", "", "space id")
-	_ = cmd.MarkFlagRequired("space")
+	cmd.Flags().StringVar(&space, "space", "", "space id, or 'family'/'private' (default: current space or family)")
 	return cmd
 }
 
@@ -76,20 +79,23 @@ func contactGet(env Env) *cobra.Command {
 		Use:   "get",
 		Short: "Get one contact by id as JSON",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			spaceID, err := resolveSpaceID(cmd, env, space)
+			if err != nil {
+				return err
+			}
 			reader, err := env.NewContactsReader(configFromCmd(cmd, env.Getenv))
 			if err != nil {
 				return err
 			}
-			contact, err := reader.GetContact(cmd.Context(), space, id)
+			contact, err := reader.GetContact(cmd.Context(), spaceID, id)
 			if err != nil {
 				return err
 			}
 			return output(cmd, contact, contactHeaders, [][]string{contactRow(contact)})
 		},
 	}
-	cmd.Flags().StringVar(&space, "space", "", "space id")
+	cmd.Flags().StringVar(&space, "space", "", "space id, or 'family'/'private' (default: current space or family)")
 	cmd.Flags().StringVar(&id, "id", "", "contact id")
-	_ = cmd.MarkFlagRequired("space")
 	_ = cmd.MarkFlagRequired("id")
 	return cmd
 }

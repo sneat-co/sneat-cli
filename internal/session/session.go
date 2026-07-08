@@ -19,6 +19,9 @@ type Session struct {
 	IDToken      string    `json:"idToken"`
 	RefreshToken string    `json:"refreshToken"`
 	ExpiresAt    time.Time `json:"expiresAt"`
+	// CurrentSpace is the default space for commands when --space is omitted.
+	// It may be a real space id or a pseudo id ("family" / "private").
+	CurrentSpace string `json:"currentSpace,omitempty"`
 }
 
 // Store reads/writes a Session as a 0600 JSON file.
