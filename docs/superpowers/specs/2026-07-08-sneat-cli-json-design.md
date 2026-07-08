@@ -147,14 +147,13 @@ err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTrans
 and contacts via a collection query on `spaces/{spaceID}/ext/contactus/contacts`
 with `status == "active"` and `parentContactID == ""` into `[]*ContactDbo`.
 
-**Capability spike (build-order §1/§2):** verify Firestore honors a Firebase ID
-token (rules enforced) via the gRPC client + `option.WithTokenSource`. This is
-the standard client-SDK auth path and is expected to work. **If it does not,
-we make it work** (per maintainer directive): fall back to a Firestore
-**REST**-based DALgo capability that sends `Authorization: Bearer <idToken>` to
-`firestore.googleapis.com/v1` and adapts responses to `dal.DB` — implemented as
-its own module so `dalgo2firestore`-style reuse is preserved. The spike happens
-in Phase 2 before contacts depend on it.
+**Capability spike (build-order §2): RESOLVED — it works.** Firestore honors a
+Firebase ID token (rules enforced) via the gRPC client + `option.WithTokenSource`.
+Verified against prod on 2026-07-08: `firestore.NewClient(project,
+option.WithTokenSource(<idToken>))` read `users/{uid}` as the user and returned
+the caller's own `spaces`. `dalgo2firestore.NewDatabase` wrapping that client
+reads the same doc via `DataTo` into a `*map[string]any`. The REST-based DALgo
+fallback is therefore **not needed**.
 
 ## 6. Authentication
 

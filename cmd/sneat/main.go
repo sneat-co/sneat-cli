@@ -5,11 +5,15 @@ import (
 	"os"
 	"time"
 
+	"context"
+
 	"github.com/sneat-co/sneat-cli/cmd/sneat/commands"
 	"github.com/sneat-co/sneat-cli/internal/browserauth"
 	"github.com/sneat-co/sneat-cli/internal/config"
+	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/sneat-co/sneat-cli/internal/session"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
+	"github.com/sneat-co/sneat-cli/internal/tokensrc"
 )
 
 // Build metadata, overridable via -ldflags.
@@ -25,10 +29,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sneat:", err)
 		os.Exit(1)
 	}
+	store := session.NewStore(path)
 	env := commands.Env{
 		Getenv: os.Getenv,
 		Now:    time.Now,
-		Store:  session.NewStore(path),
+		Store:  store,
 		NewAuthClient: func(cfg config.Config) commands.AuthClient {
 			return sneatauth.New(sneatauth.Options{APIKey: cfg.APIKey, AuthEmulatorHost: cfg.AuthEmulatorHost})
 		},
@@ -41,12 +46,18 @@ func main() {
 				OpenBrowser:      browserauth.OpenBrowser,
 			}
 		},
+		NewSpacesReader: func(cfg config.Config) (commands.SpacesReader, error) {
+			auth := sneatauth.New(sneatauth.Options{APIKey: cfg.APIKey, AuthEmulatorHost: cfg.AuthEmulatorHost})
+			ts := tokensrc.New(context.Background(), store, auth, time.Now)
+			return firestoredb.NewSpacesReader(cfg, ts), nil
+		},
 	}
 	root := commands.Root(env)
 	root.AddCommand(
 		commands.Version(version, commit, date),
 		commands.Auth(env),
 		commands.Whoami(env),
+		commands.Spaces(env),
 	)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "sneat:", err)
