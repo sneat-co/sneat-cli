@@ -48,6 +48,7 @@ type contactItem struct {
 	id, title, ctype, gender, status, ageGroup string
 	roles                                      []string
 	emails, phones                             []string
+	isSelf                                     bool // true when this contact is the signed-in user
 }
 
 func (i contactItem) Title() string { return i.title }
@@ -81,8 +82,9 @@ func spaceItemsFrom(spaces map[string]any) []list.Item {
 
 // contactItemsFrom builds Contacts list items. When membersOnly is set it keeps
 // only contacts holding the member role and strips the member role from each
-// row's displayed roles; otherwise every contact and role is shown.
-func contactItemsFrom(contacts []firestoredb.Contact, membersOnly bool) []list.Item {
+// row's displayed roles; otherwise every contact and role is shown. A contact
+// is marked isSelf when its UserID matches uid (the signed-in user).
+func contactItemsFrom(contacts []firestoredb.Contact, membersOnly bool, uid string) []list.Item {
 	items := make([]list.Item, 0, len(contacts))
 	for _, c := range contacts {
 		d := c.Contact
@@ -106,6 +108,7 @@ func contactItemsFrom(contacts []firestoredb.Contact, membersOnly bool) []list.I
 			roles:    roles,
 			emails:   commChannelKeys(d.Emails),
 			phones:   commChannelKeys(d.Phones),
+			isSelf:   uid != "" && d.GetUserID() == uid,
 		})
 	}
 	return items
@@ -127,5 +130,6 @@ func newList(title string, items []list.Item) list.Model {
 	l.Title = title
 	l.SetShowHelp(false)
 	l.SetShowStatusBar(false)
+	l.DisableQuitKeybindings() // quitting is handled by the app (ctrl+c / esc at root)
 	return l
 }

@@ -66,8 +66,8 @@ func main() {
 		},
 		IsTerminal:     func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
 		RunContactForm: commands.RunContactForm,
-		RunTUI: func(spaces commands.SpacesReader, contacts commands.ContactsReader, uid string) error {
-			return tui.Run(spaces, contacts, uid)
+		RunTUI: func(spaces commands.SpacesReader, contacts commands.ContactsReader, deleter commands.ContactDeleter, uid string) error {
+			return tui.Run(spaces, contacts, deleter, uid)
 		},
 	}
 	root := commands.Root(env)

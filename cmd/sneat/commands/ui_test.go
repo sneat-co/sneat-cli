@@ -14,7 +14,7 @@ func uiEnv(isTTY bool, gotUID *string, called *bool) Env {
 	env.NewSpacesReader = func(config.Config) (SpacesReader, error) { return &fakeSpacesReader{}, nil }
 	env.NewContactsReader = func(config.Config) (ContactsReader, error) { return &fakeContactsReader{}, nil }
 	env.IsTerminal = func() bool { return isTTY }
-	env.RunTUI = func(_ SpacesReader, _ ContactsReader, uid string) error {
+	env.RunTUI = func(_ SpacesReader, _ ContactsReader, _ ContactDeleter, uid string) error {
 		*called = true
 		*gotUID = uid
 		return nil

@@ -39,7 +39,7 @@ func (s *spacesScreen) Update(m *Model, msg tea.Msg) (screen, tea.Cmd) {
 	case tea.KeyMsg:
 		if s.list.FilterState() != list.Filtering {
 			switch msg.String() {
-			case "q", "esc", "left":
+			case "esc", "left":
 				return s, tea.Quit // Spaces is the root screen: back exits the app.
 			case "enter", "right":
 				if it, ok := s.list.SelectedItem().(spaceItem); ok {

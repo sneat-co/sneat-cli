@@ -70,8 +70,6 @@ func (s *spaceScreen) Update(m *Model, msg tea.Msg) (screen, tea.Cmd) {
 	case tea.KeyMsg:
 		if s.menu.FilterState() != list.Filtering {
 			switch msg.String() {
-			case "q":
-				return s, tea.Quit
 			case "esc", "left":
 				return s, pop()
 			case "enter", "right":

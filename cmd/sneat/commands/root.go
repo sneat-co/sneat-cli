@@ -44,7 +44,13 @@ type Env struct {
 	// RunContactForm collects contact fields interactively.
 	RunContactForm func(*contactInput) error
 	// RunTUI launches the interactive terminal UI.
-	RunTUI func(spaces SpacesReader, contacts ContactsReader, uid string) error
+	RunTUI func(spaces SpacesReader, contacts ContactsReader, deleter ContactDeleter, uid string) error
+}
+
+// ContactDeleter deletes a contact by space and id. It is the id-based view of
+// the contact write path that the interactive UI needs.
+type ContactDeleter interface {
+	DeleteContact(ctx context.Context, spaceID, contactID string) error
 }
 
 // Root builds the top-level `sneat` command.

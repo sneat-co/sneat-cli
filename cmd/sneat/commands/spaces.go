@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/sneat-co/contactus/backend/dto4contactus"
+	"github.com/sneat-co/sneat-core-modules/spaceus/dto4spaceus"
+	"github.com/sneat-co/sneat-go-core/coretypes"
 	"github.com/spf13/cobra"
 )
 
@@ -118,7 +121,26 @@ func runSpaceUI(env Env, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	return env.RunTUI(spaces, contacts, sess.UID)
+	var deleter ContactDeleter
+	if env.NewContactWriter != nil {
+		writer, err := env.NewContactWriter(cfg)
+		if err != nil {
+			return err
+		}
+		deleter = contactDeleter{w: writer}
+	}
+	return env.RunTUI(spaces, contacts, deleter, sess.UID)
+}
+
+// contactDeleter adapts the DTO-based ContactWriter to the id-based
+// ContactDeleter the interactive UI consumes.
+type contactDeleter struct{ w ContactWriter }
+
+func (d contactDeleter) DeleteContact(ctx context.Context, spaceID, contactID string) error {
+	return d.w.DeleteContact(ctx, dto4contactus.ContactRequest{
+		SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
+		ContactID:    contactID,
+	})
 }
 
 func runSpaceList(env Env, cmd *cobra.Command) error {

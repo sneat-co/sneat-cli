@@ -24,6 +24,11 @@ type ContactsReader interface {
 	ListContacts(ctx context.Context, spaceID string) ([]firestoredb.Contact, error)
 }
 
+// ContactDeleter deletes a contact by space and id (via the sneat-go API).
+type ContactDeleter interface {
+	DeleteContact(ctx context.Context, spaceID, contactID string) error
+}
+
 // screen is one view in the navigation stack.
 type screen interface {
 	Init(m *Model) tea.Cmd
@@ -38,6 +43,7 @@ type screen interface {
 type Model struct {
 	spaces   SpacesReader
 	contacts ContactsReader
+	deleter  ContactDeleter
 	uid      string
 	width    int
 	height   int
@@ -46,10 +52,11 @@ type Model struct {
 }
 
 // New builds the root model starting on the Spaces screen.
-func New(spaces SpacesReader, contacts ContactsReader, uid string) Model {
+func New(spaces SpacesReader, contacts ContactsReader, deleter ContactDeleter, uid string) Model {
 	return Model{
 		spaces:   spaces,
 		contacts: contacts,
+		deleter:  deleter,
 		uid:      uid,
 		stack:    []screen{newSpacesScreen()},
 		cache:    map[string][]firestoredb.Contact{},
@@ -78,6 +85,20 @@ type contactsLoadedMsg struct {
 	contacts []firestoredb.Contact
 }
 type errMsg struct{ err error }
+
+// delete-flow messages.
+type contactDeletedMsg struct{ spaceID, contactID string }
+type deleteErrMsg struct{ err error }
+
+// deleteContact issues a delete and reports success or failure.
+func deleteContact(d ContactDeleter, spaceID, contactID string) tea.Cmd {
+	return func() tea.Msg {
+		if err := d.DeleteContact(context.Background(), spaceID, contactID); err != nil {
+			return deleteErrMsg{err}
+		}
+		return contactDeletedMsg{spaceID: spaceID, contactID: contactID}
+	}
+}
 
 func loadSpaces(r SpacesReader, uid string) tea.Cmd {
 	return func() tea.Msg {
@@ -111,6 +132,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stack = m.stack[:len(m.stack)-1]
 		}
 		return m, nil
+	case contactDeletedMsg:
+		// A delete succeeded: drop the stale cache and unwind past the confirm
+		// screen (and the contact card, if we came from it) back to the
+		// contacts list, then re-init it to reload the now-shorter list.
+		delete(m.cache, msg.spaceID)
+		for len(m.stack) > 1 {
+			if _, ok := m.stack[len(m.stack)-1].(*contactsScreen); ok {
+				break
+			}
+			m.stack = m.stack[:len(m.stack)-1]
+		}
+		return m, m.stack[len(m.stack)-1].Init(&m)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tea.KeyMsg:
@@ -153,7 +186,11 @@ var (
 	footerStyle = lipgloss.NewStyle().Faint(true).Padding(0, 1)
 )
 
-const footerHelp = "↑/↓ move · enter open · esc/← back · / filter · q quit"
+// footerHelp is the hint line for list screens without a delete action.
+const footerHelp = "↑/↓ move · enter open · / filter · esc/← back · ^c quit"
+
+// footerHelpContacts adds the delete hint for the contacts/members list.
+const footerHelpContacts = "↑/↓ move · enter open · del delete · / filter · esc/← back · ^c quit"
 
 // listHeight returns the height available for a list below a header.
 func (m Model) listHeight(headerLines int) int {
