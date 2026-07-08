@@ -13,6 +13,7 @@ func configFromCmd(cmd *cobra.Command, getenv func(string) string) config.Config
 	return config.Resolve(config.Overrides{
 		Project:               s("project"),
 		APIKey:                s("api-key"),
+		AuthDomain:            s("auth-domain"),
 		APIBaseURL:            s("api-base-url"),
 		AuthEmulatorHost:      s("auth-emulator"),
 		FirestoreEmulatorHost: s("firestore-emulator"),
