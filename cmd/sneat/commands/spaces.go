@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 )
@@ -56,22 +57,68 @@ func outputCurrentSpace(cmd *cobra.Command, space string) error {
 	return output(cmd, map[string]string{"currentSpace": space}, []string{"CURRENT SPACE"}, [][]string{{space}})
 }
 
-// Spaces is the top-level `sneat spaces` — an alias for `sneat space list`.
-func Spaces(env Env) *cobra.Command {
+// Ui is the top-level `sneat ui` — launches the interactive terminal UI.
+func Ui(env Env) *cobra.Command {
 	return &cobra.Command{
-		Use:    "spaces",
-		Short:  "List your spaces (alias for 'space list')",
-		Hidden: true,
-		RunE:   func(cmd *cobra.Command, _ []string) error { return runSpaceList(env, cmd) },
+		Use:   "ui",
+		Short: "Browse spaces and contacts in an interactive terminal UI",
+		RunE:  func(cmd *cobra.Command, _ []string) error { return runSpaceUI(env, cmd) },
 	}
 }
 
+// Spaces is the top-level `sneat spaces` — an alias for `sneat space list`.
+func Spaces(env Env) *cobra.Command {
+	var ui bool
+	cmd := &cobra.Command{
+		Use:    "spaces",
+		Short:  "List your spaces (alias for 'space list')",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if ui {
+				return runSpaceUI(env, cmd)
+			}
+			return runSpaceList(env, cmd)
+		},
+	}
+	cmd.Flags().BoolVar(&ui, "ui", false, "launch the interactive terminal UI")
+	return cmd
+}
+
 func spaceList(env Env) *cobra.Command {
-	return &cobra.Command{
+	var ui bool
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List your spaces as JSON",
-		RunE:  func(cmd *cobra.Command, _ []string) error { return runSpaceList(env, cmd) },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if ui {
+				return runSpaceUI(env, cmd)
+			}
+			return runSpaceList(env, cmd)
+		},
 	}
+	cmd.Flags().BoolVar(&ui, "ui", false, "launch the interactive terminal UI")
+	return cmd
+}
+
+// runSpaceUI resolves readers and the current uid, then launches the TUI.
+func runSpaceUI(env Env, cmd *cobra.Command) error {
+	if env.IsTerminal != nil && !env.IsTerminal() {
+		return fmt.Errorf("the interactive UI requires a terminal")
+	}
+	cfg := configFromCmd(cmd, env.Getenv)
+	sess, err := env.Store.Load()
+	if err != nil {
+		return err
+	}
+	spaces, err := env.NewSpacesReader(cfg)
+	if err != nil {
+		return err
+	}
+	contacts, err := env.NewContactsReader(cfg)
+	if err != nil {
+		return err
+	}
+	return env.RunTUI(spaces, contacts, sess.UID)
 }
 
 func runSpaceList(env Env, cmd *cobra.Command) error {

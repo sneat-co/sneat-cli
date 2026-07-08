@@ -1,6 +1,7 @@
 .idea
 
 # Build output
+/sneat
 sneat-tui
 
 # If you prefer the allow list template instead of the deny list, see community template:

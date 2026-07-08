@@ -43,6 +43,8 @@ type Env struct {
 	IsTerminal func() bool
 	// RunContactForm collects contact fields interactively.
 	RunContactForm func(*contactInput) error
+	// RunTUI launches the interactive terminal UI.
+	RunTUI func(spaces SpacesReader, contacts ContactsReader, uid string) error
 }
 
 // Root builds the top-level `sneat` command.

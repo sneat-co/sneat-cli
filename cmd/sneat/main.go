@@ -15,6 +15,7 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/sneatapi"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/sneat-co/sneat-cli/internal/tokensrc"
+	"github.com/sneat-co/sneat-cli/internal/tui"
 	"golang.org/x/term"
 )
 
@@ -65,6 +66,9 @@ func main() {
 		},
 		IsTerminal:     func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
 		RunContactForm: commands.RunContactForm,
+		RunTUI: func(spaces commands.SpacesReader, contacts commands.ContactsReader, uid string) error {
+			return tui.Run(spaces, contacts, uid)
+		},
 	}
 	root := commands.Root(env)
 	root.AddCommand(
@@ -73,6 +77,7 @@ func main() {
 		commands.Whoami(env),
 		commands.Space(env),
 		commands.Spaces(env),
+		commands.Ui(env),
 		commands.Contact(env),
 		commands.Contacts(env),
 	)
