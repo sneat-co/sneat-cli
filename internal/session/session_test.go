@@ -2,10 +2,13 @@ package session
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+var errBoom = errors.New("boom")
 
 func TestStore_SaveLoadClear(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sneat", "session.json")
@@ -50,6 +53,28 @@ func TestStore_FilePermIs0600(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Fatalf("perm = %o, want 600", perm)
+	}
+}
+
+func TestStore_LoadInvalidJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := NewStore(path).Load(); err == nil {
+		t.Fatalf("expected error on malformed JSON")
+	}
+}
+
+func TestStore_ClearAbsentIsNoError(t *testing.T) {
+	if err := NewStore(filepath.Join(t.TempDir(), "missing.json")).Clear(); err != nil {
+		t.Fatalf("Clear on absent = %v, want nil", err)
+	}
+}
+
+func TestDefaultPath_Error(t *testing.T) {
+	if _, err := DefaultPath(func() (string, error) { return "", errBoom }); err == nil {
+		t.Fatalf("expected propagated error")
 	}
 }
 
