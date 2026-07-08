@@ -13,10 +13,18 @@ Firebase project `sneat-eur3-1`.
 
 - `sneat auth login` — sign in via **browser** (any enabled provider: Google,
   GitHub, …) or headless **email + password**; `logout`; `whoami`.
-- `sneat spaces list` — JSON of the user's spaces.
-- `sneat contacts list|get|add|delete|update` and comm-channel (phone/email)
+- `sneat space list` — JSON of the user's spaces.
+- `sneat contact list|get|add|delete|update` and comm-channel (phone/email)
   management within a space — reads as JSON, writes via the sneat-go API.
 - `sneat calendar list` — JSON of recurring happenings in a space.
+
+**Command noun convention:** singular resource + verb (`space list`,
+`contact get`), matching specscore-cli / `gh` / `kubectl` / `docker` (the noun
+names a *type*; the list shape is an output concern). A bare singular
+(`sneat space`) shows help. A bare **plural** is a hidden
+convenience alias for that resource's `list` action: `sneat spaces` ==
+`sneat space list`, and `sneat contacts --space <id>` ==
+`sneat contact list --space <id>` (hidden from `--help` to keep it uncluttered).
 
 All command output is JSON on stdout; errors + diagnostics on stderr; non-zero
 exit on failure.

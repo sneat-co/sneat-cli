@@ -1,11 +1,12 @@
 module github.com/sneat-co/sneat-cli
 
-go 1.25.8
+go 1.26
 
 require (
 	cloud.google.com/go/firestore v1.22.0
 	github.com/dal-go/dalgo v0.62.9
 	github.com/dal-go/dalgo2firestore v0.8.9
+	github.com/sneat-co/contactus/backend v0.1.2
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/api v0.287.1
@@ -18,8 +19,10 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/longrunning v0.9.0 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.19.0 // indirect
+	github.com/alexsergivan/transliterator v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/crediterra/money v0.3.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -29,8 +32,15 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/sneat-co/contactus-ext/backend v0.1.0 // indirect
+	github.com/sneat-co/sneat-core-modules v0.39.0 // indirect
+	github.com/sneat-co/sneat-go-core v0.55.6 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/strongo/decimal v0.1.1 // indirect
 	github.com/strongo/random v0.0.1 // indirect
+	github.com/strongo/slice v0.3.5 // indirect
+	github.com/strongo/strongoapp v0.31.39 // indirect
+	github.com/strongo/validation v0.0.9 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 // indirect

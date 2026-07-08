@@ -32,10 +32,10 @@ func TestSpacesList_PrintsSpacesForCurrentUser(t *testing.T) {
 	env.NewSpacesReader = func(config.Config) (SpacesReader, error) { return reader, nil }
 
 	root := Root(env)
-	root.AddCommand(Spaces(env))
+	root.AddCommand(Space(env))
 	var buf bytes.Buffer
 	root.SetOut(&buf)
-	root.SetArgs([]string{"spaces", "list"})
+	root.SetArgs([]string{"space", "list"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -51,14 +51,36 @@ func TestSpacesList_PrintsSpacesForCurrentUser(t *testing.T) {
 	}
 }
 
+func TestSpaces_AliasListsSpaces(t *testing.T) {
+	reader := &fakeSpacesReader{spaces: map[string]any{"ao58m": map[string]any{"type": "private"}}}
+	env := testEnv(&fakeStore{load: &session.Session{UID: "u1"}}, sneatauth.Result{})
+	env.NewSpacesReader = func(config.Config) (SpacesReader, error) { return reader, nil }
+
+	root := Root(env)
+	root.AddCommand(Spaces(env)) // bare `spaces` == `space list`
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetArgs([]string{"spaces"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not JSON: %v (%q)", err, buf.String())
+	}
+	if got["ao58m"] == nil {
+		t.Fatalf("spaces = %+v", got)
+	}
+}
+
 func TestSpacesList_NoSession(t *testing.T) {
 	env := testEnv(&fakeStore{}, sneatauth.Result{})
 	env.NewSpacesReader = func(config.Config) (SpacesReader, error) {
 		return &fakeSpacesReader{}, nil
 	}
 	root := Root(env)
-	root.AddCommand(Spaces(env))
-	root.SetArgs([]string{"spaces", "list"})
+	root.AddCommand(Space(env))
+	root.SetArgs([]string{"space", "list"})
 	if err := root.Execute(); err == nil {
 		t.Fatalf("expected error when not signed in")
 	}
@@ -70,8 +92,8 @@ func TestSpacesList_ReaderError(t *testing.T) {
 		return &fakeSpacesReader{err: errors.New("boom")}, nil
 	}
 	root := Root(env)
-	root.AddCommand(Spaces(env))
-	root.SetArgs([]string{"spaces", "list"})
+	root.AddCommand(Space(env))
+	root.SetArgs([]string{"space", "list"})
 	if err := root.Execute(); err == nil {
 		t.Fatalf("expected reader error")
 	}

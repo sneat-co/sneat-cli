@@ -4,6 +4,7 @@ package firestoredb
 
 import (
 	"context"
+	"errors"
 
 	"cloud.google.com/go/firestore"
 	"github.com/dal-go/dalgo/dal"
@@ -12,6 +13,9 @@ import (
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 )
+
+// ErrNotFound is returned when a requested document does not exist.
+var ErrNotFound = errors.New("not found")
 
 // DB is an open Firestore connection plus its DALgo wrapper.
 type DB struct {

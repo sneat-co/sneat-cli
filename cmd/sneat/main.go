@@ -51,13 +51,21 @@ func main() {
 			ts := tokensrc.New(context.Background(), store, auth, time.Now)
 			return firestoredb.NewSpacesReader(cfg, ts), nil
 		},
+		NewContactsReader: func(cfg config.Config) (commands.ContactsReader, error) {
+			auth := sneatauth.New(sneatauth.Options{APIKey: cfg.APIKey, AuthEmulatorHost: cfg.AuthEmulatorHost})
+			ts := tokensrc.New(context.Background(), store, auth, time.Now)
+			return firestoredb.NewContactsReader(cfg, ts), nil
+		},
 	}
 	root := commands.Root(env)
 	root.AddCommand(
 		commands.Version(version, commit, date),
 		commands.Auth(env),
 		commands.Whoami(env),
+		commands.Space(env),
 		commands.Spaces(env),
+		commands.Contact(env),
+		commands.Contacts(env),
 	)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "sneat:", err)

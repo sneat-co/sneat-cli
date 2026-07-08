@@ -31,12 +31,13 @@ type BrowserFlow interface {
 
 // Env holds injected process dependencies so commands stay unit-testable.
 type Env struct {
-	Getenv          func(string) string
-	Now             func() time.Time
-	Store           SessionStore
-	NewAuthClient   func(cfg config.Config) AuthClient
-	NewBrowserFlow  func(cfg config.Config) BrowserFlow
-	NewSpacesReader func(cfg config.Config) (SpacesReader, error)
+	Getenv            func(string) string
+	Now               func() time.Time
+	Store             SessionStore
+	NewAuthClient     func(cfg config.Config) AuthClient
+	NewBrowserFlow    func(cfg config.Config) BrowserFlow
+	NewSpacesReader   func(cfg config.Config) (SpacesReader, error)
+	NewContactsReader func(cfg config.Config) (ContactsReader, error)
 }
 
 // Root builds the top-level `sneat` command.
