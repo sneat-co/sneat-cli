@@ -5,7 +5,8 @@ Status: Draft for review
 
 ## 1. Overview & goals
 
-Turn `sneat-tui` from a UI-only scaffold into a working terminal client for
+Turn `sneat-cli` (this repo — a full-screen terminal UI; module currently still
+named `sneat-tui`) from a UI-only scaffold into a working terminal client for
 [Sneat.app](https://sneat.app), backed by the shared Firebase project
 `sneat-eur3-1`.
 
@@ -66,7 +67,12 @@ directive to the sibling repo path.
 
 Mirrors the backend extension pattern (`extension.Config` / `RegisterRoutes`).
 
-### New shared module: `github.com/sneat-co/sneat-tui-core`
+Note: this repo is GitHub `sneat-cli` but its module/README currently say
+`sneat-tui`. Phase 1 renames the module `github.com/sneat-co/sneat-tui` →
+`github.com/sneat-co/sneat-cli` (go.mod + imports + README) to remove that
+inconsistency. The empty `sneat-go-cli` repo is unrelated and retired/ignored.
+
+### New shared module: `github.com/sneat-co/sneat-cli-core`
 
 Imported by **both** the host and every extension `tui/` package (so extensions
 never depend on the host app, symmetric with how backend extensions depend on
@@ -85,7 +91,7 @@ never depend on the host app, symmetric with how backend extensions depend on
 - `tuicore` — the `ExtensionModule` interface + a `Services` bundle (auth token
   provider, firestore client, api client) + `SpaceContext` passed to views.
 
-### Host: `github.com/sneat-co/sneat-tui` (this repo)
+### Host: `github.com/sneat-co/sneat-cli` (this repo)
 
 Owns auth, session, config, spaces selection, and the app shell (left menu +
 main pane). Registers extension modules and mounts the selected one's view.
@@ -111,8 +117,8 @@ type ExtensionModule interface {
 }
 ```
 
-Work spans repos: `sneat-tui-core` (new), `sneat-tui` (host), `contactus`,
-`calendarius`. Each repo gets its own branch/PR.
+Work spans repos: `sneat-cli-core` (new), `sneat-cli` (host, this repo),
+`contactus`, `calendarius`. Each repo gets its own branch/PR.
 
 ## 4. Configuration & emulator switching
 
