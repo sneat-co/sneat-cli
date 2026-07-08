@@ -1,4 +1,4 @@
-module github.com/sneat-co/sneat-tui
+module github.com/sneat-co/sneat-cli
 
 go 1.24.4
 

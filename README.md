@@ -1,4 +1,4 @@
-# sneat-tui
+# sneat-cli
 
 Text-based User Interface for [Sneat.app](https://sneat.app)
 

@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/sneat-co/sneat-tui/sneatui"
+	"github.com/sneat-co/sneat-cli/sneatui"
 	"os"
 )
 
