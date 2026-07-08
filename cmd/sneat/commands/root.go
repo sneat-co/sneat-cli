@@ -48,7 +48,7 @@ func Root(env Env) *cobra.Command {
 	}
 	cmd.PersistentFlags().String("project", "", "Firebase project id (default sneat-eur3-1)")
 	cmd.PersistentFlags().String("api-key", "", "Firebase web API key")
-	cmd.PersistentFlags().String("auth-domain", "", "Firebase auth domain for browser sign-in (default sneat-eur3-1.firebaseapp.com)")
+	cmd.PersistentFlags().String("auth-domain", "", "Firebase auth domain for browser sign-in (default sneat.app)")
 	cmd.PersistentFlags().String("api-base-url", "", "sneat-go API base URL")
 	cmd.PersistentFlags().String("auth-emulator", "", "Firebase Auth emulator host, e.g. localhost:9099")
 	cmd.PersistentFlags().String("firestore-emulator", "", "Firestore emulator host, e.g. localhost:8080")

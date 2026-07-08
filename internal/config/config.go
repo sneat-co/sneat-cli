@@ -1,9 +1,13 @@
 package config
 
 const (
-	DefaultProject               = "sneat-eur3-1"
-	DefaultAPIKey                = "AIzaSyCeQu1WC182yD0VHrRm4nHUxVf27fY-MLQ"
-	DefaultAuthDomain            = "sneat-eur3-1.firebaseapp.com"
+	DefaultProject = "sneat-eur3-1"
+	DefaultAPIKey  = "AIzaSyCeQu1WC182yD0VHrRm4nHUxVf27fY-MLQ"
+	// DefaultAuthDomain matches sneat-app's environment.ts authDomain, so the
+	// browser sign-in uses sneat.app's registered Firebase auth handler
+	// (https://sneat.app/__/auth/handler) rather than the firebaseapp.com
+	// default, which is not a registered OAuth redirect URI for this project.
+	DefaultAuthDomain            = "sneat.app"
 	DefaultAPIBaseURL            = "https://api.sneat.cloud/v0/"
 	DefaultAuthEmulatorHost      = "localhost:9099"
 	DefaultFirestoreEmulatorHost = "localhost:8080"
