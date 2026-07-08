@@ -19,13 +19,13 @@ func TestWriteJSON_IndentsAndNewline(t *testing.T) {
 	}
 }
 
-func TestWriteTable_Bordered(t *testing.T) {
+func TestWriteTable_ContainsHeadersAndCells(t *testing.T) {
 	var buf bytes.Buffer
 	if err := writeTable(&buf, []string{"ID", "TYPE"}, [][]string{{"ao58m", "private"}}); err != nil {
 		t.Fatalf("writeTable: %v", err)
 	}
 	got := buf.String()
-	for _, want := range []string{"+", "| ID", "| ao58m ", "private"} {
+	for _, want := range []string{"ID", "TYPE", "ao58m", "private"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("table missing %q in:\n%s", want, got)
 		}

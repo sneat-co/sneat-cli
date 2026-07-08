@@ -7,8 +7,9 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -117,51 +118,15 @@ func writeCSV(w io.Writer, headers []string, rows [][]string) error {
 	return cw.Error()
 }
 
-// writeTable renders a bordered ASCII table.
+// writeTable renders a styled, bordered table via lipgloss. Rendering is
+// pipe-safe: lipgloss emits plain text (no ANSI) when stdout is not a terminal.
 func writeTable(w io.Writer, headers []string, rows [][]string) error {
-	n := len(headers)
-	widths := make([]int, n)
-	for i, h := range headers {
-		widths[i] = utf8.RuneCountInString(h)
-	}
-	for _, r := range rows {
-		for i := 0; i < n && i < len(r); i++ {
-			if l := utf8.RuneCountInString(r[i]); l > widths[i] {
-				widths[i] = l
-			}
-		}
-	}
-	var b strings.Builder
-	sep := func() {
-		b.WriteByte('+')
-		for _, wd := range widths {
-			b.WriteString(strings.Repeat("-", wd+2))
-			b.WriteByte('+')
-		}
-		b.WriteByte('\n')
-	}
-	row := func(cells []string) {
-		b.WriteByte('|')
-		for i := 0; i < n; i++ {
-			c := ""
-			if i < len(cells) {
-				c = cells[i]
-			}
-			b.WriteByte(' ')
-			b.WriteString(c)
-			b.WriteString(strings.Repeat(" ", widths[i]-utf8.RuneCountInString(c)))
-			b.WriteString(" |")
-		}
-		b.WriteByte('\n')
-	}
-	sep()
-	row(headers)
-	sep()
-	for _, r := range rows {
-		row(r)
-	}
-	sep()
-	_, err := io.WriteString(w, b.String())
+	t := table.New().
+		Border(lipgloss.NormalBorder()).
+		StyleFunc(func(int, int) lipgloss.Style { return lipgloss.NewStyle().Padding(0, 1) }).
+		Headers(headers...).
+		Rows(rows...)
+	_, err := fmt.Fprintln(w, t.Render())
 	return err
 }
 
