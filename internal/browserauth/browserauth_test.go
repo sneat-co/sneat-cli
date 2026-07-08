@@ -64,6 +64,30 @@ func TestFlow_Run_OpenBrowserError(t *testing.T) {
 	}
 }
 
+func TestFlow_Run_IgnoresBadCallbackThenSucceeds(t *testing.T) {
+	good := `{"idToken":"idt","refreshToken":"rft","uid":"u1","email":"a@b.c","expiresIn":3600}`
+	open := func(pageURL string) error {
+		base := strings.TrimSuffix(pageURL, "/")
+		go func() {
+			// First a malformed body (400, no result), then a valid one.
+			if r, err := http.Post(base+"/callback", "application/json", strings.NewReader("{bad")); err == nil {
+				_ = r.Body.Close()
+			}
+			if r, err := http.Post(base+"/callback", "application/json", strings.NewReader(good)); err == nil {
+				_ = r.Body.Close()
+			}
+		}()
+		return nil
+	}
+	res, err := Flow{OpenBrowser: open}.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.IDToken != "idt" {
+		t.Fatalf("idToken = %q", res.IDToken)
+	}
+}
+
 func TestFlow_Run_NilOpenBrowser(t *testing.T) {
 	f := Flow{APIKey: "k"}
 	if _, err := f.Run(context.Background()); err == nil {
