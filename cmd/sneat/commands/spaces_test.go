@@ -35,7 +35,7 @@ func TestSpacesList_PrintsSpacesForCurrentUser(t *testing.T) {
 	root.AddCommand(Space(env))
 	var buf bytes.Buffer
 	root.SetOut(&buf)
-	root.SetArgs([]string{"space", "list"})
+	root.SetArgs([]string{"space", "list", "--json"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestSpaces_AliasListsSpaces(t *testing.T) {
 	root.AddCommand(Spaces(env)) // bare `spaces` == `space list`
 	var buf bytes.Buffer
 	root.SetOut(&buf)
-	root.SetArgs([]string{"spaces"})
+	root.SetArgs([]string{"spaces", "--json"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

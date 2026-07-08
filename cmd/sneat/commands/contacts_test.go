@@ -44,7 +44,7 @@ func TestContactList_PrintsContactsForSpace(t *testing.T) {
 	root.AddCommand(Contact(env))
 	var buf bytes.Buffer
 	root.SetOut(&buf)
-	root.SetArgs([]string{"contact", "list", "--space", "vaoyj"})
+	root.SetArgs([]string{"contact", "list", "--space", "vaoyj", "--json"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

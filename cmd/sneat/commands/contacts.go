@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"strings"
 
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/spf13/cobra"
@@ -42,12 +43,31 @@ func contactListCmd(env Env, use, short string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), contacts)
+			headers, rows := contactsTable(contacts)
+			return output(cmd, contacts, headers, rows)
 		},
 	}
 	cmd.Flags().StringVar(&space, "space", "", "space id")
 	_ = cmd.MarkFlagRequired("space")
 	return cmd
+}
+
+var contactHeaders = []string{"ID", "NAME", "TYPE", "GENDER", "STATUS", "ROLES"}
+
+func contactsTable(cs []firestoredb.Contact) (headers []string, rows [][]string) {
+	rows = make([][]string, 0, len(cs))
+	for _, c := range cs {
+		rows = append(rows, contactRow(c))
+	}
+	return contactHeaders, rows
+}
+
+func contactRow(c firestoredb.Contact) []string {
+	d := c.Contact
+	if d == nil {
+		return []string{c.ID, "", "", "", "", ""}
+	}
+	return []string{c.ID, d.GetTitle(), string(d.Type), string(d.Gender), string(d.Status), strings.Join(d.Roles, ",")}
 }
 
 func contactGet(env Env) *cobra.Command {
@@ -64,7 +84,7 @@ func contactGet(env Env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), contact)
+			return output(cmd, contact, contactHeaders, [][]string{contactRow(contact)})
 		},
 	}
 	cmd.Flags().StringVar(&space, "space", "", "space id")

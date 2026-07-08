@@ -55,5 +55,6 @@ func Root(env Env) *cobra.Command {
 	cmd.PersistentFlags().String("auth-emulator", "", "Firebase Auth emulator host, e.g. localhost:9099")
 	cmd.PersistentFlags().String("firestore-emulator", "", "Firestore emulator host, e.g. localhost:8080")
 	cmd.PersistentFlags().Bool("emulator", false, "use local Auth+Firestore emulators on default ports")
+	addFormatFlags(cmd)
 	return cmd
 }

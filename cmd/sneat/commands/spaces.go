@@ -51,5 +51,15 @@ func runSpaceList(env Env, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	return writeJSON(cmd.OutOrStdout(), spaces)
+	headers, rows := spacesTable(spaces)
+	return output(cmd, spaces, headers, rows)
+}
+
+func spacesTable(spaces map[string]any) (headers []string, rows [][]string) {
+	headers = []string{"ID", "TITLE", "TYPE", "STATUS", "ROLES"}
+	for _, id := range sortedKeys(spaces) {
+		b, _ := spaces[id].(map[string]any)
+		rows = append(rows, []string{id, str(b["title"]), str(b["type"]), str(b["status"]), joinList(b["roles"])})
+	}
+	return headers, rows
 }
