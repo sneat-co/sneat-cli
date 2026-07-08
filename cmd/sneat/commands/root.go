@@ -1,16 +1,34 @@
 package commands
 
 import (
+	"context"
 	"time"
 
+	"github.com/sneat-co/sneat-cli/internal/config"
+	"github.com/sneat-co/sneat-cli/internal/session"
+	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/spf13/cobra"
 )
 
+// SessionStore persists the authenticated session.
+type SessionStore interface {
+	Save(session.Session) error
+	Load() (session.Session, error)
+	Clear() error
+}
+
+// AuthClient performs Firebase auth REST calls.
+type AuthClient interface {
+	SignInWithPassword(ctx context.Context, email, password string) (sneatauth.Result, error)
+	Refresh(ctx context.Context, refreshToken string) (sneatauth.Result, error)
+}
+
 // Env holds injected process dependencies so commands stay unit-testable.
-// Extended in later tasks (session store, auth-client factory, browser opener).
 type Env struct {
-	Getenv func(string) string
-	Now    func() time.Time
+	Getenv        func(string) string
+	Now           func() time.Time
+	Store         SessionStore
+	NewAuthClient func(cfg config.Config) AuthClient
 }
 
 // Root builds the top-level `sneat` command.
@@ -21,7 +39,6 @@ func Root(env Env) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	// Persistent config flags (resolved in Task 3's configFromCmd helper).
 	cmd.PersistentFlags().String("project", "", "Firebase project id (default sneat-eur3-1)")
 	cmd.PersistentFlags().String("api-key", "", "Firebase web API key")
 	cmd.PersistentFlags().String("api-base-url", "", "sneat-go API base URL")
