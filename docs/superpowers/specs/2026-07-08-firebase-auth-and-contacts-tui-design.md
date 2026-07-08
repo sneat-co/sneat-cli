@@ -164,12 +164,21 @@ Uses the standard Firebase emulator env vars so it works with
 
 ### 5.1 Google (Phase 1, primary)
 
-**Prerequisite (prod only, maintainer action):** create a Google OAuth 2.0
-Client ID of type **Desktop app** in the `sneat-eur3-1` GCP project
-(console.cloud.google.com → APIs & Services → Credentials). Provide its
-`client_id`/`client_secret` via config. The `client_secret` for a Desktop client
-is not a true secret; the loopback + PKCE flow is safe without server-side
-secrecy.
+**Prerequisite (prod only, maintainer action):**
+
+1. Google Cloud Console → project `sneat-eur3-1`.
+2. APIs & Services → Credentials → Create credentials → OAuth client ID.
+3. Application type **Desktop app** → name `sneat-cli` → Create.
+4. Copy the Client ID + Client secret; provide via `SNEAT_GOOGLE_CLIENT_ID` /
+   `SNEAT_GOOGLE_CLIENT_SECRET` (or `~/.config/sneat/`).
+
+No redirect-URI setup is needed (Desktop clients auto-allow loopback
+`http://127.0.0.1:<port>`). The `client_secret` is not truly confidential for a
+Desktop app — security is PKCE + loopback. Scopes `openid email profile` are
+non-sensitive (no Google verification review). The consent screen is already
+published (web Google sign-in works for all users), and Firebase accepts the
+Google `id_token` from this client in `signInWithIdp` (it validates Google's
+signature/issuer, not a specific web client) — no Firebase-side change.
 
 Flow:
 
