@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // contactCardScreen shows a read-only detail card for one contact.
@@ -50,7 +51,14 @@ func (s *contactCardScreen) View(m *Model) string {
 	row("roles", joinRoles(c.roles))
 	row("emails", strings.Join(c.emails, ", "))
 	row("phones", strings.Join(c.phones, ", "))
-	return headerStyle.Render(b.String()) + "\n" + footerStyle.Render("esc/← back · q quit")
+
+	body := headerStyle.Render(b.String())
+	footer := footerStyle.Render("esc/← back · q quit")
+	// Pad the body so the footer sits at the bottom, matching the list screens.
+	if h := m.height - lipgloss.Height(footer); h > lipgloss.Height(body) {
+		body = lipgloss.NewStyle().Height(h).Render(body)
+	}
+	return body + "\n" + footer
 }
 
 // pad right-pads a label to a fixed width for aligned card rows.

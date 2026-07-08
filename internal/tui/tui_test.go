@@ -394,6 +394,41 @@ func TestSpaceScreen_ReentryUsesCache(t *testing.T) {
 	}
 }
 
+func TestContactCard_FooterAtBottom(t *testing.T) {
+	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{"fam": {contact("c1", "Alice", "member")}}}
+	m := newLoadedSpaces(t, twoSpaces(), fc)
+	m, cmd := step(t, m, key("enter")) // space
+	m, initCmd := step(t, m, runCmd(cmd))
+	m, _ = step(t, m, runCmd(initCmd))
+	m, cmd = step(t, m, key("enter")) // members
+	m, _ = step(t, m, runCmd(cmd))
+	m, cmd = step(t, m, key("enter")) // card
+	m, _ = step(t, m, runCmd(cmd))
+
+	view := m.View()
+	lines := len(splitLines(view))
+	if lines < 22 { // height is 24; footer should be pushed near the bottom
+		t.Errorf("card view has %d lines, expected it to fill the height (~24)", lines)
+	}
+	last := splitLines(view)[lines-1]
+	if !contains(last, "back") {
+		t.Errorf("footer should be the last line, got %q", last)
+	}
+}
+
+func splitLines(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, s[start:])
+	return out
+}
+
 func TestQuitKeyAndResize(t *testing.T) {
 	m := newLoadedSpaces(t, twoSpaces(), &fakeContacts{})
 	// 'q' quits from the root.
