@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Sign in to Sneat.app</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 22rem; margin: 4rem auto; text-align: center; }
+  button { display: block; width: 100%; padding: 0.8rem; margin: 0.6rem 0; font-size: 1rem; cursor: pointer; border: 1px solid #ccc; border-radius: 0.4rem; background: #fff; }
+  button:hover { background: #f3f3f3; }
+  #err { color: #c00; margin-top: 1rem; white-space: pre-wrap; }
+  #done { color: #070; font-size: 1.1rem; }
+</style>
+</head>
+<body>
+<h2>Sign in to Sneat.app</h2>
+<div id="buttons">
+  <button onclick="signIn('google')">Sign in with Google</button>
+  <button onclick="signIn('github')">Sign in with GitHub</button>
+</div>
+<p id="err"></p>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script>
+const CONFIG = __SNEAT_CONFIG__;
+firebase.initializeApp({ apiKey: CONFIG.apiKey, authDomain: CONFIG.authDomain, projectId: CONFIG.project });
+const auth = firebase.auth();
+if (CONFIG.authEmulatorHost) {
+  auth.useEmulator('http://' + CONFIG.authEmulatorHost, { disableWarnings: true });
+}
+function signIn(name) {
+  document.getElementById('err').textContent = '';
+  const provider = name === 'google'
+    ? new firebase.auth.GoogleAuthProvider()
+    : new firebase.auth.GithubAuthProvider();
+  auth.signInWithPopup(provider).then(async (cred) => {
+    const user = cred.user;
+    const idToken = await user.getIdToken();
+    await fetch('/callback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idToken: idToken,
+        refreshToken: user.refreshToken,
+        uid: user.uid,
+        email: user.email,
+        expiresIn: 3600,
+      }),
+    });
+    document.body.innerHTML = '<h2 id="done">Signed in. You can close this window.</h2>';
+  }).catch((err) => {
+    document.getElementById('err').textContent = err && err.message ? err.message : String(err);
+  });
+}
+</script>
+</body>
+</html>
