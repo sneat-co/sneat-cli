@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/sneat-co/sneat-cli/internal/browserauth"
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/session"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
@@ -23,12 +24,18 @@ type AuthClient interface {
 	Refresh(ctx context.Context, refreshToken string) (sneatauth.Result, error)
 }
 
+// BrowserFlow runs one interactive browser sign-in.
+type BrowserFlow interface {
+	Run(ctx context.Context) (browserauth.Result, error)
+}
+
 // Env holds injected process dependencies so commands stay unit-testable.
 type Env struct {
-	Getenv        func(string) string
-	Now           func() time.Time
-	Store         SessionStore
-	NewAuthClient func(cfg config.Config) AuthClient
+	Getenv         func(string) string
+	Now            func() time.Time
+	Store          SessionStore
+	NewAuthClient  func(cfg config.Config) AuthClient
+	NewBrowserFlow func(cfg config.Config) BrowserFlow
 }
 
 // Root builds the top-level `sneat` command.

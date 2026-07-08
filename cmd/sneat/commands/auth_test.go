@@ -7,10 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sneat-co/sneat-cli/internal/browserauth"
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/session"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 )
+
+type fakeBrowserFlow struct{ res browserauth.Result }
+
+func (f fakeBrowserFlow) Run(context.Context) (browserauth.Result, error) { return f.res, nil }
 
 type fakeStore struct {
 	saved   *session.Session
@@ -42,6 +47,34 @@ func testEnv(store SessionStore, res sneatauth.Result) Env {
 		Now:           func() time.Time { return time.Unix(1000, 0) },
 		Store:         store,
 		NewAuthClient: func(config.Config) AuthClient { return fakeAuth{res: res} },
+		NewBrowserFlow: func(config.Config) BrowserFlow {
+			return fakeBrowserFlow{res: browserauth.Result{
+				IDToken: "bidt", RefreshToken: "brft", UID: "bu1", Email: "b@b.c", ExpiresIn: time.Hour,
+			}}
+		},
+	}
+}
+
+func TestAuthLogin_BrowserFlow_SavesSession(t *testing.T) {
+	store := &fakeStore{}
+	env := testEnv(store, sneatauth.Result{})
+	root := Root(env)
+	root.AddCommand(Auth(env))
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetArgs([]string{"auth", "login"}) // no --email => browser flow
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if store.saved == nil || store.saved.UID != "bu1" || store.saved.IDToken != "bidt" {
+		t.Fatalf("browser session not saved: %+v", store.saved)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not JSON: %v", err)
+	}
+	if got["email"] != "b@b.c" {
+		t.Fatalf("email = %q", got["email"])
 	}
 }
 

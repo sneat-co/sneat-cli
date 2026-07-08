@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/sneat-co/sneat-cli/cmd/sneat/commands"
+	"github.com/sneat-co/sneat-cli/internal/browserauth"
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/session"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
@@ -30,6 +31,15 @@ func main() {
 		Store:  session.NewStore(path),
 		NewAuthClient: func(cfg config.Config) commands.AuthClient {
 			return sneatauth.New(sneatauth.Options{APIKey: cfg.APIKey, AuthEmulatorHost: cfg.AuthEmulatorHost})
+		},
+		NewBrowserFlow: func(cfg config.Config) commands.BrowserFlow {
+			return browserauth.Flow{
+				APIKey:           cfg.APIKey,
+				AuthDomain:       cfg.AuthDomain,
+				Project:          cfg.Project,
+				AuthEmulatorHost: cfg.AuthEmulatorHost,
+				OpenBrowser:      browserauth.OpenBrowser,
+			}
 		},
 	}
 	root := commands.Root(env)
