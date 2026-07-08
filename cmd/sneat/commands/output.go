@@ -121,9 +121,17 @@ func writeCSV(w io.Writer, headers []string, rows [][]string) error {
 // writeTable renders a styled, bordered table via lipgloss. Rendering is
 // pipe-safe: lipgloss emits plain text (no ANSI) when stdout is not a terminal.
 func writeTable(w io.Writer, headers []string, rows [][]string) error {
+	header := lipgloss.NewStyle().Padding(0, 1).Bold(true).Foreground(lipgloss.Color("6")) // cyan
+	cell := lipgloss.NewStyle().Padding(0, 1)
 	t := table.New().
 		Border(lipgloss.NormalBorder()).
-		StyleFunc(func(int, int) lipgloss.Style { return lipgloss.NewStyle().Padding(0, 1) }).
+		BorderStyle(lipgloss.NewStyle().Faint(true)). // dimmed border
+		StyleFunc(func(row, _ int) lipgloss.Style {
+			if row == table.HeaderRow {
+				return header
+			}
+			return cell
+		}).
 		Headers(headers...).
 		Rows(rows...)
 	_, err := fmt.Fprintln(w, t.Render())
