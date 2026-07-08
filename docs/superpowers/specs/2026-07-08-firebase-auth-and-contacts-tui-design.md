@@ -22,15 +22,32 @@ A signed-in user can:
 
 ### Priority / build order
 
-1. **Google login working end-to-end** (the maintainer's own sign-in).
+Phases 1–7 are **prototyped inside this repo (`sneat-cli`) as a single module**
+for the fastest path to a Google login the maintainer can actually use. The
+multi-repo split (§3) is deferred to the final phase.
+
+1. **Google login working end-to-end** (the maintainer's own sign-in),
+   **emulator-first**; prod activates once the Google Desktop OAuth client id is
+   supplied (§5.1).
 2. Spaces list + in-space shell (left menu + main pane).
 3. Contacts **read** (list + detail).
 4. Contacts **write** (add / delete / edit / roles / phone / email).
 5. Email + password login.
 6. GitHub login.
 7. Calendar: recurring-happenings list.
+8. **Extraction**: pull the shared clients into `sneat-cli-core` and the
+   contacts/calendar views into `contactus/tui` + `calendarius/tui` (§3).
 
 Each phase is independently testable and shippable.
+
+### Command entrypoint
+
+The built binary is **`sneat`**. It is subcommand-based; **`sneat ui`** launches
+the TUI. `main` parses `os.Args`: `ui` (and no-arg, for convenience) starts the
+full-screen app; unknown/`help` prints usage. Additional non-interactive
+subcommands (e.g. a scriptable `login`, `contacts`) are reserved for later and
+are out of scope now. Arg dispatch stays stdlib-simple (a small switch over the
+first arg) unless/until enough subcommands justify a framework.
 
 ## 2. Data & auth model (established by research)
 
@@ -64,6 +81,12 @@ Where a needed module is not tagged for `go get`, add a local `replace`
 directive to the sibling repo path.
 
 ## 3. Architecture: host + extension TUI modules
+
+This is the **target** structure, reached in the extraction phase (build-order
+§8). During phases 1–7 the same package boundaries exist as **internal packages
+inside `sneat-cli`** (e.g. `internal/config`, `internal/sneatauth`,
+`internal/contactsui`), so extraction is a move + import-path change, not a
+redesign.
 
 Mirrors the backend extension pattern (`extension.Config` / `RegisterRoutes`).
 
