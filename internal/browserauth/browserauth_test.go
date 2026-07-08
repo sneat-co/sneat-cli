@@ -64,6 +64,13 @@ func TestFlow_Run_OpenBrowserError(t *testing.T) {
 	}
 }
 
+func TestFlow_Run_NilOpenBrowser(t *testing.T) {
+	f := Flow{APIKey: "k"}
+	if _, err := f.Run(context.Background()); err == nil {
+		t.Fatalf("expected error when OpenBrowser is nil")
+	}
+}
+
 func TestRenderPage_InjectsConfig(t *testing.T) {
 	f := Flow{APIKey: "mykey", AuthDomain: "dom", Project: "proj", AuthEmulatorHost: "localhost:9099"}
 	page, err := f.renderPage()
