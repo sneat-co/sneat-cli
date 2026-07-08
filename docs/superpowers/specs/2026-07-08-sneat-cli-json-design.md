@@ -103,7 +103,7 @@ Precedence **flag > env > default**. Uses standard Firebase emulator env vars.
 |---|---|---|---|
 | Project | `--project` | `SNEAT_FIREBASE_PROJECT` | `sneat-eur3-1` |
 | Web API key | `--api-key` | `FIREBASE_API_KEY` | public web key |
-| Auth domain | `--auth-domain` | `FIREBASE_AUTH_DOMAIN` | `sneat-eur3-1.firebaseapp.com` |
+| Auth domain | `--auth-domain` | `FIREBASE_AUTH_DOMAIN` | `sneat.app` |
 | Auth emulator | `--auth-emulator` | `FIREBASE_AUTH_EMULATOR_HOST` | off |
 | Firestore emulator | `--firestore-emulator` | `FIRESTORE_EMULATOR_HOST` | off |
 | Both emulators | `--emulator` | — | auth `localhost:9099`, firestore `localhost:8080` |
@@ -171,9 +171,14 @@ browser to a locally-served page that:
   `user.email` and `POST`s them to the CLI's `/callback` (same-origin loopback);
 - the CLI stores the session and the page shows "You can close this window".
 
-`localhost` is an authorized domain in Firebase by default, so this works
-against `sneat-eur3-1` with **no deployed page and no Google Desktop OAuth
-client**. Headless/SSH falls back to email/password. The page HTML is embedded
+`localhost` is an authorized domain in Firebase by default (fixes the
+opener-origin `auth/unauthorized-domain` check), so this works against
+`sneat-eur3-1` with **no deployed page and no Google Desktop OAuth client**.
+The `authDomain` must be a domain whose `/__/auth/handler` is a registered
+Google OAuth redirect URI for the project — `sneat.app` (confirmed in
+sneat-app's `environment.ts`), **not** the `firebaseapp.com` default, which is
+not registered here and yields `redirect_uri_mismatch`. Headless/SSH falls back
+to email/password. The page HTML is embedded
 via `go:embed`. Go tests inject a fake `openBrowser` that POSTs a canned payload
 to `/callback`, exercising the loopback plumbing without a real browser.
 
