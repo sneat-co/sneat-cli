@@ -211,6 +211,29 @@ Bodies reuse `dto4contactus` request structs (each embeds
 
 Exact field names are pinned during implementation from `dto4contactus`.
 
+### 7.1 Contact command surface
+
+Noun is singular `contact` (alias `contacts`). `--space` is required until
+`sneat space use <id>` stores a default space.
+
+```
+sneat contact list   --space <id>                         # JSON array
+sneat contact get    --space <id> --id <cid>              # JSON object
+sneat contact add    --space <id> --name "Alex T" \
+                     --email a@example.com --phone +3227035895 \
+                     --role member --gender male --type person
+sneat contact delete --space <id> --id <cid>
+sneat contact update --space <id> --id <cid> [--name ... --gender ... --role ...]
+```
+
+- `--email` / `--phone` / `--role` are repeatable (StringArray).
+- `--name` is the full name (split into first/last); `--first` / `--last`
+  available for precision.
+- `--type`: `person` (default) | `company` | `pet` | `location`.
+- `--gender`: `male` | `female` | `other`.
+- `add` = `create_contact` then one `add_contact_comm_channel` per email/phone;
+  prints the created contact as JSON.
+
 ## 8. Testing
 
 Mirrors the repo's high-coverage norm and ingitdb-cli's seam style.
