@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -95,7 +96,11 @@ func (f Flow) Run(ctx context.Context) (Result, error) {
 	go func() { _ = srv.Serve(ln) }()
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
-	url := "http://" + ln.Addr().String() + "/"
+	// Use "localhost" (a Firebase default-authorized domain) rather than the
+	// listener's 127.0.0.1 literal, which is NOT authorized by default and
+	// triggers auth/unauthorized-domain in signInWithPopup.
+	port := ln.Addr().(*net.TCPAddr).Port
+	url := fmt.Sprintf("http://localhost:%d/", port)
 	if f.OpenBrowser == nil {
 		return Result{}, errors.New("browserauth: OpenBrowser is nil")
 	}
