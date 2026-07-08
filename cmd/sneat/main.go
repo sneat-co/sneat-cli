@@ -12,8 +12,10 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/sneat-co/sneat-cli/internal/session"
+	"github.com/sneat-co/sneat-cli/internal/sneatapi"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/sneat-co/sneat-cli/internal/tokensrc"
+	"golang.org/x/term"
 )
 
 // Build metadata, overridable via -ldflags.
@@ -56,6 +58,13 @@ func main() {
 			ts := tokensrc.New(context.Background(), store, auth, time.Now)
 			return firestoredb.NewContactsReader(cfg, ts), nil
 		},
+		NewContactWriter: func(cfg config.Config) (commands.ContactWriter, error) {
+			auth := sneatauth.New(sneatauth.Options{APIKey: cfg.APIKey, AuthEmulatorHost: cfg.AuthEmulatorHost})
+			ts := tokensrc.New(context.Background(), store, auth, time.Now)
+			return sneatapi.New(cfg.APIBaseURL, ts, nil), nil
+		},
+		IsTerminal:     func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
+		RunContactForm: commands.RunContactForm,
 	}
 	root := commands.Root(env)
 	root.AddCommand(

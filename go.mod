@@ -4,12 +4,18 @@ go 1.26
 
 require (
 	cloud.google.com/go/firestore v1.22.0
+	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dal-go/dalgo v0.62.9
 	github.com/dal-go/dalgo2firestore v0.8.9
+	github.com/sneat-co/contactus-ext/backend v0.1.0
 	github.com/sneat-co/contactus/backend v0.1.2
+	github.com/sneat-co/sneat-core-modules v0.39.0
+	github.com/sneat-co/sneat-go-core v0.55.6
 	github.com/spf13/cobra v1.10.2
+	github.com/strongo/strongoapp v0.31.39
 	golang.org/x/oauth2 v0.36.0
+	golang.org/x/term v0.44.0
 	google.golang.org/api v0.287.1
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -30,7 +36,6 @@ require (
 	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7 // indirect
 	github.com/charmbracelet/bubbletea v1.3.6 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
-	github.com/charmbracelet/huh v1.0.0 // indirect
 	github.com/charmbracelet/x/ansi v0.9.3 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
 	github.com/charmbracelet/x/exp/strings v0.0.0-20240722160745-212f7b056ed0 // indirect
@@ -56,14 +61,12 @@ require (
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/sneat-co/contactus-ext/backend v0.1.0 // indirect
-	github.com/sneat-co/sneat-core-modules v0.39.0 // indirect
-	github.com/sneat-co/sneat-go-core v0.55.6 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/strongo/analytics v0.2.5 // indirect
 	github.com/strongo/decimal v0.1.1 // indirect
+	github.com/strongo/logus v0.4.1 // indirect
 	github.com/strongo/random v0.0.1 // indirect
 	github.com/strongo/slice v0.3.5 // indirect
-	github.com/strongo/strongoapp v0.31.39 // indirect
 	github.com/strongo/validation v0.0.9 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -76,7 +79,6 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect

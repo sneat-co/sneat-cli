@@ -249,8 +249,15 @@ sneat contact update --space <id> --id <cid> [--name ... --gender ... --role ...
   available for precision.
 - `--type`: `person` (default) | `company` | `pet` | `location`.
 - `--gender`: `male` | `female` | `other`.
-- `add` = `create_contact` then one `add_contact_comm_channel` per email/phone;
-  prints the created contact as JSON.
+- `add` builds a `dto4contactus.CreateContactRequest` (emails/phones as
+  top-level comm-channel maps) and POSTs `contactus/create_contact`; prints the
+  created contact as JSON.
+- `contact add` with **no field flags** launches an interactive **huh** form
+  (name / gender / email / phone / role); with field flags it runs
+  non-interactively. In a non-TTY with no fields it errors instead of hanging.
+- `contact delete --id` POSTs `contactus/delete_contact`.
+- Writes go through `internal/sneatapi` with the Bearer ID token; tables are
+  rendered with `lipgloss` (dimmed border, cyan header), pipe-safe.
 
 ## 8. Testing
 

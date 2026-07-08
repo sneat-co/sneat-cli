@@ -38,6 +38,11 @@ type Env struct {
 	NewBrowserFlow    func(cfg config.Config) BrowserFlow
 	NewSpacesReader   func(cfg config.Config) (SpacesReader, error)
 	NewContactsReader func(cfg config.Config) (ContactsReader, error)
+	NewContactWriter  func(cfg config.Config) (ContactWriter, error)
+	// IsTerminal reports whether interactive prompts are possible (stdin is a TTY).
+	IsTerminal func() bool
+	// RunContactForm collects contact fields interactively.
+	RunContactForm func(*contactInput) error
 }
 
 // Root builds the top-level `sneat` command.

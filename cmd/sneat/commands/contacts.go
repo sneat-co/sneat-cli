@@ -18,7 +18,12 @@ type ContactsReader interface {
 // help; the plural `sneat contacts` (see Contacts) aliases `contact list`.
 func Contact(env Env) *cobra.Command {
 	cmd := &cobra.Command{Use: "contact", Short: "Work with contacts in a space"}
-	cmd.AddCommand(contactListCmd(env, "list", "List a space's contacts as JSON"), contactGet(env))
+	cmd.AddCommand(
+		contactListCmd(env, "list", "List a space's contacts as JSON"),
+		contactGet(env),
+		contactAdd(env),
+		contactDelete(env),
+	)
 	return cmd
 }
 
