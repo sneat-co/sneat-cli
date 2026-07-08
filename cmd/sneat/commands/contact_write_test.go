@@ -61,6 +61,20 @@ func TestContactAdd_NonInteractive(t *testing.T) {
 	if len(req.Roles) != 1 || req.Roles[0] != "member" {
 		t.Fatalf("roles = %+v", req.Roles)
 	}
+	// The API validates the person's ContactBase, which requires status and ageGroup.
+	if string(req.Person.Status) != "active" {
+		t.Fatalf("person status = %q, want active", req.Person.Status)
+	}
+	if req.Person.AgeGroup != "unknown" {
+		t.Fatalf("person ageGroup = %q, want unknown (default)", req.Person.AgeGroup)
+	}
+}
+
+func TestBuildCreateContactRequest_AgeGroupOverride(t *testing.T) {
+	req := buildCreateContactRequest("s1", &contactInput{Name: "A B", AgeGroup: "child"})
+	if req.Person.AgeGroup != "child" {
+		t.Fatalf("ageGroup = %q, want child", req.Person.AgeGroup)
+	}
 }
 
 func TestContactAdd_InteractiveWhenNoFields(t *testing.T) {

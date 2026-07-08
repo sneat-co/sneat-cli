@@ -24,6 +24,7 @@ type ContactWriter interface {
 type contactInput struct {
 	Name, First, Last string
 	Gender, Type      string
+	AgeGroup          string
 	Roles             []string
 	Emails            []string
 	Phones            []string
@@ -78,6 +79,7 @@ func contactAdd(env Env) *cobra.Command {
 	f.StringVar(&in.First, "first", "", "first name")
 	f.StringVar(&in.Last, "last", "", "last name")
 	f.StringVar(&in.Gender, "gender", "", "male|female|other")
+	f.StringVar(&in.AgeGroup, "age-group", "", "unknown|adult|child|senior|undisclosed (default: unknown)")
 	f.StringVar(&in.Type, "type", "person", "contact type (person)")
 	f.StringArrayVar(&in.Roles, "role", nil, "role (repeatable)")
 	f.StringArrayVar(&in.Emails, "email", nil, "email (repeatable)")
@@ -92,6 +94,10 @@ func buildCreateContactRequest(spaceID string, in *contactInput) dto4contactus.C
 		ctype = "person"
 	}
 	names := &person.NameFields{FullName: in.Name, FirstName: in.First, LastName: in.Last}
+	ageGroup := in.AgeGroup
+	if ageGroup == "" {
+		ageGroup = dbmodels.AgeGroupUnknown
+	}
 	return dto4contactus.CreateContactRequest{
 		SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
 		Type:         briefs4contactus.ContactType(ctype),
@@ -100,10 +106,12 @@ func buildCreateContactRequest(spaceID string, in *contactInput) dto4contactus.C
 		Person: &dto4contactus.CreatePersonRequest{
 			ContactBase: briefs4contactus.ContactBase{
 				ContactBrief: briefs4contactus.ContactBrief{
-					Type:   briefs4contactus.ContactType(ctype),
-					Gender: dbmodels.Gender(in.Gender),
-					Names:  names,
+					Type:     briefs4contactus.ContactType(ctype),
+					Gender:   dbmodels.Gender(in.Gender),
+					Names:    names,
+					AgeGroup: ageGroup,
 				},
+				Status: "active",
 			},
 		},
 		EmailsField: with.EmailsField{Emails: commChannels(in.Emails)},

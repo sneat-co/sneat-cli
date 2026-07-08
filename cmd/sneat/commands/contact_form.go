@@ -12,6 +12,10 @@ func RunContactForm(in *contactInput) error {
 	phone := firstOf(in.Phones)
 	role := firstOf(in.Roles)
 
+	if in.AgeGroup == "" {
+		in.AgeGroup = "unknown"
+	}
+
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewInput().Title("Full name").Value(&in.Name),
 		huh.NewSelect[string]().Title("Gender").Options(
@@ -20,6 +24,13 @@ func RunContactForm(in *contactInput) error {
 			huh.NewOption("Female", "female"),
 			huh.NewOption("Other", "other"),
 		).Value(&in.Gender),
+		huh.NewSelect[string]().Title("Age group").Options(
+			huh.NewOption("Unknown", "unknown"),
+			huh.NewOption("Adult", "adult"),
+			huh.NewOption("Child", "child"),
+			huh.NewOption("Senior", "senior"),
+			huh.NewOption("Undisclosed", "undisclosed"),
+		).Value(&in.AgeGroup),
 		huh.NewInput().Title("Email").Value(&email),
 		huh.NewInput().Title("Phone").Value(&phone),
 		huh.NewInput().Title("Role").Placeholder("member").Value(&role),
