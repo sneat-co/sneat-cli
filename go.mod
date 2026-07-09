@@ -10,8 +10,9 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dal-go/dalgo v0.62.9
 	github.com/dal-go/dalgo2firestore v0.8.9
-	github.com/sneat-co/contactus-ext/backend v0.1.0
 	github.com/sneat-co/contactus/backend v0.1.3
+	github.com/sneat-co/ext-contactus/backend v0.1.2
+	github.com/sneat-co/sneat-bots v0.3.1
 	github.com/sneat-co/sneat-core-modules v0.45.2
 	github.com/sneat-co/sneat-go-core v0.58.6
 	github.com/spf13/cobra v1.10.2
@@ -41,6 +42,7 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
+	github.com/bots-go-framework/bots-fw-store v0.10.5 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
@@ -70,7 +72,9 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
-	github.com/sneat-co/ext-contactus/backend v0.1.2 // indirect
+	github.com/sneat-co/assetus/backend v0.3.0 // indirect
+	github.com/sneat-co/calendarius/backend v0.3.0 // indirect
+	github.com/sneat-co/listus/backend v0.1.3 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/strongo/analytics v0.2.5 // indirect
 	github.com/strongo/decimal v0.1.1 // indirect

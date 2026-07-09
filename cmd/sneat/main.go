@@ -80,6 +80,7 @@ func main() {
 		commands.Ui(env),
 		commands.Contact(env),
 		commands.Contacts(env),
+		commands.Convo(env),
 	)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "sneat:", err)
