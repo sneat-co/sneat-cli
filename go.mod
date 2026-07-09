@@ -11,16 +11,24 @@ require (
 	github.com/dal-go/dalgo v0.62.9
 	github.com/dal-go/dalgo2firestore v0.8.9
 	github.com/sneat-co/contactus-ext/backend v0.1.0
-	github.com/sneat-co/contactus/backend v0.1.2
-	github.com/sneat-co/sneat-core-modules v0.39.0
-	github.com/sneat-co/sneat-go-core v0.55.6
+	github.com/sneat-co/contactus/backend v0.1.3
+	github.com/sneat-co/sneat-core-modules v0.45.2
+	github.com/sneat-co/sneat-go-core v0.58.6
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/strongoapp v0.31.39
+	github.com/strongo/strongoapp v0.31.41
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.44.0
 	google.golang.org/api v0.287.1
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/sneat-co/sneat-bots => ../sneat-bots
+
+replace github.com/sneat-co/listus/backend => ../listus/backend
+
+replace github.com/sneat-co/contactus/backend => ../contactus/backend
+
+replace github.com/sneat-co/calendarius/backend => ../calendarius/backend
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -62,6 +70,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
+	github.com/sneat-co/ext-contactus/backend v0.1.2 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/strongo/analytics v0.2.5 // indirect
 	github.com/strongo/decimal v0.1.1 // indirect
