@@ -1,6 +1,6 @@
 module github.com/sneat-co/sneat-cli
 
-go 1.26
+go 1.26.1
 
 require (
 	cloud.google.com/go/firestore v1.22.0
@@ -12,7 +12,7 @@ require (
 	github.com/dal-go/dalgo2firestore v0.8.9
 	github.com/sneat-co/contactus/backend v0.1.5
 	github.com/sneat-co/ext-contactus/backend v0.1.2
-	github.com/sneat-co/sneat-bots v0.3.5
+	github.com/sneat-co/sneat-bots v0.3.6
 	github.com/sneat-co/sneat-core-modules v0.45.3
 	github.com/sneat-co/sneat-go-core v0.58.6
 	github.com/spf13/cobra v1.10.2
@@ -46,6 +46,7 @@ require (
 	github.com/charmbracelet/x/exp/strings v0.0.0-20240722160745-212f7b056ed0 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/crediterra/money v0.3.1 // indirect
+	github.com/dal-go/dalgo2openvaultdb v0.1.0
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect

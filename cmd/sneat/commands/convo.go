@@ -34,10 +34,15 @@ func newConvoRuntime() (*convoruntime.Runtime, error) {
 	return convosetup.NewRuntime(llmmock.NewClient())
 }
 
-// setupSandbox wires the in-memory DB with the given space and user.
+// setupSandbox wires the sandbox DB (in-memory by default, OpenVaultDB when
+// SNEAT_STORAGE=openvaultdb) with the given space and user.
 // The returned restore func must be deferred by the caller.
 func setupSandbox(spaceID coretypes.SpaceID, userID string) (func(), error) {
-	_, restore, err := convodev.SetupSandbox(spaceID, userID)
+	db, err := resolveSandboxDB()
+	if err != nil {
+		return nil, err
+	}
+	_, restore, err := convodev.SetupSandboxWithDB(db, spaceID, userID)
 	return restore, err
 }
 
