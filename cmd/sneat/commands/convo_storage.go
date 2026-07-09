@@ -13,9 +13,10 @@ import (
 // storage-agnostic: they always go through facade.GetSneatDB; only this
 // wiring decides which DALgo driver backs it.
 const (
-	envSneatStorage   = "SNEAT_STORAGE"   // "" | "memory" | "openvaultdb"
-	envOpenvaultdbURL = "OPENVAULTDB_URL" // default http://127.0.0.1:6832
-	envOpenvaultdbDB  = "OPENVAULTDB_DB"  // default sneat-dev
+	envSneatStorage     = "SNEAT_STORAGE"     // "" | "memory" | "openvaultdb"
+	envOpenvaultdbURL   = "OPENVAULTDB_URL"   // default http://127.0.0.1:6832
+	envOpenvaultdbDB    = "OPENVAULTDB_DB"    // default sneat-dev
+	envOpenvaultdbToken = "OPENVAULTDB_TOKEN" // bearer token for `ovdb serve --auth` servers
 )
 
 // resolveSandboxDB constructs the DALgo DB for convo sandbox commands based
@@ -35,7 +36,11 @@ func resolveSandboxDB() (dal.DB, error) {
 		if dbID == "" {
 			dbID = "sneat-dev"
 		}
-		return dalgo2openvaultdb.NewDB(url, dbID)
+		var opts []dalgo2openvaultdb.Option
+		if token := os.Getenv(envOpenvaultdbToken); token != "" {
+			opts = append(opts, dalgo2openvaultdb.WithBearerToken(token))
+		}
+		return dalgo2openvaultdb.NewDB(url, dbID, opts...)
 	default:
 		return nil, fmt.Errorf("unsupported %s value %q (supported: memory, openvaultdb)", envSneatStorage, storage)
 	}
