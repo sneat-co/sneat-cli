@@ -25,7 +25,10 @@ jobs:
     permissions:
       contents: write
     secrets:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Org token with read access to private sneat-co repos — required for
+      # GOPRIVATE module fetches (same pattern as sneat-go ci.yml).
+      GH_TOKEN: ${{ secrets.SNEAT_CI_READWRITE_TOKEN }}
     #      COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
     with:
+      GOPRIVATE: github.com/sneat-co
       code_coverage: true

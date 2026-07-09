@@ -10,9 +10,9 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dal-go/dalgo v0.62.10
 	github.com/dal-go/dalgo2firestore v0.8.9
-	github.com/sneat-co/contactus/backend v0.1.5-0.20260709090932-fe5b101d2a4c
+	github.com/sneat-co/contactus/backend v0.1.5
 	github.com/sneat-co/ext-contactus/backend v0.1.2
-	github.com/sneat-co/sneat-bots v0.3.2-0.20260709100452-0fdcd636035b
+	github.com/sneat-co/sneat-bots v0.3.2
 	github.com/sneat-co/sneat-core-modules v0.45.2
 	github.com/sneat-co/sneat-go-core v0.58.6
 	github.com/spf13/cobra v1.10.2
@@ -65,8 +65,8 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
 	github.com/sneat-co/assetus/backend v0.3.0 // indirect
-	github.com/sneat-co/calendarius/backend v0.3.1-0.20260709091913-8470e8848a3b // indirect
-	github.com/sneat-co/listus/backend v0.1.5-0.20260709090852-bfa4938b2ba6 // indirect
+	github.com/sneat-co/calendarius/backend v0.3.1 // indirect
+	github.com/sneat-co/listus/backend v0.1.5 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/strongo/analytics v0.2.5 // indirect
 	github.com/strongo/decimal v0.1.1 // indirect
