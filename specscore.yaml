@@ -1,0 +1,16 @@
+# SpecScore Repo Config Schema: https://specscore.md/repo-config
+
+project:
+    title: Sneat CLI
+    host: github.com
+    org: sneat-co
+    repo: sneat-cli
+
+gates:
+    specify:
+        reviewers:
+            - name: ai-spec-reviewer
+              type: ai
+              prompt: .specscore/reviewers/specify-feature-reviewer.md
+            - name: human-approval
+              type: human

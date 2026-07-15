@@ -1,0 +1,113 @@
+---
+format: https://specscore.md/feature-specification
+status: Approved
+---
+
+# Feature: Chat TUI
+
+> [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-tui?op=explore) | [Edit](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-tui?op=edit) | [Ask question](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-tui?op=ask) | [Request change](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-tui?op=request-change) |
+**Status:** Approved
+**Source Ideas:** —
+
+## Summary
+
+First renderer of the Sneat chat messenger: the `sneat chat` command and its inline (non-alt-screen) Bubble Tea terminal UI, with a bottom-pinned input and arrow-navigable inline buttons.
+
+## Contents
+
+| Directory | Description |
+|---|---|
+| [_tests/](_tests/README.md) | Test scenarios for the chat terminal UI |
+
+### _tests
+
+Scenarios validating this Feature's requirements — startup preconditions, the scrollback commit rules for both submitted text and the `/spaces` → press-a-space flow, in-transcript failure reporting, and focus and key handling. All are pending implementation.
+
+## Problem
+
+[chat-messenger](../chat-messenger/README.md) defines what a Sneat conversation is, but nothing renders it. A user cannot reach it.
+
+The existing `internal/tui` package is a full-screen navigator over a stack of list screens (spaces, contacts, contact cards). Chat does not fit that shape: it has no sibling screens to navigate to, and its focus model spans a text input and a block of buttons rather than a single list. Reusing that screen stack would bend it to no benefit.
+
+A chat renderer must also decide how it occupies the terminal. Taking over the screen (as `sneat ui` does) discards the conversation on exit and puts nothing in the terminal's scrollback, which is the wrong trade for a transcript the user may want to keep, copy, or search.
+
+## Behavior
+
+### Command entry
+
+`sneat chat` is a thin cobra command that validates preconditions and delegates, mirroring how `sneat ui` delegates to `env.RunTUI`.
+
+#### REQ: chat-command
+
+The CLI MUST register a `chat` command that launches the interactive chat session. The command layer MUST delegate to an injected `env.RunChat(spaces SpacesReader, uid string) error` rather than constructing the terminal program itself, so the command stays unit-testable without a terminal.
+
+`RunChat` is the composition root: it constructs the concrete `Processor` from the reader and uid, and hands the renderer only the interface. The renderer package itself MUST NOT name a concrete implementation, per [chat-messenger#req:processor-seam](../chat-messenger/README.md#req-processor-seam).
+
+#### REQ: startup-preconditions
+
+The command MUST refuse to start when stdin is not a terminal, and MUST load the signed-in session from the session store, aborting when the store returns an error — the same gate `runSpaceUI` applies today. Both checks run before any terminal program is created, and each failure returns an error from the command rather than opening a session.
+
+### Rendering
+
+The chat draws inline, in the terminal's normal buffer, rather than taking over the screen.
+
+#### REQ: inline-rendering
+
+The terminal program MUST NOT use the alternate screen. It MUST render a live region pinned at the bottom of the terminal, containing the focusable reply and its buttons (when present), the input line, and a footer hint.
+
+#### REQ: scrollback-commit
+
+A completed turn MUST be committed to terminal scrollback and never repainted. A bot reply carrying a keyboard is not complete until its buttons stop being focusable, at which point it commits with its buttons rendered inert. A reply with no keyboard commits immediately.
+
+Submitting text and pressing a button are both user input for this purpose. Each MUST commit the live reply, then commit an echo of what the user did — the submitted text, or the pressed button's label — before the resulting replies render. A button press therefore always ends the previous reply's focusability, so no live reply is ever stranded.
+
+#### REQ: errors-render-in-transcript
+
+An error returned by the `Processor` during a session MUST be rendered as a bot message in the transcript, and the session MUST continue. It MUST NOT terminate the program, because doing so would discard the user's transcript. This is the renderer's half of [chat-messenger#req:errors-are-returned-not-formatted](../chat-messenger/README.md#req-errors-are-returned-not-formatted).
+
+### Interaction
+
+#### REQ: focus-and-keys
+
+Only the most recent bot message's buttons are focusable; buttons already committed to scrollback are inert text. Focus is either the input or the button block. `down` from the input enters the button block; `up` past the first row returns to the input; `left`/`right` move within a row; `enter` submits the input or presses the focused button according to focus; `esc` quits from the input and returns focus to the input from the button block; `ctrl+c` always quits.
+
+#### REQ: input-locked-while-pending
+
+While a reply is in flight, keyboard input MUST be ignored, with the sole exception of `ctrl+c`, which MUST still quit. This mirrors the guard the existing confirm screen uses while a delete is in flight, except that the confirm screen ignores every key — a chat session may block on a slow backend, so the user must always retain a way out.
+
+## Dependencies
+
+- chat-messenger
+
+## Acceptance Criteria
+
+### AC: chat-starts-only-when-usable
+
+**Requirements:** chat-tui#req:chat-command, chat-tui#req:startup-preconditions
+
+A chat session becomes available only when the environment can support it: a real terminal and an authenticated user. When either precondition fails, the CLI reports why and no session is drawn. The command layer's delegation boundary is observable without a terminal.
+
+### AC: transcript-is-durable-terminal-text
+
+**Requirements:** chat-tui#req:inline-rendering, chat-tui#req:scrollback-commit, chat-tui#req:errors-render-in-transcript
+
+The conversation accumulates as ordinary terminal scrollback, so past turns remain selectable, copyable, and searchable with the terminal's own tooling, and survive exit. Only the region that can still change is repainted. A backend failure joins the transcript as a message rather than destroying it.
+
+### AC: interaction-is-unambiguous
+
+**Requirements:** chat-tui#req:focus-and-keys, chat-tui#req:input-locked-while-pending
+
+At any moment exactly one target holds focus, every key has one defined meaning for that focus, and input that could race an in-flight reply is refused.
+
+## Out of Scope
+
+- **A `chat` screen inside `internal/tui`.** That package's screen-stack abstraction serves list navigation; chat has no sibling screens and a different focus model.
+- **Reflowing committed scrollback on terminal resize.** Inline rendering cannot reflow text already handed to the terminal. This is the same trade-off Claude Code and aider make, accepted in exchange for durable, selectable history.
+- **A web renderer.** A sibling of this Feature, depending on [chat-messenger](../chat-messenger/README.md) rather than on this Feature.
+
+## Open Questions
+
+None at this time.
+
+---
+*This document follows the https://specscore.md/feature-specification*
