@@ -40,7 +40,7 @@ Note the seam has a renderer-side half that is **not** in this Plan: `_tests/pro
 
 **Verifies:** chat-messenger#ac:processing-is-swappable
 **Depends-On:** 1
-**Status:** planning
+**Status:** complete
 
 Add helpers that build callback data in `<command>?<arg>=<value>` form and parse it back to a command path plus arguments, using `net/url` so the format matches what `bots-fw`'s router does (`url.Parse`, then dispatch on `URL.Path`). Test that `space?id=family1` round-trips to path `space` and argument `id=family1`, per `_tests/buttons-use-botkb-and-url-callback-data.md`.
 
@@ -48,7 +48,7 @@ Add helpers that build callback data in `<command>?<arg>=<value>` form and parse
 
 **Verifies:** chat-messenger#ac:conversation-input-is-handled-honestly
 **Depends-On:** 1
-**Status:** planning
+**Status:** complete
 
 Implement the in-process `Processor` over a `SpacesReader` and uid, with a command map keyed by the first word of `/`-prefixed text. Cover `/help`, the unknown-command reply naming the command and pointing at `/help`, and the free-text reply stating the capability does not exist yet. The package must not import `convoruntime` — that structural guard is the point of the placement decision above, and is asserted by `_tests/free-text-returns-deferred-notice.md`.
 
