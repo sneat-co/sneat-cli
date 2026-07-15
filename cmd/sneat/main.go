@@ -9,6 +9,8 @@ import (
 
 	"github.com/sneat-co/sneat-cli/cmd/sneat/commands"
 	"github.com/sneat-co/sneat-cli/internal/browserauth"
+	"github.com/sneat-co/sneat-cli/internal/chat"
+	"github.com/sneat-co/sneat-cli/internal/chattui"
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/sneat-co/sneat-cli/internal/session"
@@ -69,6 +71,12 @@ func main() {
 		RunTUI: func(spaces commands.SpacesReader, contacts commands.ContactsReader, deleter commands.ContactDeleter, uid string) error {
 			return tui.Run(spaces, contacts, deleter, uid)
 		},
+		// RunChat is the chat session's composition root: the one place that
+		// builds a concrete processor and hands the renderer only the
+		// chat.Processor interface (chat-messenger#req:processor-seam).
+		RunChat: func(spaces commands.SpacesReader, uid string) error {
+			return chattui.Run(chat.NewProcessor(spaces, uid))
+		},
 	}
 	root := commands.Root(env)
 	root.AddCommand(
@@ -78,6 +86,7 @@ func main() {
 		commands.Space(env),
 		commands.Spaces(env),
 		commands.Ui(env),
+		commands.Chat(env),
 		commands.Contact(env),
 		commands.Contacts(env),
 		commands.Convo(env),

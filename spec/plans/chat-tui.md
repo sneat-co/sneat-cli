@@ -42,7 +42,7 @@ Registering the command in `main.go` is deliberately deferred to Task 2. `RunCha
 
 **Verifies:** chat-tui#ac:transcript-is-durable-terminal-text
 **Depends-On:** 1
-**Status:** planning
+**Status:** complete
 
 Create `internal/chattui` with `Run(proc chat.Processor) error` and the root `Model`, mirroring `internal/tui/run.go`'s shape but **without** `tea.WithAltScreen()` — `_tests/buttoned-reply-commits-when-superseded.md` asserts the program is constructed without that option. Assign `main.go`'s `RunChat` closure to build the concrete processor via `internal/chat`'s exported constructor and hand `Run` only the interface, then register `commands.Chat(env)` beside `commands.Ui(env)` — the registration Task 1 deferred to here. Model state: the processor, a `bubbles/textinput`, the live reply, focus, a button cursor, and a pending flag.
 
