@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: Chat TUI
 
-**Status:** Executing
+**Status:** Implemented
 **Source Feature:** chat-tui
 **Date:** 2026-07-15
 **Owner:** alex
@@ -66,7 +66,7 @@ Implement the focus enum and button cursor: `down` from the input enters the but
 
 **Verifies:** chat-tui#ac:transcript-is-durable-terminal-text, chat-tui#ac:interaction-is-unambiguous
 **Depends-On:** 3, 4
-**Status:** planning
+**Status:** complete
 
 Treat a button press as user input for the commit rule: commit the live reply with its buttons rendered inert, commit an echo naming the pressed button's label, then render the replies `PressButton` returns. A press therefore always ends the previous reply's focusability. Covers `_tests/press-commits-live-reply.md`, including the branch where the resulting reply carries no keyboard and focus returns to the input.
 

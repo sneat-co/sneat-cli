@@ -271,12 +271,21 @@ func (m Model) handleButtonKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 // pressFocusedButton makes the turn the focused button stands for.
 //
-// TODO(chat-tui Task 5): the press must first commit the live reply and an echo
-// of this button's label, before the replies it prompts render
-// (REQ: scrollback-commit) — commitLive and renderUserEcho are what that needs.
-// Until it lands the press dispatches without committing, so the reply it
-// supersedes is left live and the transcript records no press at all. That is
-// wrong, and deliberately not half-faked here.
+// A press is user input exactly as a submitted line is, so it commits the same
+// way submitText does and in the same order: the live reply first, then an echo
+// of what the user did, and only then does the turn go to the Processor
+// (REQ: scrollback-commit). The reply it commits is the very one carrying the
+// button being pressed, which is what makes a press always end the previous
+// reply's focusability — no live reply is ever stranded, because the only way to
+// press a button is from the block that commits with it.
+//
+// The echo names the button's label rather than its callback data: the label is
+// what the user saw and chose, and `space?id=family1` is an implementation detail
+// of the seam it travels over.
+//
+// Both commits are joined into a single Println, and the press is sequenced after
+// it rather than batched alongside — see submitText for why the difference
+// matters.
 func (m Model) pressFocusedButton() (Model, tea.Cmd) {
 	btn, ok := m.focusedButton()
 	if !ok {
@@ -286,12 +295,21 @@ func (m Model) pressFocusedButton() (Model, tea.Cmd) {
 	if !ok {
 		// A button carrying no callback data names no turn: chat.Processor
 		// identifies a press by its data and there is none
-		// (chat-messenger#req:processor-seam). It must not go pending either —
+		// (chat-messenger#req:processor-seam). Nothing is committed, because
+		// nothing happened: no turn means the reply is not superseded, and its
+		// buttons are still the user's to press. It must not go pending either —
 		// nothing would answer, and the lock would never lift.
 		return m, nil
 	}
+
+	var blocks []string
+	if live := m.commitLive(); live != "" {
+		blocks = append(blocks, live)
+	}
+	blocks = append(blocks, renderUserEcho(btn.GetText()))
+
 	m.pending = true
-	return m, pressButton(m.proc, data)
+	return m, tea.Sequence(commit(blocks), pressButton(m.proc, data))
 }
 
 // focusInputLine puts focus back on the input, leaving no cursor behind in the
@@ -633,8 +651,11 @@ func renderError(err error) string {
 }
 
 // renderUserEcho renders what the user did, for scrollback: the text they
-// submitted, or — from Task 5 — the label of the button they pressed
-// (REQ: scrollback-commit).
+// submitted, or the label of the button they pressed (REQ: scrollback-commit).
+//
+// Both read the same way, because to the transcript they are the same thing —
+// the user's turn — and a reader scanning back through it should not have to
+// know which kind of input a line came from to follow the conversation.
 //
 // It carries the input's own prompt, so the committed line reads exactly as the
 // input line it replaces did.

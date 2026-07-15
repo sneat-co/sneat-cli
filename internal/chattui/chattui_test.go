@@ -189,6 +189,39 @@ func sequencedCmds(msg tea.Msg) ([]tea.Cmd, bool) {
 	return out, true
 }
 
+// sequenceIn returns the commands the tea.Sequence bundled into cmd runs, in
+// order, and whether cmd dispatches one at all.
+//
+// It exists because a command does not always reach the event loop bare. A press
+// commits the live reply, which returns focus to the input, and syncInputCursor
+// batches the input's own cursor command alongside whatever the key handler
+// returned — so the sequence a press makes arrives as one element of a tea.Batch
+// rather than as the command itself. Only the bundle is walked, never the
+// sequence's own elements: those are the commit and the turn, and running them
+// here would be running the turn twice.
+//
+// TestSequenceIsFoundThroughABatch is its control.
+func sequenceIn(t *testing.T, cmd tea.Cmd) ([]tea.Cmd, bool) {
+	t.Helper()
+	if cmd == nil {
+		return nil, false
+	}
+	msg := cmd()
+	if cmds, ok := sequencedCmds(msg); ok {
+		return cmds, true
+	}
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return nil, false
+	}
+	for _, sub := range batch {
+		if cmds, ok := sequenceIn(t, sub); ok {
+			return cmds, true
+		}
+	}
+	return nil, false
+}
+
 // drain runs cmd and returns every message it produces, in order, flattening
 // tea.Sequence and tea.Batch bundles into the commands they carry.
 func drain(t *testing.T, cmd tea.Cmd) []tea.Msg {
@@ -298,6 +331,27 @@ func TestSequenceCmdsAreReadable(t *testing.T) {
 	want := []string{"first", "second"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("drained a tea.Sequence to %q, want %q: sequencedCmds no longer recognises one", got, want)
+	}
+}
+
+// TestSequenceIsFoundThroughABatch is the control for sequenceIn, and it has to
+// fail in both directions to be worth anything: it proves a tea.Sequence is found
+// through the tea.Batch a press's command arrives wrapped in, and that none is
+// found where none was made. Without the second half, "the press sequences its
+// commit ahead of the turn" would pass on a press that batched the two — which is
+// the exact race the sequence exists to rule out.
+func TestSequenceIsFoundThroughABatch(t *testing.T) {
+	cmds, ok := sequenceIn(t, tea.Batch(tea.Println("noise"), tea.Sequence(tea.Println("first"), tea.Println("second"))))
+	if !ok {
+		t.Fatal("sequenceIn did not find a tea.Sequence bundled into a tea.Batch: the press ordering assertion can no longer see the sequence a press makes")
+	}
+	got := scrollbackOf(drain(t, tea.Sequence(cmds...)))
+	want := []string{"first", "second"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sequenceIn returned commands printing %q, want %q", got, want)
+	}
+	if _, ok := sequenceIn(t, tea.Batch(tea.Println("first"), tea.Println("second"))); ok {
+		t.Error("sequenceIn found a tea.Sequence in a tea.Batch that carries none: the press ordering assertion would pass on a press that raced its commit against the turn")
 	}
 }
 
@@ -629,6 +683,179 @@ func TestCommitRule(t *testing.T) {
 			}
 			if strings.Contains(body, tt.wantLive) {
 				t.Errorf("the live reply %q was also committed to scrollback %q", tt.wantLive, body)
+			}
+		})
+	}
+}
+
+// --- committing a pressed turn (REQ: scrollback-commit) ---
+//
+// Pressing a button is user input exactly as submitting text is, so it commits
+// the live reply and then an echo of what the user did, before the replies it
+// prompts render. It is the half of the rule text submission cannot exercise: a
+// press is the only input that arrives *from* the live reply's own button block,
+// so it is the only one that has to end that block's focusability to happen at
+// all.
+
+// pressTurn drives one whole press turn — it walks focus onto a button with
+// keys, presses enter, and pumps the Processor's answer back through the model —
+// and returns the model the turn left behind together with every message it
+// produced, in order. It is the press counterpart of turnMsgs.
+func pressTurn(t *testing.T, m Model, keys ...string) (Model, []tea.Msg) {
+	t.Helper()
+	m, _ = pressKeys(t, m, keys...)
+	if m.focus != focusButtons {
+		t.Fatalf("setup: %v did not put focus in the button block, so enter would not press a button", keys)
+	}
+	next, cmd := m.Update(key(t, "enter"))
+	return pump(t, next.(Model), cmd)
+}
+
+// TestPressCommitsTheLiveReplyThenEchoesTheLabel drives the first half of
+// _tests/press-commits-live-reply.md — the `/spaces` → press-a-space flow end to
+// end (chat-tui#req:scrollback-commit).
+//
+// A press is user input, so the reply whose button it pressed commits first, with
+// its buttons inert: pressing one is precisely the moment they stop being
+// focusable. The echo of the press follows it, and only then do the replies the
+// press prompted render.
+func TestPressCommitsTheLiveReplyThenEchoesTheLabel(t *testing.T) {
+	const answer = "Family space: 3 members"
+	var pressed []string
+	m := liveModel(fakeProcessor{replies: []chat.Reply{{Text: answer}}, pressed: &pressed}, spacesKeyboard())
+
+	m, _ = pressKeys(t, m, "down")
+	// The live region marks the pressed button: that is what the commit below
+	// must not carry into scrollback, and without the mark that assertion could
+	// not fail.
+	if got := focusedLabel(m); got != "Family" {
+		t.Fatalf("setup: the live region marks %q as focused, want %q", got, "Family")
+	}
+
+	next, cmd := m.Update(key(t, "enter"))
+	m, msgs := pump(t, next.(Model), cmd)
+
+	sb := scrollbackOf(msgs)
+	if len(sb) != 2 {
+		t.Fatalf("a press committed %q, want two blocks: the pressed reply with the echo of the press, then the reply the press prompted (chat-tui#req:scrollback-commit)", sb)
+	}
+	block := sb[0]
+	iReply := strings.Index(block, "Your spaces:")
+	iEcho := strings.Index(block, inputPrompt+"Family")
+	switch {
+	case iReply < 0:
+		t.Errorf("the reply whose button was pressed is missing from the committed block %q; a press commits the live reply (chat-tui#req:scrollback-commit)", block)
+	case iEcho < 0:
+		t.Errorf("the committed block %q carries no echo of the press naming the pressed button %q; the transcript records what the user did (chat-tui#req:scrollback-commit)", block, "Family")
+	case iReply > iEcho:
+		t.Errorf("the committed block %q echoes the press before the reply it supersedes; the live reply commits first (chat-tui#req:scrollback-commit)", block)
+	}
+	if strings.Contains(block, "space?id=family1") {
+		t.Errorf("the committed block %q names the pressed button's callback data; the echo names the label the user pressed, which is what they saw", block)
+	}
+	if !strings.Contains(block, "Work") {
+		t.Errorf("the committed block %q is missing button %q: a committed reply keeps its buttons as inert text (chat-tui#req:scrollback-commit)", block, "Work")
+	}
+	if strings.Contains(block, focusedMarkLeft) {
+		t.Errorf("the committed block %q marks a button as focused; a press commits the reply with its buttons rendered inert (chat-tui#req:scrollback-commit)", block)
+	}
+	if !strings.Contains(sb[1], answer) {
+		t.Errorf("a press committed %q after the press, want the reply it prompted, %q: the replies render after the echo (chat-tui#req:scrollback-commit)", sb[1], answer)
+	}
+	if !reflect.DeepEqual(pressed, []string{"space?id=family1"}) {
+		t.Errorf("PressButton received %q, want exactly one call, carrying [%q]", pressed, "space?id=family1")
+	}
+	if view := m.View(); strings.Contains(view, "Your spaces:") {
+		t.Errorf("View() = %q still draws the reply whose button was pressed; no live reply from before the press remains focusable (chat-tui#req:scrollback-commit)", view)
+	}
+}
+
+// TestPressSequencesTheCommitAheadOfThePress pins how a press's ordering is
+// guaranteed rather than merely likely, for the same reason
+// TestSubmitSequencesTheCommitAheadOfTheSend does it for a submit: tea.Batch
+// would run the commit and the turn concurrently, so a Processor that answered
+// fast enough could land its reply in scrollback ahead of the press that prompted
+// it (chat-tui#req:scrollback-commit).
+func TestPressSequencesTheCommitAheadOfThePress(t *testing.T) {
+	m, _ := pressKeys(t, liveModel(fakeProcessor{replies: []chat.Reply{{Text: "Family space:"}}}, spacesKeyboard()), "down")
+	if m.focus != focusButtons {
+		t.Fatal("setup: expected focus in the button block after down")
+	}
+
+	_, cmd := m.Update(key(t, "enter"))
+
+	cmds, ok := sequenceIn(t, cmd)
+	if !ok {
+		t.Fatal("a press dispatched no tea.Sequence: the commit must be ordered ahead of the press, not raced against it (chat-tui#req:scrollback-commit)")
+	}
+	if len(cmds) != 2 {
+		t.Fatalf("a press sequenced %d commands, want 2: the commit then the press", len(cmds))
+	}
+	if _, ok := printedBody(cmds[0]()); !ok {
+		t.Error("the first command a press sequences does not commit to scrollback; the commit must come first")
+	}
+}
+
+// TestAPressLeavesNothingFocusableFromBeforeIt pins the rest of
+// _tests/press-commits-live-reply.md, across everything a press can be answered
+// with: a press always ends the previous reply's focusability, so no live reply is
+// ever stranded (chat-tui#req:scrollback-commit).
+//
+// The first case is the scenario's second half — a press answered with a reply
+// carrying no keyboard leaves nothing live and focus on the input. The rest are
+// the shapes that would otherwise be the ways to strand one.
+func TestAPressLeavesNothingFocusableFromBeforeIt(t *testing.T) {
+	const answer = "Family space: 3 members"
+
+	tests := []struct {
+		name string
+		// replies is what PressButton answers the press with.
+		replies []chat.Reply
+		// wantLive is the text of the reply expected to stay live after the
+		// press, or "" for none.
+		wantLive string
+	}{
+		{
+			name:    "a reply carrying no keyboard commits, leaving nothing live",
+			replies: []chat.Reply{{Text: answer}},
+		},
+		{
+			// The pressed reply still commits; the new one takes the live slot,
+			// so what is focusable is never what the user already pressed.
+			name:     "a reply carrying a keyboard becomes the live one",
+			replies:  []chat.Reply{{Text: "Family space:", Keyboard: raggedKeyboard()}},
+			wantLive: "Family space:",
+		},
+		{
+			// A press answered with nothing must still not leave the reply it
+			// pressed live: the press already ended its focusability.
+			name: "a press answered with nothing leaves nothing live",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, msgs := pressTurn(t, liveModel(fakeProcessor{replies: tt.replies}, spacesKeyboard()), "down")
+
+			if sb := scrollbackOf(msgs); len(sb) == 0 || !strings.Contains(sb[0], "Your spaces:") {
+				t.Fatalf("a press committed %q, want the reply it superseded first (chat-tui#req:scrollback-commit)", sb)
+			}
+			if m.focus != focusInput {
+				t.Errorf("focus = %v after a press, want focusInput: the button block it pressed from no longer exists (chat-tui#req:focus-and-keys)", m.focus)
+			}
+			if view := m.View(); strings.Contains(view, "Your spaces:") {
+				t.Errorf("View() = %q still draws the reply whose button was pressed; a press always ends the previous reply's focusability (chat-tui#req:scrollback-commit)", view)
+			}
+			if tt.wantLive == "" {
+				if m.live != nil {
+					t.Errorf("live = %+v after a press, want nil: nothing the press was answered with is focusable", m.live)
+				}
+				return
+			}
+			if m.live == nil {
+				t.Fatalf("live = nil, want the reply %q to stay focusable", tt.wantLive)
+			}
+			if m.live.Text != tt.wantLive {
+				t.Errorf("live.Text = %q, want %q", m.live.Text, tt.wantLive)
 			}
 		})
 	}
@@ -1249,13 +1476,23 @@ func TestEnterOnAButtonCarryingNoCallbackDataDoesNothing(t *testing.T) {
 
 	next, cmd := m.Update(key(t, "enter"))
 	m = next.(Model)
-	drain(t, cmd)
+	msgs := drain(t, cmd)
 
 	if len(pressed) != 0 {
 		t.Errorf("PressButton received %q for a button carrying no callback data", pressed)
 	}
 	if m.pending {
 		t.Error("pending = true after enter on a button carrying no callback data: nothing is in flight, and nothing would ever lift the lock (chat-tui#req:input-locked-while-pending)")
+	}
+	// No turn was made, so nothing superseded the reply: it is still the live
+	// one, and its buttons are still focusable. A press that committed before
+	// working out whether it had a turn to make would take the transcript, and
+	// the user's buttons, with it.
+	if got := scrollbackOf(msgs); len(got) != 0 {
+		t.Errorf("enter on a button carrying no callback data committed %q to scrollback; it makes no turn, so there is nothing to commit and nothing to echo (chat-tui#req:scrollback-commit)", got)
+	}
+	if m.live == nil {
+		t.Error("live = nil after enter on a button carrying no callback data; it makes no turn, so the reply is not superseded and its buttons stay focusable (chat-tui#req:scrollback-commit)")
 	}
 }
 
@@ -1402,12 +1639,7 @@ func TestBothTurnKindsRouteAFailureToTheTranscript(t *testing.T) {
 		{
 			name: "a button press fails",
 			turn: func(t *testing.T, proc chat.Processor) (Model, []tea.Msg) {
-				m, _ := pressKeys(t, liveModel(proc, spacesKeyboard()), "down")
-				if m.focus != focusButtons {
-					t.Fatal("setup: expected focus in the button block after down")
-				}
-				next, cmd := m.Update(key(t, "enter"))
-				return pump(t, next.(Model), cmd)
+				return pressTurn(t, liveModel(proc, spacesKeyboard()), "down")
 			},
 		},
 	}
