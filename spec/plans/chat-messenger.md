@@ -52,6 +52,8 @@ Add helpers that build callback data in `<command>?<arg>=<value>` form and parse
 
 Implement the in-process `Processor` over a `SpacesReader` and uid, with a command map keyed by the first word of `/`-prefixed text. Cover `/help`, the unknown-command reply naming the command and pointing at `/help`, and the free-text reply stating the capability does not exist yet. The package must not import `convoruntime` — that structural guard is the point of the placement decision above, and is asserted by `_tests/free-text-returns-deferred-notice.md`.
 
+Keep the concrete processor type unexported and expose it through an **exported** constructor returning the `Processor` interface — not the concrete type, which would be legal Go but lint-flagged. That visibility split is load-bearing rather than stylistic: it is what lets the renderer package import this one for the interface while remaining structurally unable to name an implementation, satisfying `_tests/processor-returns-errors-unformatted.md`'s second block by compiler enforcement rather than by discipline. The `chat-tui` Plan's composition root calls this constructor.
+
 `_tests/slash-commands-act-on-real-spaces.md` spans three tasks rather than one: its `/help` and unknown-command blocks land here, its `/spaces` listing blocks in Task 4, and its press blocks in Task 5.
 
 ### Task 4: Implement /spaces with ordered, titled inline buttons
