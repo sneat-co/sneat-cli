@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: Chat Messenger
 
-**Status:** Approved
+**Status:** Executing
 **Source Feature:** chat-messenger
 **Date:** 2026-07-15
 **Owner:** alex
@@ -30,7 +30,7 @@ Both ACs are covered; none are deferred. Every task carries the tests that prove
 
 **Verifies:** chat-messenger#ac:processing-is-swappable
 **Depends-On:** —
-**Status:** planning
+**Status:** complete
 
 Create the `internal/chat` package and define `Processor` (`SendText(ctx, text)` and `PressButton(ctx, data)`, each returning `([]Reply, error)`) plus `Reply` (message text and an optional `botkb.Keyboard`). Add the `bots-go-core` dependency for `botkb`. Establish the error discipline here: the interface returns failures as `error`, and no implementation formats user-facing error prose, per `chat-messenger#req:errors-are-returned-not-formatted`.
 
