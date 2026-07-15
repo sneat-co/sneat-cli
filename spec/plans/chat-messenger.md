@@ -60,7 +60,7 @@ Keep the concrete processor type unexported and expose it through an **exported*
 
 **Verifies:** chat-messenger#ac:conversation-input-is-handled-honestly, chat-messenger#ac:processing-is-swappable
 **Depends-On:** 2, 3
-**Status:** planning
+**Status:** complete
 
 Render the user's real spaces as one `botkb.DataButton` per row via `botkb.NewMessageKeyboard(botkb.KeyboardTypeInline, ...)`, labelled with each space's title and falling back to its ID when empty, ordered by space ID, each carrying `space?id=<spaceID>`. Sorting is required rather than cosmetic: `ListSpaces` returns a `map[string]any`, whose iteration order Go randomizes — `internal/tui/items.go`'s `spaceItemsFrom` solves the same problem with `sortedKeys`. A user with no spaces gets a reply saying so and carrying no keyboard at all, since a renderer branches on keyboard presence.
 

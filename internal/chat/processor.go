@@ -4,8 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"net/url"
+	"slices"
 	"strings"
 	"unicode"
+
+	"github.com/bots-go-framework/bots-go-core/botkb"
 )
 
 // SpacesReader lists the signed-in user's spaces.
@@ -23,6 +28,17 @@ type SpacesReader interface {
 const (
 	cmdSpaces = "/spaces"
 	cmdHelp   = "/help"
+)
+
+// Callback vocabulary: the command a button's callback data names, and the
+// argument it carries. Buttons are encoded with these and presses dispatch on
+// them, so the two sides cannot drift into `space?id=` vs `space?spaceID=`.
+const (
+	// cbSpace selects a space: `space?id=<spaceID>`.
+	cbSpace = "space"
+
+	// cbArgSpaceID names the space cbSpace acts on.
+	cbArgSpaceID = "id"
 )
 
 // command is one slash command: how it is typed, how /help describes it, and
@@ -129,17 +145,71 @@ func (p *processor) helpCmd(context.Context) ([]Reply, error) {
 	return []Reply{{Text: b.String()}}, nil
 }
 
-// spacesCmd lists the signed-in user's spaces.
+// spacesCmd lists the signed-in user's spaces, one pressable button per space
+// (REQ: spaces-command).
 //
-// TODO(chat-messenger Task 4): implement REQ: spaces-command — one inline
-// button per space, one per row, ordered by space ID, labelled with the title
-// and falling back to the ID, each carrying `space?id=<spaceID>`; a user with
-// no spaces gets a reply saying so and no keyboard at all. It is registered
-// now so /help can name it and so routing has somewhere to land. Until it is
-// written it fails rather than answers: a listing the reader never produced
-// would be precisely the fixture-shaped lie this Feature exists to prevent.
-func (p *processor) spacesCmd(context.Context) ([]Reply, error) {
-	return nil, errors.New("/spaces is not implemented yet")
+// A reader failure comes back as an error rather than a reply saying so: this
+// package cannot know how the surface renders a failure, and a listing the
+// reader never produced would be the fixture-shaped lie this Feature exists to
+// prevent (REQ: errors-are-returned-not-formatted).
+func (p *processor) spacesCmd(ctx context.Context) ([]Reply, error) {
+	spaces, err := p.spaces.ListSpaces(ctx, p.uid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list spaces: %w", err)
+	}
+	if len(spaces) == 0 {
+		// No keyboard at all rather than an empty one: a renderer branches on
+		// keyboard presence to decide whether a reply is focusable, so an
+		// empty-but-present keyboard would give it a focus block with nothing
+		// to focus.
+		return []Reply{{Text: "You have no spaces."}}, nil
+	}
+
+	// Sorted, not ranged: ListSpaces returns a map, whose iteration order Go
+	// randomizes, so ranging it directly would reshuffle the user's buttons on
+	// every /spaces. internal/tui's spaceItemsFrom sorts for the same reason.
+	ids := slices.Sorted(maps.Keys(spaces))
+
+	rows := make([][]botkb.Button, 0, len(ids))
+	for _, id := range ids {
+		// Built through the encoder, which verifies the data parses back as
+		// this command under the router's own contract, rather than by pasting
+		// the string together here.
+		data, err := encodeCallbackData(cbSpace, url.Values{cbArgSpaceID: {id}})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build the button for space %q: %w", id, err)
+		}
+		// One button per row: the spaces stack vertically.
+		rows = append(rows, []botkb.Button{botkb.NewDataButton(spaceLabel(spaces[id], id), data)})
+	}
+	return []Reply{{
+		Text:     fmt.Sprintf("You have %d %s:", len(ids), plural(len(ids), "space", "spaces")),
+		Keyboard: botkb.NewMessageKeyboard(botkb.KeyboardTypeInline, rows...),
+	}}, nil
+}
+
+// spaceLabel returns a space's button label: its title, falling back to the ID.
+//
+// The brief arrives as an untyped value out of a map[string]any, so "no title"
+// has three shapes — the key absent, its value not a string, or the string
+// empty — and a brief that is not a map at all is a fourth. Each type assertion
+// below takes its comma-ok form and lands on the same fallback, so none of them
+// can panic a listing into a failed command. Indexing a nil map is defined, so
+// a non-map brief needs no separate branch.
+func spaceLabel(brief any, id string) string {
+	b, _ := brief.(map[string]any)
+	if title, _ := b["title"].(string); title != "" {
+		return title
+	}
+	return id
+}
+
+// plural picks the singular or plural form for n.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // freeText answers a message that is not a command.
