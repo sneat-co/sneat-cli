@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"net/url"
@@ -113,16 +112,81 @@ func (p *processor) SendText(ctx context.Context, text string) ([]Reply, error) 
 	return cmd.handle(ctx)
 }
 
-// PressButton processes a button press, identified by its callback data.
+// PressButton processes a button press, identified by its callback data. It
+// dispatches on the command the data names, the same way bots-fw's router does
+// (REQ: callback-data-url).
 //
-// TODO(chat-messenger Task 5): implement REQ: active-space-selection and
-// REQ: unrecognized-callback-data — dispatch on the parsed callback path, set
-// activeSpace for `space?id=<id>` and name the newly active space, return an
-// error without changing it when the id names no space the user can see, and
-// answer unhandleable data with a reply or an error. Until then a press fails
-// loudly: never a silent no-op, and never a fabricated confirmation.
-func (p *processor) PressButton(context.Context, string) ([]Reply, error) {
-	return nil, errors.New("button presses are not implemented yet")
+// Data this processor cannot dispatch — it does not parse, names a command
+// nobody registered, or omits an argument that command requires — is answered
+// with a reply rather than an error (REQ: unrecognized-callback-data permits
+// either). Two reasons to prefer the reply. The REQ frames this as the
+// press-side counterpart of REQ: slash-command-routing's unknown typed command,
+// which unknownCommand already answers with a reply naming a way forward; the
+// same event arriving pressed rather than typed should not change category.
+// And the reply is what a renderer can present usefully: chat-tui renders a
+// returned error as a bot message and continues
+// (chat-tui#req:errors-render-in-transcript), so on that surface the two look
+// alike — but a web renderer is free to surface an error as failure chrome,
+// where "this button is out of date, here is what to do" would read as the
+// session breaking rather than as the bot answering. Errors stay reserved for
+// what genuinely failed: the reader, or the lookup below.
+func (p *processor) PressButton(ctx context.Context, data string) ([]Reply, error) {
+	cb, err := parseCallbackData(data)
+	if err != nil {
+		return p.unhandledPress(), nil
+	}
+	switch cb.command {
+	case cbSpace:
+		// The bool, not the value: an id passed empty is not an id omitted, so
+		// it goes on to selectSpace and fails there on the lookup, which is the
+		// stale-button case rather than a structural one. That is the whole
+		// reason callbackData.arg reports presence separately from value.
+		id, ok := cb.arg(cbArgSpaceID)
+		if !ok {
+			return p.unhandledPress(), nil
+		}
+		return p.selectSpace(ctx, id)
+	default:
+		return p.unhandledPress(), nil
+	}
+}
+
+// selectSpace makes id the session's active space and says so
+// (REQ: active-space-selection).
+//
+// The reader is consulted rather than trusted: a button's id is only as fresh
+// as the listing that emitted it, and a space can be revoked mid-session. An id
+// naming no space the user can currently see leaves activeSpace alone and comes
+// back as an error — the failure is real, and this package cannot know how the
+// surface shows one (REQ: errors-are-returned-not-formatted).
+func (p *processor) selectSpace(ctx context.Context, id string) ([]Reply, error) {
+	spaces, err := p.spaces.ListSpaces(ctx, p.uid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list spaces: %w", err)
+	}
+	brief, ok := spaces[id]
+	if !ok {
+		return nil, fmt.Errorf("space %q is not among the spaces %q can see", id, p.uid)
+	}
+	// Assigned only past the lookup: an unknown id must leave the previously
+	// active space standing.
+	p.activeSpace = id
+	// Named by label, through the same resolution the button's own label took,
+	// so the confirmation echoes what the user pressed rather than the ID the
+	// callback data happened to carry.
+	return []Reply{{Text: fmt.Sprintf("Active space is now %s.", spaceLabel(brief, id))}}, nil
+}
+
+// unhandledPress answers callback data this processor cannot dispatch — never a
+// silent no-op (REQ: unrecognized-callback-data).
+//
+// It does not echo the data back. A user never typed it, so quoting `%zz` at
+// them names nothing they chose; what they can act on is that the button is
+// stale and that /help lists what still works.
+func (p *processor) unhandledPress() []Reply {
+	return []Reply{{Text: fmt.Sprintf(
+		"That action could not be handled — the button may be out of date. Try %s for the list of commands.",
+		cmdHelp)}}
 }
 
 // commandName returns the first word of a slash-command line: "/spaces" from

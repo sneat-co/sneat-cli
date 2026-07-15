@@ -347,6 +347,210 @@ func TestProcessor_FreeTextIsDeferredNotRouted(t *testing.T) {
 	}
 }
 
+// --- button presses ---
+
+// press runs one press turn and returns the single reply it must produce, for
+// the presses that are answered rather than failed.
+func press(t *testing.T, p Processor, data string) Reply {
+	t.Helper()
+	replies, err := p.PressButton(context.Background(), data)
+	if err != nil {
+		t.Fatalf("PressButton(%q): unexpected error: %v", data, err)
+	}
+	if len(replies) != 1 {
+		t.Fatalf("PressButton(%q): replies = %d, want 1: %v", data, len(replies), replies)
+	}
+	return replies[0]
+}
+
+// TestProcessor_PressSpaceButtonSetsTheActiveSpace is the scenario from
+// _tests/slash-commands-act-on-real-spaces.md: pressing a space button selects
+// that space and says so, naming it as the button did (REQ: active-space-selection).
+func TestProcessor_PressSpaceButtonSetsTheActiveSpace(t *testing.T) {
+	p := newTestProcessor(twoSpaces()).(*processor)
+	reply := press(t, p, "space?id=family1")
+
+	if p.activeSpace != "family1" {
+		t.Errorf("activeSpace = %q, want %q", p.activeSpace, "family1")
+	}
+	// The confirmation names the space the way the button did — by title, not
+	// by the ID the callback data carried.
+	if !strings.Contains(reply.Text, "Family") {
+		t.Errorf("reply %q does not confirm that the active space is now %q", reply.Text, "Family")
+	}
+	if strings.Contains(reply.Text, "family1") {
+		t.Errorf("reply %q names the space by ID; the user pressed a button labelled %q", reply.Text, "Family")
+	}
+	if reply.Keyboard != nil {
+		t.Errorf("confirmation reply should carry no keyboard, got %v", reply.Keyboard)
+	}
+}
+
+// A space with no title is confirmed by its ID, the same fallback its button
+// label took: the confirmation must name what the user actually pressed.
+func TestProcessor_PressSpaceButtonConfirmsByLabel(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		brief any
+		want  string
+	}{
+		{"titled", map[string]any{"title": "Solo"}, "Solo"},
+		{"untitled", map[string]any{"title": ""}, "solo1"},
+		{"brief not a map", "not-a-brief", "solo1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newTestProcessor(map[string]any{"solo1": tt.brief}).(*processor)
+			reply := press(t, p, "space?id=solo1")
+
+			if p.activeSpace != "solo1" {
+				t.Errorf("activeSpace = %q, want %q", p.activeSpace, "solo1")
+			}
+			if !strings.Contains(reply.Text, tt.want) {
+				t.Errorf("reply %q does not name the newly active space %q", reply.Text, tt.want)
+			}
+		})
+	}
+}
+
+// TestProcessor_PressingWhatSpacesEncodedSelectsThatSpace closes the loop the
+// two halves of the callback vocabulary leave open: /spaces encodes the data,
+// PressButton dispatches on it. Asserting each against a literal would let both
+// drift to `space?spaceID=` together and still pass, so this presses exactly
+// what the command emitted.
+func TestProcessor_PressingWhatSpacesEncodedSelectsThatSpace(t *testing.T) {
+	p := newTestProcessor(twoSpaces()).(*processor)
+
+	buttons := spaceButtons(t, send(t, p, "/spaces"))
+	for _, b := range buttons {
+		reply := press(t, p, b.Data)
+		if !strings.Contains(reply.Text, b.GetText()) {
+			t.Errorf("pressing %q: reply %q does not name the space the button labelled %q",
+				b.Data, reply.Text, b.GetText())
+		}
+	}
+	// The last button pressed is the space left active.
+	if want := "personal1"; p.activeSpace != want {
+		t.Errorf("activeSpace = %q, want %q", p.activeSpace, want)
+	}
+}
+
+// TestProcessor_UnhandleablePressIsAnsweredNotDropped is the scenario's
+// unrecognized-data block (REQ: unrecognized-callback-data). Each trigger is
+// structural: the data does not parse, names an unknown path, or omits the
+// argument its path requires.
+//
+// The REQ permits either a reply or an error; this processor answers all three
+// with a reply, and the test asserts both halves. The general contract — never
+// nothing, never a panic — is asserted first, so the test still states the
+// requirement rather than only the choice made under it.
+func TestProcessor_UnhandleablePressIsAnsweredNotDropped(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		data string
+	}{
+		{"unknown path", "nope?id=1"},
+		{"unparseable", "%zz"},
+		{"required argument omitted", "space"},
+		{"no data at all", ""},
+		{"unknown path, no arguments", "nope"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newTestProcessor(twoSpaces()).(*processor)
+
+			replies, err := p.PressButton(context.Background(), tt.data)
+
+			// The contract: a reply or an error, never silently nothing.
+			if err == nil && len(replies) == 0 {
+				t.Fatalf("PressButton(%q) returned no replies and no error — a silent no-op", tt.data)
+			}
+			// The choice made under it: an answerable press is answered, so the
+			// user reads it as the bot's turn rather than as a failure.
+			if err != nil {
+				t.Fatalf("PressButton(%q) = error %v, want a reply saying it could not be handled", tt.data, err)
+			}
+			if len(replies) != 1 {
+				t.Fatalf("PressButton(%q): replies = %d, want 1: %v", tt.data, len(replies), replies)
+			}
+			if !strings.Contains(strings.ToLower(replies[0].Text), "could not be handled") {
+				t.Errorf("reply %q does not say the action could not be handled", replies[0].Text)
+			}
+			if replies[0].Keyboard != nil {
+				t.Errorf("reply should carry no keyboard, got %v", replies[0].Keyboard)
+			}
+			// Data nobody can dispatch selects nothing.
+			if p.activeSpace != "" {
+				t.Errorf("activeSpace = %q, want it untouched by an unhandleable press", p.activeSpace)
+			}
+		})
+	}
+}
+
+// An argument passed empty is not an argument omitted: `space?id=` carries the
+// id the path requires, so it is dispatched and fails on the lookup — the stale
+// case, an error — rather than being answered as structurally unhandleable.
+// This is the distinction callbackData.arg's bool exists to make.
+func TestProcessor_PressSpaceWithEmptyIDIsAStaleLookupNotAMissingArgument(t *testing.T) {
+	p := newTestProcessor(twoSpaces()).(*processor)
+
+	replies, err := p.PressButton(context.Background(), "space?id=")
+	if err == nil {
+		t.Fatalf("PressButton(space?id=) = nil error, want the lookup failure returned; replies: %v", replies)
+	}
+	if len(replies) != 0 {
+		t.Errorf("a failure must not produce replies, got %v", replies)
+	}
+	if p.activeSpace != "" {
+		t.Errorf("activeSpace = %q, want it unchanged by a failed selection", p.activeSpace)
+	}
+}
+
+// TestProcessor_PressStaleSpaceButtonErrorsAndKeepsTheActiveSpace is the
+// scenario's stale-button block: an id naming no space the reader returns is an
+// error, and the active space survives it (REQ: active-space-selection).
+func TestProcessor_PressStaleSpaceButtonErrorsAndKeepsTheActiveSpace(t *testing.T) {
+	p := newTestProcessor(twoSpaces()).(*processor)
+
+	// Establish the active space through the same door the user would use.
+	press(t, p, "space?id=family1")
+	if p.activeSpace != "family1" {
+		t.Fatalf("setup: activeSpace = %q, want %q", p.activeSpace, "family1")
+	}
+
+	replies, err := p.PressButton(context.Background(), "space?id=ghost1")
+	if err == nil {
+		t.Fatalf("PressButton(space?id=ghost1) = nil error, want an error; replies: %v", replies)
+	}
+	// The failure is returned, not formatted into prose the renderer would show
+	// as an ordinary bot turn (REQ: errors-are-returned-not-formatted).
+	if len(replies) != 0 {
+		t.Errorf("a failure must not produce replies, got %v", replies)
+	}
+	if p.activeSpace != "family1" {
+		t.Errorf("activeSpace = %q, want %q — a failed selection must not change it", p.activeSpace, "family1")
+	}
+}
+
+// A reader failure during a press comes back as an error, like /spaces's does:
+// the selection cannot be confirmed if the spaces it would name never arrived.
+func TestProcessor_PressSpaceReaderErrorIsReturnedNotFormatted(t *testing.T) {
+	boom := errors.New("boom")
+	p := NewProcessor(fakeSpaces{err: boom}, "u1").(*processor)
+
+	replies, err := p.PressButton(context.Background(), "space?id=family1")
+	if err == nil {
+		t.Fatal("PressButton with a failing reader = nil error, want the failure returned")
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("err = %v, does not unwrap to the reader's error", err)
+	}
+	if len(replies) != 0 {
+		t.Errorf("a failure must not produce replies, got %v", replies)
+	}
+	if p.activeSpace != "" {
+		t.Errorf("activeSpace = %q, want it unchanged by a failed selection", p.activeSpace)
+	}
+}
+
 // sandboxPackages are the packages that wire the sandbox — a mock LLM over a
 // fake space and user, on an in-memory or OpenVaultDB store. Reaching any of
 // them from here would let a real-data transcript execute fixture actions,

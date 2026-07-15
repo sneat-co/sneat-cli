@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: Chat Messenger
 
-**Status:** Executing
+**Status:** Implemented
 **Source Feature:** chat-messenger
 **Date:** 2026-07-15
 **Owner:** alex
@@ -70,7 +70,7 @@ This task also carries the first block of `_tests/processor-returns-errors-unfor
 
 **Verifies:** chat-messenger#ac:conversation-input-is-handled-honestly
 **Depends-On:** 2, 3, 4
-**Status:** planning
+**Status:** complete
 
 Implement `PressButton`: dispatch on the parsed callback path, set the session's active space for `space?id=<id>`, and return at least one reply naming the newly active space. Return an error without changing the active space when the ID names no space the user can currently see. Callback data that fails to parse, names an unknown path, or omits a required argument returns a reply saying the action could not be handled, or an error — never a panic and never a silent no-op.
 
