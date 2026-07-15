@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: Chat TUI
 
-**Status:** Approved
+**Status:** Executing
 **Source Feature:** chat-tui
 **Date:** 2026-07-15
 **Owner:** alex
@@ -32,7 +32,7 @@ All three ACs are covered; none are deferred. Each task carries the scenarios th
 
 **Verifies:** chat-tui#ac:chat-starts-only-when-usable
 **Depends-On:** —
-**Status:** planning
+**Status:** complete
 
 Add `Chat(env Env) *cobra.Command` in `cmd/sneat/commands/chat.go` and add `RunChat func(spaces SpacesReader, uid string) error` to the `Env` struct next to `RunTUI`. Gate on `env.IsTerminal()`, load the session from the store aborting on its error, then resolve the reader via `env.NewSpacesReader(cfg)` and abort on its error — the three steps `runSpaceUI` performs before it delegates. All run before any terminal program exists, so the whole task is testable with no TTY, per `_tests/chat-refuses-without-terminal.md`.
 
