@@ -50,7 +50,7 @@ Create `internal/chattui` with `Run(proc chat.Processor) error` and the root `Mo
 
 **Verifies:** chat-tui#ac:transcript-is-durable-terminal-text
 **Depends-On:** 2
-**Status:** planning
+**Status:** complete
 
 Implement the commit rule for text submission: `tea.Println` the user's line on submit, call `SendText` off the UI thread as a `tea.Cmd`, and on the reply commit every one to scrollback except a trailing reply carrying a keyboard, which becomes the live reply. `View()` renders only the live region — live reply and buttons, input line, footer hint. Covers `_tests/buttoned-reply-commits-when-superseded.md`.
 
