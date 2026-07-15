@@ -2,6 +2,7 @@ package chattui
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,13 +17,14 @@ import (
 // fakeProcessor answers turns from canned replies, so a model can be driven
 // without a space reader behind it.
 //
-// It records what it was asked in sent, when a test supplies somewhere to
-// record: that a turn reached the Processor at all — and from a command rather
-// than from Update — is otherwise not observable from the model.
+// It records what it was asked in sent and pressed, when a test supplies
+// somewhere to record: that a turn reached the Processor at all — and from a
+// command rather than from Update — is otherwise not observable from the model.
 type fakeProcessor struct {
 	replies []chat.Reply
 	err     error
 	sent    *[]string
+	pressed *[]string
 }
 
 func (f fakeProcessor) SendText(_ context.Context, text string) ([]chat.Reply, error) {
@@ -32,17 +34,55 @@ func (f fakeProcessor) SendText(_ context.Context, text string) ([]chat.Reply, e
 	return f.replies, f.err
 }
 
-func (f fakeProcessor) PressButton(context.Context, string) ([]chat.Reply, error) {
+func (f fakeProcessor) PressButton(_ context.Context, data string) ([]chat.Reply, error) {
+	if f.pressed != nil {
+		*f.pressed = append(*f.pressed, data)
+	}
 	return f.replies, f.err
 }
 
 // spacesKeyboard is a two-row keyboard standing in for what a `/spaces` turn
-// answers with.
+// answers with: one button per row, carrying the `space?id=<spaceID>` callback
+// data internal/chat's processor really emits. Borrowing the real string rather
+// than inventing one keeps the press assertions below pinned to what a press in
+// a running session would actually carry to the Processor.
 func spacesKeyboard() botkb.Keyboard {
 	return botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
-		[]botkb.Button{botkb.NewDataButton("Family", "space=family")},
-		[]botkb.Button{botkb.NewDataButton("Work", "space=work")},
+		[]botkb.Button{botkb.NewDataButton("Family", "space?id=family1")},
+		[]botkb.Button{botkb.NewDataButton("Work", "space?id=work1")},
 	)
+}
+
+// raggedKeyboard is a keyboard whose rows are not all the same width: a
+// two-button row, a one-button row, then another two-button row.
+//
+// No shipped command emits a multi-button row today — `/spaces` emits one button
+// per row — so `left`/`right`, and the column clamping that moving between rows
+// of different widths needs, have no production case yet. They are still keys
+// REQ: focus-and-keys names, and rows of buttons of any width are what the botkb
+// keyboard vocabulary is, so this is the shape a command will eventually emit.
+// Until one does, it is how those keys are driven.
+func raggedKeyboard() botkb.Keyboard {
+	return botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewDataButton("Yes", "confirm?ok=1"), botkb.NewDataButton("No", "confirm?ok=0")},
+		[]botkb.Button{botkb.NewDataButton("Explain", "confirm?explain=1")},
+		[]botkb.Button{botkb.NewDataButton("A", "pick?v=a"), botkb.NewDataButton("B", "pick?v=b")},
+	)
+}
+
+// liveModel builds a model sitting on a reply whose buttons are still focusable,
+// with focus on the input: the state a turn answered with buttons leaves behind,
+// which TestButtonedReplyBecomesLiveAndRendersInTheLiveRegion pins against a real
+// turn.
+//
+// It is built directly rather than driven through one so a test can choose the
+// keyboard's shape — no command emits a multi-button row yet — and so a key
+// assertion is not also an assertion about the turn that got there.
+func liveModel(proc chat.Processor, kb botkb.Keyboard) Model {
+	m := New(proc)
+	reply := chat.Reply{Text: "Your spaces:", Keyboard: kb}
+	m.live = &reply
+	return m
 }
 
 // --- alt screen ---
@@ -192,26 +232,45 @@ func scrollbackOf(msgs []tea.Msg) []string {
 	return out
 }
 
-// submitTurn drives one whole turn: it types text, presses enter, and hands the
-// Processor's answer back to the model the way the event loop would. It returns
-// the model the turn left behind, and everything the turn committed to
-// scrollback, in order.
-func submitTurn(t *testing.T, m Model, text string) (Model, []string) {
+// pump runs cmd the way the event loop would: what it prints is collected, and
+// what it does not — the Processor's answer to the turn, arriving as a message —
+// goes back through Update, whose own commands are pumped in turn. It returns the
+// model those messages left behind and everything they produced, in order.
+func pump(t *testing.T, m Model, cmd tea.Cmd) (Model, []tea.Msg) {
+	t.Helper()
+	var out []tea.Msg
+	for _, msg := range drain(t, cmd) {
+		if _, ok := printedBody(msg); ok {
+			out = append(out, msg)
+			continue
+		}
+		next, answer := m.Update(msg)
+		m = next.(Model)
+		out = append(out, drain(t, answer)...)
+	}
+	return m, out
+}
+
+// turnMsgs drives one whole turn — it types text, presses enter, and pumps the
+// Processor's answer back through the model — and returns the model the turn left
+// behind together with every message the turn produced, in order.
+//
+// It returns the messages rather than only what they printed, so a caller can
+// also see what else the turn asked the event loop to do: a quit, in particular,
+// is a message like any other and is invisible to scrollbackOf.
+func turnMsgs(t *testing.T, m Model, text string) (Model, []tea.Msg) {
 	t.Helper()
 	m.input.SetValue(text)
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(Model)
-	var sb []string
-	for _, msg := range drain(t, cmd) {
-		if body, ok := printedBody(msg); ok {
-			sb = append(sb, body)
-			continue
-		}
-		next, cmd := m.Update(msg)
-		m = next.(Model)
-		sb = append(sb, scrollbackOf(drain(t, cmd))...)
-	}
-	return m, sb
+	return pump(t, next.(Model), cmd)
+}
+
+// submitTurn drives one whole turn and returns the model it left behind, and
+// everything the turn committed to scrollback, in order.
+func submitTurn(t *testing.T, m Model, text string) (Model, []string) {
+	t.Helper()
+	m, msgs := turnMsgs(t, m, text)
+	return m, scrollbackOf(msgs)
 }
 
 // TestPrintlnBodyIsReadable is the control for printedBody: it proves the
@@ -585,8 +644,71 @@ func TestViewIsOnlyTheLiveRegion(t *testing.T) {
 	if lines := strings.Split(view, "\n"); len(lines) != 2 {
 		t.Errorf("View() = %q (%d lines), want 2: the input line and the footer hint", view, len(lines))
 	}
-	if !strings.Contains(view, footerHelp) {
-		t.Errorf("View() = %q, missing the footer hint %q", view, footerHelp)
+	if !strings.Contains(view, footerHelpInput) {
+		t.Errorf("View() = %q, missing the footer hint %q", view, footerHelpInput)
+	}
+}
+
+// TestFooterNamesTheKeysThatWorkRightNow pins the hint line to the state it
+// describes (chat-tui#req:inline-rendering). enter and esc each mean one thing
+// on the input and another in the button block, and while a reply is in flight
+// only ctrl+c means anything at all, so no one fixed line can name the keys
+// without also naming meanings that do not apply — which is the ambiguity the
+// hint exists to remove (chat-tui#req:focus-and-keys,
+// chat-tui#req:input-locked-while-pending).
+func TestFooterNamesTheKeysThatWorkRightNow(t *testing.T) {
+	// Asserting the hints this state must not carry is what makes each case
+	// fail on a hint that is merely a superset of the right one.
+	all := []string{footerHelpInput, footerHelpInputLive, footerHelpButtons, footerHelpPending}
+
+	tests := []struct {
+		name  string
+		model func(t *testing.T) Model
+		want  string
+	}{
+		{
+			name:  "focus on the input, with nothing focusable to offer",
+			model: func(*testing.T) Model { return New(fakeProcessor{}) },
+			want:  footerHelpInput,
+		},
+		{
+			name:  "focus on the input, with a button block to enter",
+			model: func(*testing.T) Model { return liveModel(fakeProcessor{}, spacesKeyboard()) },
+			want:  footerHelpInputLive,
+		},
+		{
+			name: "focus in the button block",
+			model: func(t *testing.T) Model {
+				m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "down")
+				return m
+			},
+			want: footerHelpButtons,
+		},
+		{
+			name: "a reply in flight",
+			model: func(*testing.T) Model {
+				m := liveModel(fakeProcessor{}, spacesKeyboard())
+				m.pending = true
+				return m
+			},
+			want: footerHelpPending,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := tt.model(t).View()
+			if !strings.Contains(view, tt.want) {
+				t.Errorf("View() = %q, want the footer hint %q", view, tt.want)
+			}
+			for _, other := range all {
+				if other == tt.want {
+					continue
+				}
+				if strings.Contains(view, other) {
+					t.Errorf("View() = %q carries the hint %q, which names keys that do not mean that here", view, other)
+				}
+			}
+		})
 	}
 }
 
@@ -620,14 +742,738 @@ func TestModelHandlesWindowSize(t *testing.T) {
 	}
 }
 
-// TestModelQuitsOnCtrlC checks the always-available exit. The rest of the key
-// table is Task 4's.
-func TestModelQuitsOnCtrlC(t *testing.T) {
-	_, cmd := New(fakeProcessor{}).Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if cmd == nil {
-		t.Fatal("ctrl+c returned no command, want tea.Quit")
+// --- keys and focus (REQ: focus-and-keys, REQ: input-locked-while-pending) ---
+
+// keyMsgs are the KeyMsg values for the keys the requirement names, plus a few
+// it does not, which the model must therefore have no meaning for.
+//
+// Driving Update with the message the event loop itself would deliver is what
+// makes the tests below exercise the real key table rather than a paraphrase of
+// it.
+var keyMsgs = map[string]tea.KeyMsg{
+	"ctrl+c": {Type: tea.KeyCtrlC},
+	"enter":  {Type: tea.KeyEnter},
+	"esc":    {Type: tea.KeyEsc},
+	"up":     {Type: tea.KeyUp},
+	"down":   {Type: tea.KeyDown},
+	"left":   {Type: tea.KeyLeft},
+	"right":  {Type: tea.KeyRight},
+	"tab":    {Type: tea.KeyTab},
+	"x":      {Type: tea.KeyRunes, Runes: []rune("x")},
+}
+
+// key returns the KeyMsg for the key the requirement calls name.
+//
+// It checks that name against the name bubbletea gives the message, which is the
+// name the model matches on. That check is this helper's own control: without it
+// a key these tests call "esc" could quietly stop being the key the model sees
+// under that name, and every assertion below would go on passing while pressing
+// something else — or nothing at all.
+func key(t *testing.T, name string) tea.KeyMsg {
+	t.Helper()
+	msg, ok := keyMsgs[name]
+	if !ok {
+		t.Fatalf("no KeyMsg for the key %q", name)
 	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Errorf("ctrl+c produced %T, want tea.QuitMsg", cmd())
+	if got := msg.String(); got != name {
+		t.Fatalf("the KeyMsg built for %q reads as %q: bubbletea renamed the key, and a test naming %q no longer presses what the model matches on", name, got, name)
+	}
+	return msg
+}
+
+// pressKeys drives keys through the model in order, returning the model they
+// left behind and the command the last of them produced.
+func pressKeys(t *testing.T, m Model, names ...string) (Model, tea.Cmd) {
+	t.Helper()
+	var cmd tea.Cmd
+	for _, name := range names {
+		var next tea.Model
+		next, cmd = m.Update(key(t, name))
+		m = next.(Model)
+	}
+	return m, cmd
+}
+
+// quitsIn reports whether msgs carry the quit.
+func quitsIn(msgs []tea.Msg) bool {
+	for _, msg := range msgs {
+		if _, ok := msg.(tea.QuitMsg); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// quits reports whether cmd quits the program.
+//
+// tea.Quit is a tea.Cmd — a function — so whether a key quits cannot be read off
+// the command Update returns: it is readable only off the message the command
+// produces, which is what the event loop dispatches. drain runs it exactly as the
+// loop would, so a quit bundled into a tea.Sequence or tea.Batch counts too, and
+// a nil command produces nothing and quits nothing.
+//
+// TestQuitIsDetectedAndNotImagined is its control.
+func quits(t *testing.T, cmd tea.Cmd) bool {
+	t.Helper()
+	return quitsIn(drain(t, cmd))
+}
+
+// TestQuitIsDetectedAndNotImagined is the control for quits: it proves quits sees
+// a real tea.Quit, wherever it is bundled, and does not see one where there is
+// none. Without it, "the program quits" and "the program does not quit" could
+// both be assertions that pass no matter what the model returns.
+func TestQuitIsDetectedAndNotImagined(t *testing.T) {
+	if !quits(t, tea.Quit) {
+		t.Error("quits did not recognise tea.Quit: every \"the program quits\" assertion below now fails regardless of the model")
+	}
+	if !quits(t, tea.Sequence(tea.Println("noise"), tea.Quit)) {
+		t.Error("quits did not find a tea.Quit inside a tea.Sequence: a quit could hide from every \"does not quit\" assertion below")
+	}
+	if quits(t, nil) {
+		t.Error("quits reported that a nil command quits the program")
+	}
+	if quits(t, tea.Println("noise")) {
+		t.Error("quits reported that a command which only prints quits the program")
+	}
+}
+
+// focusedLabel returns the label of the button the live region marks as focused,
+// or "" when it marks none.
+//
+// It reads the mark out of View rather than the cursor out of the model, so a
+// cursor that moves without the region following it — or one left pointing at no
+// button at all — is not mistaken for focus having moved.
+func focusedLabel(m Model) string {
+	view := m.View()
+	i := strings.Index(view, focusedMarkLeft)
+	if i < 0 {
+		return ""
+	}
+	rest := view[i+len(focusedMarkLeft):]
+	j := strings.Index(rest, focusedMarkRight)
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
+// TestFocusMovement pins what each key that moves focus means, from each place
+// focus can be (chat-tui#req:focus-and-keys). Every case starts on the input,
+// which is where a session and every turn leave focus, and presses only real
+// keys to get where it is going.
+func TestFocusMovement(t *testing.T) {
+	tests := []struct {
+		name string
+		// kb is the live reply's keyboard: spacesKeyboard is one button per row,
+		// raggedKeyboard has rows of two, one and two.
+		kb botkb.Keyboard
+		// keys are pressed in order, from focus on the input.
+		keys []string
+		// wantFocus is where focus must end up.
+		wantFocus focusTarget
+		// wantLabel is the button the live region must mark, or "" when focus is
+		// not in the block and so nothing in it is focused.
+		wantLabel string
+	}{
+		{
+			name:      "down from the input enters the block at the first row",
+			kb:        spacesKeyboard(),
+			keys:      []string{"down"},
+			wantFocus: focusButtons,
+			wantLabel: "Family",
+		},
+		{
+			name:      "up from the first row returns to the input",
+			kb:        spacesKeyboard(),
+			keys:      []string{"down", "up"},
+			wantFocus: focusInput,
+		},
+		{
+			name:      "down moves on to the next row",
+			kb:        spacesKeyboard(),
+			keys:      []string{"down", "down"},
+			wantFocus: focusButtons,
+			wantLabel: "Work",
+		},
+		{
+			// Only up *past* the first row leaves: from any other row it is a
+			// move within the block.
+			name:      "up moves back a row before it reaches the input",
+			kb:        spacesKeyboard(),
+			keys:      []string{"down", "down", "up"},
+			wantFocus: focusButtons,
+			wantLabel: "Family",
+		},
+		{
+			// down leaves the input for the block and moves down it; it never
+			// leaves the block, or the key would mean three things.
+			name:      "down stops at the last row",
+			kb:        spacesKeyboard(),
+			keys:      []string{"down", "down", "down", "down"},
+			wantFocus: focusButtons,
+			wantLabel: "Work",
+		},
+		{
+			name:      "esc leaves the block for the input",
+			kb:        spacesKeyboard(),
+			keys:      []string{"down", "down", "esc"},
+			wantFocus: focusInput,
+		},
+		{
+			name:      "down re-enters the block at the first row, not where it left",
+			kb:        spacesKeyboard(),
+			keys:      []string{"down", "down", "esc", "down"},
+			wantFocus: focusButtons,
+			wantLabel: "Family",
+		},
+		{
+			name:      "right moves along a row",
+			kb:        raggedKeyboard(),
+			keys:      []string{"down", "right"},
+			wantFocus: focusButtons,
+			wantLabel: "No",
+		},
+		{
+			// No wrap: wrapping would make right mean "go to the other end" as
+			// well as "go one to the right".
+			name:      "right stops at the end of a row",
+			kb:        raggedKeyboard(),
+			keys:      []string{"down", "right", "right"},
+			wantFocus: focusButtons,
+			wantLabel: "No",
+		},
+		{
+			name:      "left moves back along a row",
+			kb:        raggedKeyboard(),
+			keys:      []string{"down", "right", "left"},
+			wantFocus: focusButtons,
+			wantLabel: "Yes",
+		},
+		{
+			name:      "left stops at the start of a row",
+			kb:        raggedKeyboard(),
+			keys:      []string{"down", "left"},
+			wantFocus: focusButtons,
+			wantLabel: "Yes",
+		},
+		{
+			// Rows need not be the same width, so a row change can leave the
+			// column past the end of the row it lands in: a cursor on no button,
+			// which enter could not press.
+			name:      "down onto a narrower row keeps the cursor on a button",
+			kb:        raggedKeyboard(),
+			keys:      []string{"down", "right", "down"},
+			wantFocus: focusButtons,
+			wantLabel: "Explain",
+		},
+		{
+			name:      "up onto a narrower row keeps the cursor on a button",
+			kb:        raggedKeyboard(),
+			keys:      []string{"down", "down", "down", "right", "up"},
+			wantFocus: focusButtons,
+			wantLabel: "Explain",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, cmd := pressKeys(t, liveModel(fakeProcessor{}, tt.kb), tt.keys...)
+			if quits(t, cmd) {
+				t.Errorf("%v quit the program; only esc from the input and ctrl+c do (chat-tui#req:focus-and-keys)", tt.keys)
+			}
+			if m.focus != tt.wantFocus {
+				t.Errorf("focus = %v after %v, want %v", m.focus, tt.keys, tt.wantFocus)
+			}
+			if got := focusedLabel(m); got != tt.wantLabel {
+				t.Errorf("the live region marks %q as focused after %v, want %q", got, tt.keys, tt.wantLabel)
+			}
+		})
+	}
+}
+
+// TestDownEntersTheButtonBlockAtTheFirstRow pins where down puts focus, and not
+// merely that it moves it: entry is at row 0
+// (chat-tui#req:focus-and-keys).
+//
+// The cursor is planted in the block first, which no sequence of keys can do
+// while focus is on the input — every path that leaves the block clears the
+// cursor behind it, and TestFocusMovement's "down re-enters the block at the
+// first row" drives that path with real keys. This builds the state directly
+// because it is the one that reset exists to make not matter: without it, down
+// would enter wherever focus had been last, and the assertion would be on
+// nothing.
+func TestDownEntersTheButtonBlockAtTheFirstRow(t *testing.T) {
+	m := liveModel(fakeProcessor{}, spacesKeyboard())
+	m.row, m.col = 1, 0
+
+	m, _ = pressKeys(t, m, "down")
+
+	if m.focus != focusButtons {
+		t.Fatalf("focus = %v after down from the input, want focusButtons", m.focus)
+	}
+	if got := focusedLabel(m); got != "Family" {
+		t.Errorf("down entered the button block on %q, want the first button %q: it enters at row 0 (chat-tui#req:focus-and-keys)", got, "Family")
+	}
+}
+
+// TestDownWithNothingFocusableStaysOnTheInput pins the one thing that stops down
+// from being unconditional: focus is the button block only while there is a block
+// to point into (chat-tui#req:focus-and-keys).
+func TestDownWithNothingFocusableStaysOnTheInput(t *testing.T) {
+	m, cmd := pressKeys(t, New(fakeProcessor{}), "down")
+	if m.focus != focusInput {
+		t.Errorf("focus = %v after down with no live reply, want focusInput: there is no button block to enter", m.focus)
+	}
+	if quits(t, cmd) {
+		t.Error("down quit the program")
+	}
+}
+
+// TestKeysWithNoMeaningInTheButtonBlockDoNotReachTheInput pins the block half of
+// "exactly one target holds focus": the input does not hold it, so it does not
+// take keys — typing while a button is focused must not edit the line
+// (chat-tui#ac:interaction-is-unambiguous).
+func TestKeysWithNoMeaningInTheButtonBlockDoNotReachTheInput(t *testing.T) {
+	for _, name := range []string{"x", "tab"} {
+		t.Run(name, func(t *testing.T) {
+			m := liveModel(fakeProcessor{}, spacesKeyboard())
+			m.input.SetValue("hello")
+			m, _ = pressKeys(t, m, "down")
+			if m.focus != focusButtons {
+				t.Fatal("setup: expected focus in the button block after down")
+			}
+
+			m, cmd := pressKeys(t, m, name)
+
+			if quits(t, cmd) {
+				t.Errorf("%q quit the program from the button block", name)
+			}
+			if m.focus != focusButtons {
+				t.Errorf("focus = %v after %q in the button block, want it left there", m.focus, name)
+			}
+			if m.input.Value() != "hello" {
+				t.Errorf("input = %q after %q in the button block, want %q: the input does not hold focus, so it does not take keys", m.input.Value(), name, "hello")
+			}
+		})
+	}
+}
+
+// TestInputCursorFollowsFocus pins that the region shows exactly one focused
+// target (chat-tui#ac:interaction-is-unambiguous). The input draws a cursor while
+// it is focused, so leaving it focused while the button block holds focus would
+// put two focus indicators on screen at once.
+func TestInputCursorFollowsFocus(t *testing.T) {
+	m := liveModel(fakeProcessor{}, spacesKeyboard())
+	if !m.input.Focused() {
+		t.Fatal("setup: the input starts focused, and draws a cursor to say so")
+	}
+
+	m, _ = pressKeys(t, m, "down")
+	if m.input.Focused() {
+		t.Error("the input still draws its cursor while the button block holds focus; exactly one target holds focus at a time (chat-tui#ac:interaction-is-unambiguous)")
+	}
+
+	m, _ = pressKeys(t, m, "esc")
+	if !m.input.Focused() {
+		t.Error("the input does not draw its cursor after focus returned to it")
+	}
+}
+
+// TestEscFromTheInputQuits and TestEscFromTheButtonBlockReturnsFocusAndDoesNotQuit
+// are a pair, and only work as one. esc means two different things, one per focus
+// (chat-tui#req:focus-and-keys); a model that quit from both, or from neither,
+// would fail one of them.
+func TestEscFromTheInputQuits(t *testing.T) {
+	m := liveModel(fakeProcessor{}, spacesKeyboard())
+	if m.focus != focusInput {
+		t.Fatal("setup: expected focus on the input")
+	}
+
+	_, cmd := m.Update(key(t, "esc"))
+
+	if !quits(t, cmd) {
+		t.Error("esc from the input did not quit the program (chat-tui#req:focus-and-keys)")
+	}
+}
+
+func TestEscFromTheButtonBlockReturnsFocusAndDoesNotQuit(t *testing.T) {
+	m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "down", "down")
+	if m.focus != focusButtons {
+		t.Fatal("setup: expected focus in the button block")
+	}
+
+	next, cmd := m.Update(key(t, "esc"))
+	m = next.(Model)
+
+	if quits(t, cmd) {
+		t.Error("esc from the button block quit the program; from there it returns focus to the input, and only the esc after that quits (chat-tui#req:focus-and-keys)")
+	}
+	if m.focus != focusInput {
+		t.Errorf("focus = %v after esc from the button block, want focusInput", m.focus)
+	}
+}
+
+// TestCtrlCAlwaysQuits pins the one key with a single meaning everywhere: it
+// quits from either focus, and even while a reply is in flight, where every other
+// key is ignored (chat-tui#req:focus-and-keys,
+// chat-tui#req:input-locked-while-pending).
+//
+// The in-flight case is where this diverges from the guard it mirrors:
+// internal/tui's confirm screen ignores every key while its delete runs, ctrl+c
+// included. That is safe for a screen resolving one round trip; a chat session
+// may block on a slow backend for as long as it likes, so a guard copied from
+// there verbatim would trap the user with no way out.
+func TestCtrlCAlwaysQuits(t *testing.T) {
+	tests := []struct {
+		name  string
+		model func(t *testing.T) Model
+	}{
+		{
+			name:  "from the input",
+			model: func(*testing.T) Model { return New(fakeProcessor{}) },
+		},
+		{
+			name: "from the button block",
+			model: func(t *testing.T) Model {
+				m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "down")
+				if m.focus != focusButtons {
+					t.Fatal("setup: expected focus in the button block after down")
+				}
+				return m
+			},
+		},
+		{
+			name: "while a reply is in flight",
+			model: func(*testing.T) Model {
+				m := liveModel(fakeProcessor{}, spacesKeyboard())
+				m.pending = true
+				return m
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, cmd := tt.model(t).Update(key(t, "ctrl+c"))
+			if !quits(t, cmd) {
+				t.Error("ctrl+c did not quit the program; it is the one key that always does (chat-tui#req:focus-and-keys, chat-tui#req:input-locked-while-pending)")
+			}
+		})
+	}
+}
+
+// TestEnterOnAFocusedButtonPressesIt pins enter's other meaning: from the button
+// block it presses the focused button rather than submitting the input
+// (chat-tui#req:focus-and-keys). The press reaches the Processor from a command,
+// because PressButton does network I/O the live region must not block on — the
+// same reason submitText sends from one.
+func TestEnterOnAFocusedButtonPressesIt(t *testing.T) {
+	tests := []struct {
+		name string
+		// keys walk focus onto the button under test, from the input.
+		keys []string
+		// want is the callback data the press must carry.
+		want string
+	}{
+		{
+			name: "the button the block is entered on",
+			keys: []string{"down"},
+			want: "space?id=family1",
+		},
+		{
+			// The press reads the cursor rather than assuming the first row.
+			name: "a button further down",
+			keys: []string{"down", "down"},
+			want: "space?id=work1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var pressed []string
+			m, _ := pressKeys(t, liveModel(fakeProcessor{pressed: &pressed}, spacesKeyboard()), tt.keys...)
+
+			next, cmd := m.Update(key(t, "enter"))
+			m = next.(Model)
+
+			if len(pressed) != 0 {
+				t.Errorf("PressButton was called with %q from Update itself; it must run off the UI thread as a command", pressed)
+			}
+			if !m.pending {
+				t.Error("pending = false after a press, want true: a reply is in flight")
+			}
+			drain(t, cmd)
+			if !reflect.DeepEqual(pressed, []string{tt.want}) {
+				t.Errorf("PressButton received %q, want exactly one call, carrying [%q]", pressed, tt.want)
+			}
+		})
+	}
+}
+
+// TestEnterInTheButtonBlockDoesNotSubmitTheInput is the other half of enter's
+// two meanings: a line left in the input is not a turn while the button block
+// holds focus (chat-tui#req:focus-and-keys).
+func TestEnterInTheButtonBlockDoesNotSubmitTheInput(t *testing.T) {
+	var sent, pressed []string
+	m := liveModel(fakeProcessor{sent: &sent, pressed: &pressed}, spacesKeyboard())
+	m.input.SetValue("hello")
+	m, _ = pressKeys(t, m, "down")
+
+	next, cmd := m.Update(key(t, "enter"))
+	m = next.(Model)
+	drain(t, cmd)
+
+	if len(sent) != 0 {
+		t.Errorf("enter in the button block submitted %q to the Processor; from there it presses the focused button", sent)
+	}
+	if m.input.Value() != "hello" {
+		t.Errorf("input = %q after enter in the button block, want %q left untouched", m.input.Value(), "hello")
+	}
+	if len(pressed) != 1 {
+		t.Errorf("PressButton received %q, want the one press enter means here", pressed)
+	}
+}
+
+// TestEnterOnAButtonCarryingNoCallbackDataDoesNothing pins the one button enter
+// cannot press. chat.Processor names a press by its callback data
+// (chat-messenger#req:processor-seam) and a URL button carries none, so there is
+// no turn to make. It must not put the session in flight either: nothing would
+// answer it, and the lock would never lift
+// (chat-tui#req:input-locked-while-pending).
+func TestEnterOnAButtonCarryingNoCallbackDataDoesNothing(t *testing.T) {
+	var pressed []string
+	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewUrlButton("Open in browser", "https://sneat.app")},
+	)
+	m, _ := pressKeys(t, liveModel(fakeProcessor{pressed: &pressed}, kb), "down")
+	if m.focus != focusButtons {
+		t.Fatal("setup: expected focus in the button block")
+	}
+
+	next, cmd := m.Update(key(t, "enter"))
+	m = next.(Model)
+	drain(t, cmd)
+
+	if len(pressed) != 0 {
+		t.Errorf("PressButton received %q for a button carrying no callback data", pressed)
+	}
+	if m.pending {
+		t.Error("pending = true after enter on a button carrying no callback data: nothing is in flight, and nothing would ever lift the lock (chat-tui#req:input-locked-while-pending)")
+	}
+}
+
+// TestPendingIgnoresEveryKeyButCtrlC pins the lock
+// (chat-tui#req:input-locked-while-pending). Each key here would do something
+// were the reply not in flight — which is what makes every assertion below one
+// that can fail: without the lock, "x" reaches the input, enter submits, esc
+// quits, and down enters the button block.
+//
+// ctrl+c is the exception, and TestCtrlCAlwaysQuits covers it.
+func TestPendingIgnoresEveryKeyButCtrlC(t *testing.T) {
+	for _, name := range []string{"enter", "esc", "up", "down", "left", "right", "tab", "x"} {
+		t.Run(name, func(t *testing.T) {
+			var sent, pressed []string
+			m := liveModel(fakeProcessor{sent: &sent, pressed: &pressed}, spacesKeyboard())
+			m.input.SetValue("hello")
+			m.pending = true
+
+			next, cmd := m.Update(key(t, name))
+			m = next.(Model)
+			msgs := drain(t, cmd)
+
+			if quitsIn(msgs) {
+				t.Errorf("%q quit the program while a reply was in flight; only ctrl+c does", name)
+			}
+			if len(sent) != 0 || len(pressed) != 0 {
+				t.Errorf("%q reached the Processor while a reply was in flight (SendText %q, PressButton %q)", name, sent, pressed)
+			}
+			if got := scrollbackOf(msgs); len(got) != 0 {
+				t.Errorf("%q committed %q to scrollback while a reply was in flight", name, got)
+			}
+			if m.focus != focusInput {
+				t.Errorf("focus = %v after %q while a reply was in flight, want it left on the input", m.focus, name)
+			}
+			if m.input.Value() != "hello" {
+				t.Errorf("input = %q after %q while a reply was in flight, want %q: the input is locked", m.input.Value(), name, "hello")
+			}
+			if !m.pending {
+				t.Errorf("pending = false after %q; the reply it was waiting for is still in flight", name)
+			}
+		})
+	}
+}
+
+// TestPendingLocksOnlyKeys pins the edge of the lock: it refuses input, not the
+// answer the input is waiting for. A lock that also swallowed the Processor's
+// reply would never lift (chat-tui#req:input-locked-while-pending).
+func TestPendingLocksOnlyKeys(t *testing.T) {
+	m := liveModel(fakeProcessor{}, spacesKeyboard())
+	m.pending = true
+
+	next, _ := m.Update(repliesMsg{[]chat.Reply{{Text: "Hi!"}}})
+	if m = next.(Model); m.pending {
+		t.Error("pending = true after the replies arrived; the lock lifts when the reply lands")
+	}
+}
+
+// --- failures (REQ: errors-render-in-transcript) ---
+
+// errProcessorFailure is the failure the tests below drive.
+//
+// It is a bare error carrying no user-facing wording, which is what a Processor
+// returns by contract (chat-messenger#req:errors-are-returned-not-formatted). It
+// deliberately does not call itself an error: that is the renderer's word to add,
+// and TestFailureIsWordedByTheRenderer can only tell the two apart because this
+// string does not already contain it.
+var errProcessorFailure = errors.New("space reader: connection refused")
+
+// TestFailureRendersInTheTranscriptAndTheSessionContinues drives
+// _tests/failure-renders-in-transcript.md end to end: a turn that fails joins the
+// transcript as a message rather than destroying it
+// (chat-tui#req:errors-render-in-transcript,
+// chat-tui#ac:transcript-is-durable-terminal-text).
+func TestFailureRendersInTheTranscriptAndTheSessionContinues(t *testing.T) {
+	// A transcript already holding a committed turn: what the failure must not
+	// cost the user.
+	m, first := submitTurn(t, New(fakeProcessor{replies: []chat.Reply{{Text: "Hi!"}}}), "hello")
+	if len(first) != 2 || !strings.Contains(first[1], "Hi!") {
+		t.Fatalf("setup: the first turn committed %q, want the echo then the reply", first)
+	}
+
+	m.proc = fakeProcessor{err: errProcessorFailure}
+	m, msgs := turnMsgs(t, m, "/spaces")
+
+	if quitsIn(msgs) {
+		t.Error("a Processor failure quit the program; the session continues, because quitting would discard the user's transcript (chat-tui#req:errors-render-in-transcript)")
+	}
+	sb := scrollbackOf(msgs)
+	if len(sb) != 2 {
+		t.Fatalf("the failing turn committed %q, want two blocks: the echo then the failure", sb)
+	}
+	if !strings.Contains(sb[0], "/spaces") {
+		t.Errorf("the failing turn committed %q first, want the submitted line", sb[0])
+	}
+	if !strings.Contains(sb[1], errProcessorFailure.Error()) {
+		t.Errorf("the failing turn committed %q, want a block naming the failure %q: an error is rendered as a bot message in the transcript (chat-tui#req:errors-render-in-transcript)", sb[1], errProcessorFailure.Error())
+	}
+
+	// The transcript the first turn committed is the terminal's, not the model's,
+	// so "retained" is not a claim about model state — there is none to read. What
+	// it means operationally is that the failing turn does nothing to what the
+	// terminal already owns, which is asserted here the only way it can be: the
+	// turn prints, and does nothing else at all.
+	for _, msg := range msgs {
+		if _, ok := printedBody(msg); !ok {
+			t.Errorf("the failing turn produced a %T; it must only print, leaving the transcript the terminal already owns alone (chat-tui#req:errors-render-in-transcript)", msg)
+		}
+	}
+
+	// The input accepts a further message. The lock the failed turn took has to
+	// have lifted with it, or the session is over in everything but name.
+	if m.pending {
+		t.Error("pending = true after a Processor failure; the failure is the answer the turn was waiting for, and the lock must lift with it or the input never takes another message (chat-tui#req:input-locked-while-pending)")
+	}
+	var sent []string
+	m.proc = fakeProcessor{replies: []chat.Reply{{Text: "Hi again!"}}, sent: &sent}
+	_, after := submitTurn(t, m, "hello again")
+
+	if !reflect.DeepEqual(sent, []string{"hello again"}) {
+		t.Errorf("a message submitted after a failure reached the Processor as %q, want [%q]: the session continues (chat-tui#req:errors-render-in-transcript)", sent, "hello again")
+	}
+	if len(after) != 2 || !strings.Contains(after[1], "Hi again!") {
+		t.Errorf("the turn after a failure committed %q, want the echo then the reply", after)
+	}
+}
+
+// TestBothTurnKindsRouteAFailureToTheTranscript pins that the failure path covers
+// every way a turn can reach the Processor. SendText and PressButton can both
+// fail, so a press that fails must land in the transcript exactly as a submit that
+// fails does (chat-tui#req:errors-render-in-transcript).
+func TestBothTurnKindsRouteAFailureToTheTranscript(t *testing.T) {
+	tests := []struct {
+		name string
+		// turn makes one turn against proc, with real keys, and pumps its answer
+		// back through the model the way the event loop would.
+		turn func(t *testing.T, proc chat.Processor) (Model, []tea.Msg)
+	}{
+		{
+			name: "a submitted message fails",
+			turn: func(t *testing.T, proc chat.Processor) (Model, []tea.Msg) {
+				return turnMsgs(t, New(proc), "/spaces")
+			},
+		},
+		{
+			name: "a button press fails",
+			turn: func(t *testing.T, proc chat.Processor) (Model, []tea.Msg) {
+				m, _ := pressKeys(t, liveModel(proc, spacesKeyboard()), "down")
+				if m.focus != focusButtons {
+					t.Fatal("setup: expected focus in the button block after down")
+				}
+				next, cmd := m.Update(key(t, "enter"))
+				return pump(t, next.(Model), cmd)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, msgs := tt.turn(t, fakeProcessor{err: errProcessorFailure})
+
+			if quitsIn(msgs) {
+				t.Error("a failed turn quit the program; the session continues (chat-tui#req:errors-render-in-transcript)")
+			}
+			sb := scrollbackOf(msgs)
+			if len(sb) == 0 {
+				t.Fatal("a failed turn committed nothing to scrollback, want the failure rendered as a bot message (chat-tui#req:errors-render-in-transcript)")
+			}
+			if last := sb[len(sb)-1]; !strings.Contains(last, errProcessorFailure.Error()) {
+				t.Errorf("a failed turn committed %q last, want a block naming the failure %q (chat-tui#req:errors-render-in-transcript)", last, errProcessorFailure.Error())
+			}
+			if m.pending {
+				t.Error("pending = true after a failed turn; a failure answers the turn, and the lock lifts with it (chat-tui#req:input-locked-while-pending)")
+			}
+		})
+	}
+}
+
+// TestFailureIsCommittedNotDrawnInTheLiveRegion pins where the failure goes. It
+// is a completed turn — nothing about it can still change — so it belongs in the
+// scrollback the terminal owns rather than in the region View repaints
+// (chat-tui#req:scrollback-commit, chat-tui#req:errors-render-in-transcript).
+func TestFailureIsCommittedNotDrawnInTheLiveRegion(t *testing.T) {
+	m := New(fakeProcessor{})
+	m.pending = true
+
+	next, cmd := m.Update(errMsg{errProcessorFailure})
+	m = next.(Model)
+
+	if got := scrollbackOf(drain(t, cmd)); len(got) != 1 || !strings.Contains(got[0], errProcessorFailure.Error()) {
+		t.Fatalf("a failure committed %q to scrollback, want exactly one block naming it (chat-tui#req:errors-render-in-transcript)", got)
+	}
+	if view := m.View(); strings.Contains(view, errProcessorFailure.Error()) {
+		t.Errorf("View() = %q draws the failure; it is a completed turn, and the live region draws only what can still change (chat-tui#req:inline-rendering)", view)
+	}
+}
+
+// TestFailureIsWordedByTheRenderer pins whose job the wording is. The Processor
+// hands back a bare error by contract
+// (chat-messenger#req:errors-are-returned-not-formatted) — errProcessorFailure
+// says "space reader: connection refused" and nothing about that being a failure
+// — so if the transcript is to read as one, this package is what has to say so.
+//
+// The mark is text rather than colour, for the reason the focused button's is:
+// lipgloss emits no colour when it is not writing to a terminal, so a block
+// distinguished only by colour would reach a piped transcript, and this test,
+// looking exactly like an ordinary reply.
+func TestFailureIsWordedByTheRenderer(t *testing.T) {
+	// The control for the assertion below: it can only tell the renderer's wording
+	// from the Processor's while the bare error does not already carry it.
+	if strings.Contains(errProcessorFailure.Error(), strings.TrimSpace(errorPrefix)) {
+		t.Fatalf("the bare error %q already names itself a failure; the assertion below would pass on wording the renderer never added", errProcessorFailure)
+	}
+
+	block := renderError(errProcessorFailure)
+
+	if !strings.Contains(block, errorPrefix) {
+		t.Errorf("renderError(%q) = %q, want it marked as a failure with %q: the Processor returns a bare error, and wording it for a terminal is this package's job (chat-messenger#req:errors-are-returned-not-formatted)", errProcessorFailure, block, errorPrefix)
+	}
+	if !strings.Contains(block, errProcessorFailure.Error()) {
+		t.Errorf("renderError(%q) = %q, want it to name the failure it renders", errProcessorFailure, block)
 	}
 }

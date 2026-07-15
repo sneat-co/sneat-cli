@@ -111,17 +111,21 @@ func sendText(p chat.Processor, text string) tea.Cmd {
 	}
 }
 
-// Update handles the terminal's size, the always-available quit, submitting the
-// input, and the Processor's answer, and passes everything else to the input.
-//
-// TODO(chat-tui Task 4): the rest of the key table (focus movement, esc) and the
-// pending lock belong here and are not implemented — every key other than ctrl+c
-// and enter currently reaches the input regardless of focus or pending, so a
-// second submit can be made while the first is still in flight.
-// TODO(chat-tui Task 5): pressing a focused button must commit the live reply
-// and an echo of the button's label, then run proc.PressButton. The machinery is
-// here: commitLive and renderUserEcho are what a press needs, and enter already
-// dispatches on focus.
+// pressButton hands a pressed button's callback data to the Processor from a
+// command, for the same reason sendText does: PressButton does network I/O, and
+// the live region must not block on it.
+func pressButton(p chat.Processor, data string) tea.Cmd {
+	return func() tea.Msg {
+		replies, err := p.PressButton(context.Background(), data)
+		if err != nil {
+			return errMsg{err}
+		}
+		return repliesMsg{replies}
+	}
+}
+
+// Update handles the terminal's size, the key table, and the Processor's answer,
+// and passes everything else to the input.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -129,29 +133,262 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case repliesMsg:
 		return m.receive(msg.replies)
 	case errMsg:
-		m.pending = false
-		// TODO(chat-tui Task 6): render the error as a bot message in the
-		// transcript and leave the session running
-		// (REQ: errors-render-in-transcript). Until that lands the failure is
-		// dropped on the floor: the turn answers with silence, which is wrong
-		// and deliberately not faked here.
-		_ = msg.err
-		return m, nil
+		return m.fail(msg.err)
 	case tea.KeyMsg:
-		// ctrl+c quits from any focus, and even while a reply is in flight: a
-		// slow backend must never trap the user (REQ: input-locked-while-pending).
-		if msg.String() == "ctrl+c" {
-			return m, tea.Quit
-		}
-		// enter submits from the input. It means something else entirely from
-		// the button block, which is Task 5's.
-		if msg.Type == tea.KeyEnter && m.focus == focusInput {
-			return m.submitText()
+		next, cmd := m.handleKey(msg)
+		return next.syncInputCursor(cmd)
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// --- keys (REQ: focus-and-keys, REQ: input-locked-while-pending) ---
+
+// The keys the requirement names, spelled as bubbletea names them
+// (tea.KeyMsg.String) rather than as tea.KeyType values, so the tables below can
+// be read against the requirement line by line.
+const (
+	keyCtrlC = "ctrl+c"
+	keyEnter = "enter"
+	keyEsc   = "esc"
+	keyUp    = "up"
+	keyDown  = "down"
+	keyLeft  = "left"
+	keyRight = "right"
+)
+
+// handleKey gives a key press its one meaning.
+//
+// Which meaning that is depends on two things, applied here in the order that
+// makes each of them absolute: ctrl+c first, because nothing may take the exit
+// away; then the pending lock, because it has to be able to refuse the very keys
+// focus would otherwise act on. Only what survives both reaches a focus table,
+// and each key appears in exactly one of those.
+func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	// ctrl+c quits from either focus, and even while a reply is in flight
+	// (REQ: input-locked-while-pending). It is matched ahead of the lock for
+	// precisely that reason.
+	if msg.String() == keyCtrlC {
+		return m, tea.Quit
+	}
+	// While a reply is in flight every other key is ignored, so nothing the user
+	// does can race the answer they are waiting for.
+	//
+	// internal/tui's confirm screen guards its in-flight delete the same way, but
+	// it returns before ctrl+c too. That is safe for a screen resolving a single
+	// round trip; a chat session may block on a slow backend for as long as it
+	// likes, so the carve-out above is where this deliberately parts company with
+	// it — the user must always retain a way out.
+	if m.pending {
+		return m, nil
+	}
+	if m.focus == focusButtons {
+		return m.handleButtonKey(msg)
+	}
+	return m.handleInputKey(msg)
+}
+
+// handleInputKey gives a key its meaning while the input holds focus. Keys it
+// does not name are the input's to interpret: they are text.
+func (m Model) handleInputKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc:
+		// esc quits from the input. From the button block it means something else
+		// entirely — which is why the two tables are separate rather than one
+		// table asking where focus is at every entry.
+		return m, tea.Quit
+	case keyEnter:
+		return m.submitText()
+	case keyDown:
+		// down enters the live reply's button block, at its first row. With no
+		// live reply there is no block to enter — focus is focusButtons only while
+		// live is non-nil — so the key is the input's, like any other.
+		if len(m.liveButtonRows()) > 0 {
+			m.focus = focusButtons
+			m.row, m.col = 0, 0
+			return m, nil
 		}
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+// handleButtonKey gives a key its meaning while the button block holds focus.
+//
+// Keys it does not name do nothing at all. They are not passed to the input: the
+// input does not hold focus, and exactly one target does
+// (AC: interaction-is-unambiguous).
+func (m Model) handleButtonKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	rows := m.liveButtonRows()
+	if len(rows) == 0 {
+		// Focus is in a block that does not exist. Nothing reaches this: focus
+		// becomes focusButtons only over a block with rows, and commitLive returns
+		// focus with the reply it commits. If anything ever did, the input is
+		// where focus belongs, rather than a cursor over nothing.
+		m.focusInputLine()
+		return m, nil
+	}
+	switch msg.String() {
+	case keyEsc:
+		// esc leaves the block for the input. It does not quit: quitting is what
+		// esc means once focus is back on the input, one press later.
+		m.focusInputLine()
+	case keyUp:
+		if m.row == 0 {
+			// Up past the first row is how focus returns to the input. From any
+			// other row it is a move within the block, below.
+			m.focusInputLine()
+			break
+		}
+		m.row--
+		m.col = clampCol(m.col, len(rows[m.row]))
+	case keyDown:
+		// down does not leave the block the way up does: it is already the key
+		// that enters one, and a key that both entered and left it would have two
+		// meanings for the same focus. At the last row it stops.
+		if m.row < len(rows)-1 {
+			m.row++
+			m.col = clampCol(m.col, len(rows[m.row]))
+		}
+	case keyLeft:
+		// left and right move within the row and stop at its ends. Wrapping would
+		// give either a second meaning — "go to the other end" — for the same key
+		// and the same focus.
+		if m.col > 0 {
+			m.col--
+		}
+	case keyRight:
+		if m.col < len(rows[m.row])-1 {
+			m.col++
+		}
+	case keyEnter:
+		return m.pressFocusedButton()
+	}
+	return m, nil
+}
+
+// pressFocusedButton makes the turn the focused button stands for.
+//
+// TODO(chat-tui Task 5): the press must first commit the live reply and an echo
+// of this button's label, before the replies it prompts render
+// (REQ: scrollback-commit) — commitLive and renderUserEcho are what that needs.
+// Until it lands the press dispatches without committing, so the reply it
+// supersedes is left live and the transcript records no press at all. That is
+// wrong, and deliberately not half-faked here.
+func (m Model) pressFocusedButton() (Model, tea.Cmd) {
+	btn, ok := m.focusedButton()
+	if !ok {
+		return m, nil
+	}
+	data, ok := buttonData(btn)
+	if !ok {
+		// A button carrying no callback data names no turn: chat.Processor
+		// identifies a press by its data and there is none
+		// (chat-messenger#req:processor-seam). It must not go pending either —
+		// nothing would answer, and the lock would never lift.
+		return m, nil
+	}
+	m.pending = true
+	return m, pressButton(m.proc, data)
+}
+
+// focusInputLine puts focus back on the input, leaving no cursor behind in the
+// button block.
+//
+// Focus is focusButtons only while there is a block to point into, and down
+// re-enters at the first row, so a cursor left where focus used to be would be
+// state nothing reads and every path would have to remember to reset.
+func (m *Model) focusInputLine() {
+	m.focus = focusInput
+	m.row, m.col = 0, 0
+}
+
+// syncInputCursor points the input's own cursor at whether the input holds focus,
+// and passes cmd through.
+//
+// The input draws a blinking cursor while it is focused, and the live region
+// marks the focused button while the block holds focus. Both at once would name
+// two focus holders, and exactly one ever holds it
+// (AC: interaction-is-unambiguous).
+//
+// It runs once after every key rather than at each place focus moves, so focus —
+// the one field that says where keys go — stays the only thing a key handler has
+// to get right, and the cursor follows it wherever it goes.
+func (m Model) syncInputCursor(cmd tea.Cmd) (Model, tea.Cmd) {
+	switch {
+	case m.focus == focusInput && !m.input.Focused():
+		// Focus returns the cursor's blink command, which has to reach the event
+		// loop or the cursor sits still.
+		return m, tea.Batch(cmd, m.input.Focus())
+	case m.focus == focusButtons && m.input.Focused():
+		m.input.Blur()
+	}
+	return m, cmd
+}
+
+// liveButtonRows returns the rows of buttons the live reply carries, or nil when
+// nothing is live.
+//
+// Focus moves over exactly what View draws, because both read the block through
+// this: a cursor indexing rows the renderer skipped would mark one button and
+// press another.
+func (m Model) liveButtonRows() [][]botkb.Button {
+	if m.live == nil {
+		return nil
+	}
+	return buttonRows(*m.live)
+}
+
+// focusedButton returns the button focus sits on, and whether there is one.
+func (m Model) focusedButton() (botkb.Button, bool) {
+	rows := m.liveButtonRows()
+	if m.row < 0 || m.row >= len(rows) {
+		return nil, false
+	}
+	row := rows[m.row]
+	if m.col < 0 || m.col >= len(row) {
+		return nil, false
+	}
+	return row[m.col], true
+}
+
+// buttonData returns b's callback data, and whether it carries any.
+//
+// botkb.Button exposes only its text and its type, so reading callback data means
+// asserting the concrete botkb.DataButton — in both its forms, since its methods
+// take a value receiver and either a value or a pointer can be stored in the
+// interface, exactly as buttonRows does for the keyboard. Any other kind of
+// button (a URL, a text button) identifies no turn to a chat.Processor, which
+// names a press by its data.
+func buttonData(b botkb.Button) (string, bool) {
+	switch b := b.(type) {
+	case *botkb.DataButton:
+		if b == nil {
+			return "", false
+		}
+		return b.Data, true
+	case botkb.DataButton:
+		return b.Data, true
+	}
+	return "", false
+}
+
+// clampCol keeps the button cursor inside a row of width buttons.
+//
+// Rows need not be the same width, so moving between them can leave the column
+// past the end of the row it lands in: a cursor marking no button, which enter
+// could not press. buttonRows drops empty rows, so width is at least 1 and there
+// is always a button to land on.
+func clampCol(col, width int) int {
+	if col >= width {
+		return width - 1
+	}
+	if col < 0 {
+		return 0
+	}
+	return col
 }
 
 // submitText commits the turn's user input and starts the Processor call.
@@ -207,6 +444,25 @@ func (m Model) receive(replies []chat.Reply) (Model, tea.Cmd) {
 	return m, commit(blocks)
 }
 
+// fail renders a Processor failure as a bot message in the transcript and leaves
+// the session running (REQ: errors-render-in-transcript).
+//
+// The failure commits to scrollback rather than being drawn in the live region,
+// because it is a completed turn: it is how the turn ended, and nothing about it
+// can still change (REQ: scrollback-commit). It joins the transcript exactly as a
+// reply does, which is the point — a backend that failed is a thing the
+// conversation records, not a thing that interrupts it.
+//
+// It must not quit, and that is the requirement's own reasoning rather than a
+// preference: the transcript is what the user came away with, and a program that
+// exits on a failed turn takes the session down over something the next turn may
+// well recover from. So the failure lifts the pending lock the same way replies
+// do — a failure is an answer — and the input goes on taking messages.
+func (m Model) fail(err error) (Model, tea.Cmd) {
+	m.pending = false
+	return m, commit([]string{renderError(err)})
+}
+
 // commitLive renders the live reply for scrollback and clears it, returning the
 // rendered block, or "" when nothing was live.
 //
@@ -221,8 +477,7 @@ func (m *Model) commitLive() string {
 	}
 	block := renderCommittedReply(*m.live)
 	m.live = nil
-	m.focus = focusInput
-	m.row, m.col = 0, 0
+	m.focusInputLine()
 	return block
 }
 
@@ -259,8 +514,32 @@ func (m Model) View() string {
 	}
 	b.WriteString(m.input.View())
 	b.WriteByte('\n')
-	b.WriteString(footerStyle.Render(footerHelp))
+	b.WriteString(footerStyle.Render(m.footerHelp()))
 	return b.String()
+}
+
+// footerHelp is the live region's hint line: the keys that work right now, each
+// with the one meaning it has right now (REQ: inline-rendering).
+//
+// It is state-aware because the keys are. enter and esc each mean one thing on
+// the input and another in the button block, and while a reply is in flight only
+// ctrl+c means anything at all (REQ: focus-and-keys,
+// REQ: input-locked-while-pending). A single fixed line could not name them
+// without also naming meanings that do not apply here — leaving the user to work
+// out which, which is the ambiguity a hint exists to remove.
+func (m Model) footerHelp() string {
+	switch {
+	case m.pending:
+		return footerHelpPending
+	case m.focus == focusButtons:
+		return footerHelpButtons
+	case len(m.liveButtonRows()) > 0:
+		// Offered against the same thing down checks, so the hint cannot promise
+		// a key that would do nothing.
+		return footerHelpInputLive
+	default:
+		return footerHelpInput
+	}
 }
 
 // --- rendering ---
@@ -335,6 +614,24 @@ func renderReply(r chat.Reply, unfocused lipgloss.Style, focusRow, focusCol int)
 	return strings.Join(lines, "\n")
 }
 
+// renderError renders a Processor failure as the bot message it becomes in the
+// transcript (REQ: errors-render-in-transcript).
+//
+// The wording is this package's own. The Processor hands back a bare error by
+// contract (chat-messenger#req:errors-are-returned-not-formatted), so naming it
+// as a failure falls to the renderer — the only layer that knows how an error
+// should look on a terminal. The prefix is the same one internal/tui puts on its
+// error text, for the same reason the styles below are restated rather than
+// imported: the two packages read alike without depending on each other.
+//
+// It is marked as a failure in text and not by colour alone, for the reason the
+// focused button is: lipgloss emits no colour when it is not writing to a
+// terminal, so a block distinguished only by colour would reach a piped or
+// copied transcript looking exactly like an ordinary reply.
+func renderError(err error) string {
+	return errStyle.Render(errorPrefix + err.Error())
+}
+
 // renderUserEcho renders what the user did, for scrollback: the text they
 // submitted, or — from Task 5 — the label of the button they pressed
 // (REQ: scrollback-commit).
@@ -356,7 +653,14 @@ var (
 	inertButtonStyle   = lipgloss.NewStyle().Faint(true)
 	focusedButtonStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	footerStyle        = lipgloss.NewStyle().Faint(true).Padding(0, 1)
+	errStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
+
+// errorPrefix names a committed failure as one (renderError). It carries the
+// meaning on its own, without the colour errStyle adds: a transcript that has
+// been piped, copied or redirected has no colour left in it, and the reader still
+// has to be able to tell a failure from a reply.
+const errorPrefix = "Error: "
 
 // inputPrompt marks the input line, and with it the committed echo of a line
 // submitted from there (renderUserEcho), so the two cannot drift apart.
@@ -377,8 +681,12 @@ const (
 	focusedMarkRight = " ◀"
 )
 
-// footerHelp is the live region's hint line (REQ: inline-rendering).
-//
-// TODO(chat-tui Task 4): the focus and button keys this must name are not
-// implemented, so it lists only what works.
-const footerHelp = "enter send · ^c quit"
+// The hint lines footerHelp chooses between, one per state the key table has.
+// No one of them is a substring of another, so a test can assert both the hint a
+// state shows and the hints it does not.
+const (
+	footerHelpInput     = "enter send · esc quit · ^c quit"
+	footerHelpInputLive = "enter send · ↓ buttons · esc quit · ^c quit"
+	footerHelpButtons   = "enter press · ↑↓←→ move · esc back · ^c quit"
+	footerHelpPending   = "waiting for a reply · ^c quit"
+)

@@ -58,7 +58,7 @@ Implement the commit rule for text submission: `tea.Println` the user's line on 
 
 **Verifies:** chat-tui#ac:interaction-is-unambiguous
 **Depends-On:** 3
-**Status:** planning
+**Status:** complete
 
 Implement the focus enum and button cursor: `down` from the input enters the button block, `up` past row 0 returns, `left`/`right` move within a row, `enter` submits or presses by focus, `esc` quits from the input but returns focus from the button block, and `ctrl+c` always quits. While a reply is in flight ignore every key except `ctrl+c` — note the confirm screen this mirrors (`internal/tui/confirm_screen.go`) ignores *all* keys, so do not copy it verbatim. Covers `_tests/focus-moves-between-input-and-buttons.md`.
 
@@ -74,7 +74,7 @@ Treat a button press as user input for the commit rule: commit the live reply wi
 
 **Verifies:** chat-tui#ac:transcript-is-durable-terminal-text
 **Depends-On:** 3
-**Status:** planning
+**Status:** complete
 
 When a `Processor` call returns an error, render it as a bot message in the transcript and keep the session running — never quit, since quitting would discard the transcript. The renderer owns the wording, because the processor returns a bare error by contract (`chat-messenger#req:errors-are-returned-not-formatted`). Covers `_tests/failure-renders-in-transcript.md`, including that earlier committed turns survive and the input still accepts a further message.
 
