@@ -6,12 +6,17 @@ import (
 	"os"
 	"strings"
 
+	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/actions4assetus"
+	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/actions4calendarius"
+	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/actions4contactus"
+	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/actions4listus"
+	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/togdactions"
 	"github.com/sneat-co/sneat-bots/pkg/convo/convodev"
 	"github.com/sneat-co/sneat-bots/pkg/convo/convollm/llmmock"
 	"github.com/sneat-co/sneat-bots/pkg/convo/convomodel"
 	"github.com/sneat-co/sneat-bots/pkg/convo/convoruntime"
-	"github.com/sneat-co/sneat-bots/pkg/convo/convosetup"
 	"github.com/sneat-co/sneat-go-core/coretypes"
+	"github.com/sneat-co/sneat-go-core/facade"
 	"github.com/spf13/cobra"
 )
 
@@ -30,8 +35,38 @@ func Convo(_ Env) *cobra.Command {
 }
 
 // newConvoRuntime constructs the runtime used by all convo subcommands.
+// It includes all standard catalogs plus the togethered stub catalog.
 func newConvoRuntime() (*convoruntime.Runtime, error) {
-	return convosetup.NewRuntime(llmmock.NewClient())
+	return convoruntime.New(llmmock.NewClient(),
+		actions4contactus.Catalog(),
+		actions4calendarius.Catalog(),
+		actions4listus.Catalog(),
+		actions4assetus.Catalog(),
+		togdStubCatalog(),
+	)
+}
+
+// togdStubCatalog returns a convoruntime.Catalog for the togethered scope
+// with stub execute functions (deterministic summaries from args, no DB).
+// Used in sneat-cli where the real facade4togd is not available.
+func togdStubCatalog() convoruntime.Catalog {
+	stub := func(actionID string) convoruntime.ExecuteFunc {
+		return func(_ facade.ContextWithUser, _ coretypes.SpaceID, args map[string]any) (convomodel.ActionResult, error) {
+			return convomodel.ActionResult{
+				ActionID: actionID,
+				Summary:  fmt.Sprintf("[stub] %s args=%v", actionID, args),
+			}, nil
+		}
+	}
+	actions := make([]convoruntime.BoundAction, len(togdactions.AllDefs))
+	for i, def := range togdactions.AllDefs {
+		actions[i] = convoruntime.BoundAction{Def: def, Execute: stub(def.ID)}
+	}
+	return convoruntime.Catalog{
+		ID:      "togethered",
+		Title:   "ToGethered (stub)",
+		Actions: actions,
+	}
 }
 
 // setupSandbox wires the sandbox DB (in-memory by default, OpenVaultDB when

@@ -1,0 +1,3 @@
+# Test: follow + unfollow
+follow Lahinch for kitesurfing on weekends
+stop following Lahinch
