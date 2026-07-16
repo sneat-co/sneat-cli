@@ -15,7 +15,15 @@ AND the keyboard has exactly 2 rows
 AND each row holds exactly one button, labelled "Family" and "Personal" respectively
 AND the buttons are ordered by space ID, so `family1` precedes `personal1`
 
-GIVEN a fake spaces reader returning a space `solo1` whose title is empty
+GIVEN a fake spaces reader returning a space `vaoyj` whose title is empty and whose type is `family`
+WHEN `SendText` is called with `/spaces`
+THEN the button for `vaoyj` is labelled `Family (vaoyj)`
+
+GIVEN a fake spaces reader returning two spaces whose titles are empty and whose types are both `family`
+WHEN `SendText` is called with `/spaces`
+THEN the two buttons are distinguishable, each naming its own ID
+
+GIVEN a fake spaces reader returning a space `solo1` whose title and type are both empty
 WHEN `SendText` is called with `/spaces`
 THEN the button for `solo1` is labelled `solo1`
 

@@ -944,6 +944,27 @@ func TestFooterNamesTheKeysThatWorkRightNow(t *testing.T) {
 // TestNewStartsOnTheInputWithNothingLive pins the state a session opens in:
 // focus on the input, no live reply to focus buttons in, and no reply in
 // flight. Task 4's focus movement and pending lock are written against it.
+// TestPlaceholderRendersInFull guards a bubbles trap that no model-state
+// assertion can see. textinput.placeholderView does
+// `p := make([]rune, m.Width+1); copy(p, []rune(m.Placeholder))` — so with the
+// zero-value Width it allocates a ONE-rune buffer and silently truncates the
+// placeholder to its first character. The session rendered "> T" for every
+// frame until a real terminal showed it. The whole placeholder must survive,
+// at the initial width and after a resize.
+func TestPlaceholderRendersInFull(t *testing.T) {
+	const want = "Type a message"
+
+	m := New(fakeProcessor{})
+	if got := m.View(); !strings.Contains(got, want) {
+		t.Errorf("initial View() does not render the whole placeholder\n got: %q\nwant it to contain: %q", got, want)
+	}
+
+	rm, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	if got := rm.(Model).View(); !strings.Contains(got, want) {
+		t.Errorf("View() after resize does not render the whole placeholder\n got: %q\nwant it to contain: %q", got, want)
+	}
+}
+
 func TestNewStartsOnTheInputWithNothingLive(t *testing.T) {
 	m := New(fakeProcessor{})
 	if m.focus != focusInput {

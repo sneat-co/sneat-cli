@@ -84,7 +84,11 @@ Text beginning with `/` MUST route by its first word to a command handler. An un
 
 `/spaces` MUST list the signed-in user's real spaces, rendering one inline button per space, one button per row. Each button's callback data MUST be `space?id=<spaceID>`.
 
-Each button's label MUST be the space's title, falling back to its ID when the title is empty. Buttons MUST be ordered by space ID. Both rules are load-bearing rather than cosmetic: the spaces source is a Go map (`SpacesReader.ListSpaces` returns `map[string]any`), whose iteration order is randomized, so an unordered implementation would reshuffle the user's buttons on every invocation. The existing `spaceItemsFrom` resolves the same problem the same way, sorting IDs before reading each brief's title.
+Each button's label MUST be the space's title. When the title is empty the label MUST fall back to the space's **type**, first letter capitalized, followed by the space ID in parentheses — `Family (vaoyj)`, `Private (ao58m)`. Only when both title and type are empty is the label the bare ID.
+
+The empty title is the common case rather than an edge: Sneat creates a user's built-in spaces without one, so a real signed-in user's buttons are all fallbacks. A bare ID (`ao58m`) tells that user nothing. The ID stays in the fallback rather than being dropped because built-in spaces share a type — two `family` spaces would otherwise render identically, and the button's whole job is to distinguish them.
+
+Buttons MUST be ordered by space ID. Ordering is load-bearing rather than cosmetic: the spaces source is a Go map (`SpacesReader.ListSpaces` returns `map[string]any`), whose iteration order is randomized, so an unordered implementation would reshuffle the user's buttons on every invocation. The existing `spaceItemsFrom` resolves the same problem the same way, sorting IDs before reading each brief.
 
 When the user has no spaces, the reply MUST say so and MUST carry no keyboard — not an empty one. A renderer branches on keyboard presence to decide whether a reply is focusable, so an empty-but-present keyboard would leave it with a focus block containing nothing to focus.
 

@@ -265,7 +265,26 @@ func spaceLabel(brief any, id string) string {
 	if title, _ := b["title"].(string); title != "" {
 		return title
 	}
+	// An empty title is the common case, not an edge: Sneat creates a user's
+	// built-in spaces without one, so a real signed-in user's buttons are all
+	// fallbacks and a bare ID would tell them nothing. The ID stays alongside
+	// the type because built-in spaces share a type — two "family" spaces would
+	// otherwise render identically, and telling them apart is the button's job.
+	if spaceType, _ := b["type"].(string); spaceType != "" {
+		return fmt.Sprintf("%s (%s)", capitalize(spaceType), id)
+	}
 	return id
+}
+
+// capitalize upper-cases the first rune of s, leaving the rest as-is: the space
+// type "family" becomes "Family". It is rune-aware rather than byte-indexed so
+// a non-ASCII type does not get sliced mid-rune.
+func capitalize(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return s
+	}
+	return string(unicode.ToUpper(r[0])) + string(r[1:])
 }
 
 // plural picks the singular or plural form for n.

@@ -74,13 +74,36 @@ func New(proc chat.Processor) Model {
 	in := textinput.New()
 	in.Placeholder = "Type a message"
 	in.Prompt = inputPrompt
+	in.Width = inputWidth(defaultWidth)
 	in.Focus()
 	return Model{
 		proc:  proc,
 		input: in,
+		width: defaultWidth,
 		focus: focusInput,
 	}
 }
+
+// inputWidth converts a terminal width into the width the text input renders
+// at: the terminal less the prompt it sits behind.
+//
+// Setting it is not cosmetic. textinput.placeholderView sizes its buffer as
+// `make([]rune, Width+1)` and copies the placeholder into it, so a zero Width
+// silently truncates the placeholder to one rune — the input renders "> T"
+// rather than "> Type a message". The floor keeps that from recurring on a
+// terminal too narrow to hold the placeholder.
+func inputWidth(terminal int) int {
+	w := terminal - lipgloss.Width(inputPrompt)
+	if min := lipgloss.Width("Type a message"); w < min {
+		return min
+	}
+	return w
+}
+
+// defaultWidth is the assumed terminal width until the first WindowSizeMsg
+// arrives. Bubble Tea sends one on startup, so this only covers the first
+// frame.
+const defaultWidth = 80
 
 // Init starts the input's cursor blinking.
 func (m Model) Init() tea.Cmd {
@@ -130,6 +153,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.input.Width = inputWidth(msg.Width)
 	case repliesMsg:
 		return m.receive(msg.replies)
 	case errMsg:

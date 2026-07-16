@@ -177,9 +177,12 @@ func TestProcessor_SpaceButtonLabelFallsBackToID(t *testing.T) {
 		want  string
 	}{
 		{"title present", map[string]any{"title": "Solo"}, "Solo"},
-		{"title empty", map[string]any{"title": "", "type": "private"}, "solo1"},
-		{"title absent", map[string]any{"type": "private"}, "solo1"},
-		{"title not a string", map[string]any{"title": 42}, "solo1"},
+		{"title empty falls back to Type (id)", map[string]any{"title": "", "type": "private"}, "Private (solo1)"},
+		{"title absent falls back to Type (id)", map[string]any{"type": "family"}, "Family (solo1)"},
+		{"title not a string falls back to Type (id)", map[string]any{"title": 42, "type": "private"}, "Private (solo1)"},
+		{"type already capitalized is left alone", map[string]any{"type": "Family"}, "Family (solo1)"},
+		{"type not a string falls back to the bare id", map[string]any{"type": 42}, "solo1"},
+		{"title and type both empty falls back to the bare id", map[string]any{"title": "", "type": ""}, "solo1"},
 		{"brief not a map", "not-a-brief", "solo1"},
 		{"brief nil", nil, "solo1"},
 	} {
@@ -395,7 +398,8 @@ func TestProcessor_PressSpaceButtonConfirmsByLabel(t *testing.T) {
 		want  string
 	}{
 		{"titled", map[string]any{"title": "Solo"}, "Solo"},
-		{"untitled", map[string]any{"title": ""}, "solo1"},
+		{"untitled uses the same Type (id) fallback as the button", map[string]any{"title": "", "type": "family"}, "Family (solo1)"},
+		{"untitled and typeless", map[string]any{"title": ""}, "solo1"},
 		{"brief not a map", "not-a-brief", "solo1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
