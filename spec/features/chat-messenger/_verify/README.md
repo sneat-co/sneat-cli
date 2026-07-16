@@ -7,6 +7,7 @@ Per-run verify reports produced by `specstudio:verify`. Each report is named `<s
 | Report | Run revision | Verdict summary |
 |---|---|---|
 | [c0d832b.md](c0d832b.md) | c0d832b | 2 passed, 0 failed, 0 unmapped, 0 errored |
+| [b43eba2.md](b43eba2.md) | b43eba2 | 2 passed, 0 failed, 0 unmapped, 0 errored |
 
 ## Open Questions
 
