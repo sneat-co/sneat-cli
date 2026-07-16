@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/bots-go-framework/bots-go-core/botkb"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sneat-co/sneat-cli/internal/chat"
 )
@@ -720,16 +721,16 @@ func pressTurn(t *testing.T, m Model, keys ...string) (Model, []tea.Msg) {
 // focusable. The echo of the press follows it, and only then do the replies the
 // press prompted render.
 func TestPressCommitsTheLiveReplyThenEchoesTheLabel(t *testing.T) {
-	const answer = "Family space: 3 members"
+	const answer = "Work space: 3 members"
 	var pressed []string
 	m := liveModel(fakeProcessor{replies: []chat.Reply{{Text: answer}}, pressed: &pressed}, spacesKeyboard())
 
-	m, _ = pressKeys(t, m, "down")
+	m, _ = pressKeys(t, m, "up")
 	// The live region marks the pressed button: that is what the commit below
 	// must not carry into scrollback, and without the mark that assertion could
 	// not fail.
-	if got := focusedLabel(m); got != "Family" {
-		t.Fatalf("setup: the live region marks %q as focused, want %q", got, "Family")
+	if got := focusedLabel(m); got != "Work" {
+		t.Fatalf("setup: the live region marks %q as focused, want %q: up enters the block at its last row", got, "Work")
 	}
 
 	next, cmd := m.Update(key(t, "enter"))
@@ -741,7 +742,7 @@ func TestPressCommitsTheLiveReplyThenEchoesTheLabel(t *testing.T) {
 	}
 	block := sb[0]
 	iReply := strings.Index(block, "Your spaces:")
-	iEcho := strings.Index(block, inputPrompt+"Family")
+	iEcho := strings.Index(block, inputPrompt+"Work")
 	switch {
 	case iReply < 0:
 		t.Errorf("the reply whose button was pressed is missing from the committed block %q; a press commits the live reply (chat-tui#req:scrollback-commit)", block)
@@ -750,7 +751,7 @@ func TestPressCommitsTheLiveReplyThenEchoesTheLabel(t *testing.T) {
 	case iReply > iEcho:
 		t.Errorf("the committed block %q echoes the press before the reply it supersedes; the live reply commits first (chat-tui#req:scrollback-commit)", block)
 	}
-	if strings.Contains(block, "space?id=family1") {
+	if strings.Contains(block, "space?id=work1") {
 		t.Errorf("the committed block %q names the pressed button's callback data; the echo names the label the user pressed, which is what they saw", block)
 	}
 	if !strings.Contains(block, "Work") {
@@ -762,8 +763,8 @@ func TestPressCommitsTheLiveReplyThenEchoesTheLabel(t *testing.T) {
 	if !strings.Contains(sb[1], answer) {
 		t.Errorf("a press committed %q after the press, want the reply it prompted, %q: the replies render after the echo (chat-tui#req:scrollback-commit)", sb[1], answer)
 	}
-	if !reflect.DeepEqual(pressed, []string{"space?id=family1"}) {
-		t.Errorf("PressButton received %q, want exactly one call, carrying [%q]", pressed, "space?id=family1")
+	if !reflect.DeepEqual(pressed, []string{"space?id=work1"}) {
+		t.Errorf("PressButton received %q, want exactly one call, carrying [%q]", pressed, "space?id=work1")
 	}
 	if view := m.View(); strings.Contains(view, "Your spaces:") {
 		t.Errorf("View() = %q still draws the reply whose button was pressed; no live reply from before the press remains focusable (chat-tui#req:scrollback-commit)", view)
@@ -777,7 +778,7 @@ func TestPressCommitsTheLiveReplyThenEchoesTheLabel(t *testing.T) {
 // fast enough could land its reply in scrollback ahead of the press that prompted
 // it (chat-tui#req:scrollback-commit).
 func TestPressSequencesTheCommitAheadOfThePress(t *testing.T) {
-	m, _ := pressKeys(t, liveModel(fakeProcessor{replies: []chat.Reply{{Text: "Family space:"}}}, spacesKeyboard()), "down")
+	m, _ := pressKeys(t, liveModel(fakeProcessor{replies: []chat.Reply{{Text: "Family space:"}}}, spacesKeyboard()), "up")
 	if m.focus != focusButtons {
 		t.Fatal("setup: expected focus in the button block after down")
 	}
@@ -834,7 +835,7 @@ func TestAPressLeavesNothingFocusableFromBeforeIt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m, msgs := pressTurn(t, liveModel(fakeProcessor{replies: tt.replies}, spacesKeyboard()), "down")
+			m, msgs := pressTurn(t, liveModel(fakeProcessor{replies: tt.replies}, spacesKeyboard()), "up")
 
 			if sb := scrollbackOf(msgs); len(sb) == 0 || !strings.Contains(sb[0], "Your spaces:") {
 				t.Fatalf("a press committed %q, want the reply it superseded first (chat-tui#req:scrollback-commit)", sb)
@@ -883,6 +884,56 @@ func TestViewIsOnlyTheLiveRegion(t *testing.T) {
 // without also naming meanings that do not apply — which is the ambiguity the
 // hint exists to remove (chat-tui#req:focus-and-keys,
 // chat-tui#req:input-locked-while-pending).
+// TestPendingIsVisible pins the indicator that says the session is working
+// (chat-tui#req:pending-is-visible). Its absence was a real defect: the only cue
+// a turn was in flight was the footer hint swapping, at the edge of the screen
+// while the user's eyes are on the transcript, so a slow turn read as the input
+// having been ignored.
+//
+// The animation is asserted by advancing the tick and watching the frame change,
+// not by looking for the word. A frozen line would satisfy a contains-check and
+// is exactly what the requirement rules out — motion is what distinguishes
+// "working" from "hung".
+func TestPendingIsVisible(t *testing.T) {
+	m := New(fakeProcessor{})
+	if got := m.View(); strings.Contains(got, pendingLabel) {
+		t.Errorf("idle View() shows the typing indicator %q; it belongs to an in-flight turn only\n%s", pendingLabel, got)
+	}
+
+	m.input.SetValue("/spaces")
+	next, cmd := m.Update(key(t, "enter"))
+	m = next.(Model)
+
+	if !m.pending {
+		t.Fatal("setup: a submitted turn is not pending")
+	}
+	frame := m.View()
+	if !strings.Contains(frame, pendingLabel) {
+		t.Errorf("View() while a reply is in flight does not show the typing indicator %q\n%s", pendingLabel, frame)
+	}
+	if i, j := strings.Index(frame, pendingLabel), strings.Index(frame, inputPrompt); i >= 0 && j >= 0 && i > j {
+		t.Error("the typing indicator renders below the input; it belongs above it, in the live region the user is watching")
+	}
+
+	// Animation: the spinner's own tick must change the rendered frame.
+	before := m.View()
+	spun, _ := m.Update(m.spin.Tick())
+	if after := spun.(Model).View(); after == before {
+		t.Error("a spinner tick left the frame identical; the indicator must animate, not sit frozen — a frozen line is indistinguishable from a hung program")
+	}
+
+	// It clears when the turn resolves, whichever way it resolves.
+	done, _ := m.Update(repliesMsg{replies: []chat.Reply{{Text: "ok"}}})
+	if got := done.(Model).View(); strings.Contains(got, pendingLabel) {
+		t.Errorf("the typing indicator survived the replies arriving\n%s", got)
+	}
+	failed, _ := m.Update(errMsg{err: errProcessorFailure})
+	if got := failed.(Model).View(); strings.Contains(got, pendingLabel) {
+		t.Errorf("the typing indicator survived the turn failing\n%s", got)
+	}
+	_, _ = cmd, frame
+}
+
 func TestFooterNamesTheKeysThatWorkRightNow(t *testing.T) {
 	// Asserting the hints this state must not carry is what makes each case
 	// fail on a hint that is merely a superset of the right one.
@@ -906,7 +957,7 @@ func TestFooterNamesTheKeysThatWorkRightNow(t *testing.T) {
 		{
 			name: "focus in the button block",
 			model: func(t *testing.T) Model {
-				m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "down")
+				m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "up")
 				return m
 			},
 			want: footerHelpButtons,
@@ -1124,100 +1175,108 @@ func TestFocusMovement(t *testing.T) {
 		wantLabel string
 	}{
 		{
-			name:      "down from the input enters the block at the first row",
+			// The block renders above the input, so up reaches it — and lands on the
+			// row nearest the cursor that just left, which is the last one.
+			name:      "up from the input enters the block at the LAST row",
 			kb:        spacesKeyboard(),
-			keys:      []string{"down"},
-			wantFocus: focusButtons,
-			wantLabel: "Family",
-		},
-		{
-			name:      "up from the first row returns to the input",
-			kb:        spacesKeyboard(),
-			keys:      []string{"down", "up"},
-			wantFocus: focusInput,
-		},
-		{
-			name:      "down moves on to the next row",
-			kb:        spacesKeyboard(),
-			keys:      []string{"down", "down"},
+			keys:      []string{"up"},
 			wantFocus: focusButtons,
 			wantLabel: "Work",
 		},
 		{
-			// Only up *past* the first row leaves: from any other row it is a
-			// move within the block.
-			name:      "up moves back a row before it reaches the input",
+			name:      "down from the last row returns to the input",
 			kb:        spacesKeyboard(),
-			keys:      []string{"down", "down", "up"},
+			keys:      []string{"up", "down"},
+			wantFocus: focusInput,
+		},
+		{
+			name:      "up moves on toward the top of the block",
+			kb:        spacesKeyboard(),
+			keys:      []string{"up", "up"},
 			wantFocus: focusButtons,
 			wantLabel: "Family",
 		},
 		{
-			// down leaves the input for the block and moves down it; it never
-			// leaves the block, or the key would mean three things.
-			name:      "down stops at the last row",
+			// up entered the block; it does not also leave it, or the key would mean
+			// two things for the same focus. At the top it stops.
+			name:      "up stops at the first row",
 			kb:        spacesKeyboard(),
-			keys:      []string{"down", "down", "down", "down"},
+			keys:      []string{"up", "up", "up", "up"},
+			wantFocus: focusButtons,
+			wantLabel: "Family",
+		},
+		{
+			// Only down *past* the last row leaves: from any other row it is a move
+			// within the block.
+			name:      "down moves back a row before it reaches the input",
+			kb:        spacesKeyboard(),
+			keys:      []string{"up", "up", "down"},
 			wantFocus: focusButtons,
 			wantLabel: "Work",
 		},
 		{
 			name:      "esc leaves the block for the input",
 			kb:        spacesKeyboard(),
-			keys:      []string{"down", "down", "esc"},
+			keys:      []string{"up", "up", "esc"},
 			wantFocus: focusInput,
 		},
 		{
-			name:      "down re-enters the block at the first row, not where it left",
+			name:      "up re-enters the block at the last row, not where it left",
 			kb:        spacesKeyboard(),
-			keys:      []string{"down", "down", "esc", "down"},
+			keys:      []string{"up", "up", "esc", "up"},
 			wantFocus: focusButtons,
-			wantLabel: "Family",
+			wantLabel: "Work",
 		},
 		{
+			// ragged's last row is [A B], so up from the input lands on A.
 			name:      "right moves along a row",
 			kb:        raggedKeyboard(),
-			keys:      []string{"down", "right"},
+			keys:      []string{"up", "right"},
 			wantFocus: focusButtons,
-			wantLabel: "No",
+			wantLabel: "B",
 		},
 		{
 			// No wrap: wrapping would make right mean "go to the other end" as
 			// well as "go one to the right".
 			name:      "right stops at the end of a row",
 			kb:        raggedKeyboard(),
-			keys:      []string{"down", "right", "right"},
+			keys:      []string{"up", "right", "right"},
 			wantFocus: focusButtons,
-			wantLabel: "No",
+			wantLabel: "B",
 		},
 		{
 			name:      "left moves back along a row",
 			kb:        raggedKeyboard(),
-			keys:      []string{"down", "right", "left"},
+			keys:      []string{"up", "right", "left"},
 			wantFocus: focusButtons,
-			wantLabel: "Yes",
+			wantLabel: "A",
 		},
 		{
 			name:      "left stops at the start of a row",
 			kb:        raggedKeyboard(),
-			keys:      []string{"down", "left"},
+			keys:      []string{"up", "left"},
 			wantFocus: focusButtons,
-			wantLabel: "Yes",
+			wantLabel: "A",
 		},
 		{
 			// Rows need not be the same width, so a row change can leave the
 			// column past the end of the row it lands in: a cursor on no button,
 			// which enter could not press.
+			// Rows differ in width, so a row change can strand the cursor past the
+			// end of the row it lands on — an enter that presses nothing. Reached
+			// here from the top row [Yes No] moving down onto [Explain].
 			name:      "down onto a narrower row keeps the cursor on a button",
 			kb:        raggedKeyboard(),
-			keys:      []string{"down", "right", "down"},
+			keys:      []string{"up", "up", "up", "right", "down"},
 			wantFocus: focusButtons,
 			wantLabel: "Explain",
 		},
 		{
+			// The same clamp coming the other way: from the bottom row [A B]
+			// moving up onto [Explain].
 			name:      "up onto a narrower row keeps the cursor on a button",
 			kb:        raggedKeyboard(),
-			keys:      []string{"down", "down", "down", "right", "up"},
+			keys:      []string{"up", "right", "up"},
 			wantFocus: focusButtons,
 			wantLabel: "Explain",
 		},
@@ -1239,40 +1298,39 @@ func TestFocusMovement(t *testing.T) {
 }
 
 // TestDownEntersTheButtonBlockAtTheFirstRow pins where down puts focus, and not
-// merely that it moves it: entry is at row 0
+// merely that it moves it: entry is at the last row
 // (chat-tui#req:focus-and-keys).
 //
 // The cursor is planted in the block first, which no sequence of keys can do
 // while focus is on the input — every path that leaves the block clears the
-// cursor behind it, and TestFocusMovement's "down re-enters the block at the
-// first row" drives that path with real keys. This builds the state directly
-// because it is the one that reset exists to make not matter: without it, down
-// would enter wherever focus had been last, and the assertion would be on
-// nothing.
-func TestDownEntersTheButtonBlockAtTheFirstRow(t *testing.T) {
+// cursor behind it, and TestFocusMovement's "up re-enters the block at the last
+// row" drives that path with real keys. This builds the state directly because
+// it is the one that reset exists to make not matter: without it, up would enter
+// wherever focus had been last, and the assertion would be on nothing.
+func TestUpEntersTheButtonBlockAtTheLastRow(t *testing.T) {
 	m := liveModel(fakeProcessor{}, spacesKeyboard())
-	m.row, m.col = 1, 0
+	m.row, m.col = 0, 0
 
-	m, _ = pressKeys(t, m, "down")
+	m, _ = pressKeys(t, m, "up")
 
 	if m.focus != focusButtons {
-		t.Fatalf("focus = %v after down from the input, want focusButtons", m.focus)
+		t.Fatalf("focus = %v after up from the input, want focusButtons", m.focus)
 	}
-	if got := focusedLabel(m); got != "Family" {
-		t.Errorf("down entered the button block on %q, want the first button %q: it enters at row 0 (chat-tui#req:focus-and-keys)", got, "Family")
+	if got := focusedLabel(m); got != "Work" {
+		t.Errorf("up entered the button block on %q, want the last button %q: the block renders above the input, so entry is at the row nearest it (chat-tui#req:focus-and-keys)", got, "Work")
 	}
 }
 
-// TestDownWithNothingFocusableStaysOnTheInput pins the one thing that stops down
+// TestUpWithNothingFocusableStaysOnTheInput pins the one thing that stops up
 // from being unconditional: focus is the button block only while there is a block
 // to point into (chat-tui#req:focus-and-keys).
-func TestDownWithNothingFocusableStaysOnTheInput(t *testing.T) {
-	m, cmd := pressKeys(t, New(fakeProcessor{}), "down")
+func TestUpWithNothingFocusableStaysOnTheInput(t *testing.T) {
+	m, cmd := pressKeys(t, New(fakeProcessor{}), "up")
 	if m.focus != focusInput {
-		t.Errorf("focus = %v after down with no live reply, want focusInput: there is no button block to enter", m.focus)
+		t.Errorf("focus = %v after up with no live reply, want focusInput: there is no button block to enter", m.focus)
 	}
 	if quits(t, cmd) {
-		t.Error("down quit the program")
+		t.Error("up quit the program")
 	}
 }
 
@@ -1285,7 +1343,7 @@ func TestKeysWithNoMeaningInTheButtonBlockDoNotReachTheInput(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := liveModel(fakeProcessor{}, spacesKeyboard())
 			m.input.SetValue("hello")
-			m, _ = pressKeys(t, m, "down")
+			m, _ = pressKeys(t, m, "up")
 			if m.focus != focusButtons {
 				t.Fatal("setup: expected focus in the button block after down")
 			}
@@ -1315,7 +1373,7 @@ func TestInputCursorFollowsFocus(t *testing.T) {
 		t.Fatal("setup: the input starts focused, and draws a cursor to say so")
 	}
 
-	m, _ = pressKeys(t, m, "down")
+	m, _ = pressKeys(t, m, "up")
 	if m.input.Focused() {
 		t.Error("the input still draws its cursor while the button block holds focus; exactly one target holds focus at a time (chat-tui#ac:interaction-is-unambiguous)")
 	}
@@ -1344,7 +1402,7 @@ func TestEscFromTheInputQuits(t *testing.T) {
 }
 
 func TestEscFromTheButtonBlockReturnsFocusAndDoesNotQuit(t *testing.T) {
-	m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "down", "down")
+	m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "up", "up")
 	if m.focus != focusButtons {
 		t.Fatal("setup: expected focus in the button block")
 	}
@@ -1382,7 +1440,7 @@ func TestCtrlCAlwaysQuits(t *testing.T) {
 		{
 			name: "from the button block",
 			model: func(t *testing.T) Model {
-				m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "down")
+				m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "up")
 				if m.focus != focusButtons {
 					t.Fatal("setup: expected focus in the button block after down")
 				}
@@ -1422,15 +1480,16 @@ func TestEnterOnAFocusedButtonPressesIt(t *testing.T) {
 		want string
 	}{
 		{
+			// Entry is at the last row, so this is Work, not Family.
 			name: "the button the block is entered on",
-			keys: []string{"down"},
-			want: "space?id=family1",
+			keys: []string{"up"},
+			want: "space?id=work1",
 		},
 		{
-			// The press reads the cursor rather than assuming the first row.
-			name: "a button further down",
-			keys: []string{"down", "down"},
-			want: "space?id=work1",
+			// The press reads the cursor rather than assuming the entry row.
+			name: "a button further up",
+			keys: []string{"up", "up"},
+			want: "space?id=family1",
 		},
 	}
 	for _, tt := range tests {
@@ -1462,7 +1521,7 @@ func TestEnterInTheButtonBlockDoesNotSubmitTheInput(t *testing.T) {
 	var sent, pressed []string
 	m := liveModel(fakeProcessor{sent: &sent, pressed: &pressed}, spacesKeyboard())
 	m.input.SetValue("hello")
-	m, _ = pressKeys(t, m, "down")
+	m, _ = pressKeys(t, m, "up")
 
 	next, cmd := m.Update(key(t, "enter"))
 	m = next.(Model)
@@ -1490,7 +1549,7 @@ func TestEnterOnAButtonCarryingNoCallbackDataDoesNothing(t *testing.T) {
 	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
 		[]botkb.Button{botkb.NewUrlButton("Open in browser", "https://sneat.app")},
 	)
-	m, _ := pressKeys(t, liveModel(fakeProcessor{pressed: &pressed}, kb), "down")
+	m, _ := pressKeys(t, liveModel(fakeProcessor{pressed: &pressed}, kb), "up")
 	if m.focus != focusButtons {
 		t.Fatal("setup: expected focus in the button block")
 	}
@@ -1616,8 +1675,16 @@ func TestFailureRendersInTheTranscriptAndTheSessionContinues(t *testing.T) {
 	// so "retained" is not a claim about model state — there is none to read. What
 	// it means operationally is that the failing turn does nothing to what the
 	// terminal already owns, which is asserted here the only way it can be: the
-	// turn prints, and does nothing else at all.
+	// turn prints, and does nothing else that could take a print back.
+	//
+	// A spinner tick is allowed through: it drives the typing indicator in the
+	// live region (chat-tui#req:pending-is-visible) and touches no scrollback.
+	// Nothing else is — tea.Quit above all, since quitting is exactly how the
+	// transcript would be lost.
 	for _, msg := range msgs {
+		if _, ok := msg.(spinner.TickMsg); ok {
+			continue
+		}
 		if _, ok := printedBody(msg); !ok {
 			t.Errorf("the failing turn produced a %T; it must only print, leaving the transcript the terminal already owns alone (chat-tui#req:errors-render-in-transcript)", msg)
 		}
@@ -1660,7 +1727,7 @@ func TestBothTurnKindsRouteAFailureToTheTranscript(t *testing.T) {
 		{
 			name: "a button press fails",
 			turn: func(t *testing.T, proc chat.Processor) (Model, []tea.Msg) {
-				return pressTurn(t, liveModel(proc, spacesKeyboard()), "down")
+				return pressTurn(t, liveModel(proc, spacesKeyboard()), "up")
 			},
 		},
 	}

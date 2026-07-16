@@ -69,11 +69,25 @@ An error returned by the `Processor` during a session MUST be rendered as a bot 
 
 #### REQ: focus-and-keys
 
-Only the most recent bot message's buttons are focusable; buttons already committed to scrollback are inert text. Focus is either the input or the button block. `down` from the input enters the button block; `up` past the first row returns to the input; `left`/`right` move within a row; `enter` submits the input or presses the focused button according to focus; `esc` quits from the input and returns focus to the input from the button block; `ctrl+c` always quits.
+Only the most recent bot message's buttons are focusable; buttons already committed to scrollback are inert text. Focus is either the input or the button block.
+
+The button block renders **above** the input, so focus moves toward it with `up` and away from it with `down`. `up` from the input MUST enter the block at its **last** row — the row physically nearest the input — not its first. `down` from the last row MUST return to the input. Within the block, `up` and `down` move one row at a time; `up` at the first row stays there (the block's top edge); `left`/`right` move within a row.
+
+The direction is not arbitrary and the first cut had it inverted: `down` entered a block sitting above the input, and entering at the *first* row meant landing on the button furthest from where the cursor just was. Both read as backwards the moment the layout is on screen, which no model-state assertion could show.
+
+`enter` submits the input or presses the focused button according to focus; `esc` quits from the input and returns focus to the input from the button block; `ctrl+c` always quits.
 
 #### REQ: input-locked-while-pending
 
 While a reply is in flight, keyboard input MUST be ignored, with the sole exception of `ctrl+c`, which MUST still quit. This mirrors the guard the existing confirm screen uses while a delete is in flight, except that the confirm screen ignores every key — a chat session may block on a slow backend, so the user must always retain a way out.
+
+#### REQ: pending-is-visible
+
+While a reply is in flight, the live region MUST show an **animated** indicator, above the input, stating that the bot is composing a reply. It MUST appear for every in-flight turn — typed or pressed — and MUST disappear once the turn resolves, whether it resolved into replies or into an error.
+
+Changing the footer hint alone is not sufficient, and shipping only that was a real defect: the footer sits at the edge of the screen while the user's attention is on the transcript, so a turn that takes a moment reads as the session having ignored the input entirely. The indicator must be animated rather than static text, because a frozen line is indistinguishable from a hung program — motion is what says *working*, not *stuck*.
+
+This is the terminal equivalent of the `typing…` chat action Telegram shows for exactly this state, which is the model this Feature follows.
 
 ## Dependencies
 
@@ -95,9 +109,9 @@ The conversation accumulates as ordinary terminal scrollback, so past turns rema
 
 ### AC: interaction-is-unambiguous
 
-**Requirements:** chat-tui#req:focus-and-keys, chat-tui#req:input-locked-while-pending
+**Requirements:** chat-tui#req:focus-and-keys, chat-tui#req:input-locked-while-pending, chat-tui#req:pending-is-visible
 
-At any moment exactly one target holds focus, every key has one defined meaning for that focus, and input that could race an in-flight reply is refused.
+At any moment exactly one target holds focus, every key has one defined meaning for that focus, and focus moves in the direction the layout implies. Input that could race an in-flight reply is refused — and while it is refused the user can see that the session is working rather than ignoring them. A user is never left unsure whether their input registered.
 
 ## Out of Scope
 

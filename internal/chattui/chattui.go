@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/bots-go-framework/bots-go-core/botkb"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -56,8 +57,13 @@ type Model struct {
 	row, col int
 
 	// pending reports whether a reply is in flight. While set, keys other than
-	// ctrl+c are ignored (REQ: input-locked-while-pending).
+	// ctrl+c are ignored (REQ: input-locked-while-pending) and the typing
+	// indicator renders (REQ: pending-is-visible).
 	pending bool
+
+	// spin animates the typing indicator. It is ticked only while pending, so an
+	// idle session schedules no work.
+	spin spinner.Model
 
 	// width is the terminal width the live region renders to.
 	width int
@@ -76,9 +82,13 @@ func New(proc chat.Processor) Model {
 	in.Prompt = inputPrompt
 	in.Width = inputWidth(defaultWidth)
 	in.Focus()
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = pendingStyle
 	return Model{
 		proc:  proc,
 		input: in,
+		spin:  sp,
 		width: defaultWidth,
 		focus: focusInput,
 	}
@@ -154,6 +164,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.input.Width = inputWidth(msg.Width)
+	case spinner.TickMsg:
+		// Only keep the animation going while a turn is in flight. Once it
+		// resolves the tick stops rescheduling itself and the loop goes quiet.
+		if !m.pending {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 	case repliesMsg:
 		return m.receive(msg.replies)
 	case errMsg:
@@ -224,13 +243,18 @@ func (m Model) handleInputKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, tea.Quit
 	case keyEnter:
 		return m.submitText()
-	case keyDown:
-		// down enters the live reply's button block, at its first row. With no
-		// live reply there is no block to enter — focus is focusButtons only while
-		// live is non-nil — so the key is the input's, like any other.
-		if len(m.liveButtonRows()) > 0 {
+	case keyUp:
+		// The block renders above the input, so up is the key that reaches it,
+		// and it lands on the LAST row — the button physically nearest the cursor
+		// that just left. Entering at row 0 would jump focus to the button
+		// furthest from where the user is looking.
+		//
+		// With no live reply there is no block to enter — focus is focusButtons
+		// only while live is non-nil — so the key is the input's, like any other.
+		if rows := m.liveButtonRows(); len(rows) > 0 {
 			m.focus = focusButtons
-			m.row, m.col = 0, 0
+			m.row = len(rows) - 1
+			m.col = clampCol(0, len(rows[m.row]))
 			return m, nil
 		}
 	}
@@ -260,22 +284,23 @@ func (m Model) handleButtonKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		// esc means once focus is back on the input, one press later.
 		m.focusInputLine()
 	case keyUp:
-		if m.row == 0 {
-			// Up past the first row is how focus returns to the input. From any
-			// other row it is a move within the block, below.
+		// up moves deeper into the block, toward its top. It stops at row 0: it
+		// is already the key that entered the block, and a key that both entered
+		// and left it would have two meanings for the same focus.
+		if m.row > 0 {
+			m.row--
+			m.col = clampCol(m.col, len(rows[m.row]))
+		}
+	case keyDown:
+		// down is how focus leaves the block, back to the input below it — the
+		// mirror of the up that entered. From any row above the last it is a move
+		// within the block.
+		if m.row >= len(rows)-1 {
 			m.focusInputLine()
 			break
 		}
-		m.row--
+		m.row++
 		m.col = clampCol(m.col, len(rows[m.row]))
-	case keyDown:
-		// down does not leave the block the way up does: it is already the key
-		// that enters one, and a key that both entered and left it would have two
-		// meanings for the same focus. At the last row it stops.
-		if m.row < len(rows)-1 {
-			m.row++
-			m.col = clampCol(m.col, len(rows[m.row]))
-		}
 	case keyLeft:
 		// left and right move within the row and stop at its ends. Wrapping would
 		// give either a second meaning — "go to the other end" — for the same key
@@ -333,7 +358,11 @@ func (m Model) pressFocusedButton() (Model, tea.Cmd) {
 	blocks = append(blocks, renderUserEcho(btn.GetText()))
 
 	m.pending = true
-	return m, tea.Sequence(commit(blocks), pressButton(m.proc, data))
+	// The spinner starts inside the sequence, after the commit — not batched
+	// around it. Batching would let the tick race the commit, and the commit
+	// being ordered first is the whole point of the sequence
+	// (REQ: scrollback-commit).
+	return m, tea.Sequence(commit(blocks), tea.Batch(m.spin.Tick, pressButton(m.proc, data)))
 }
 
 // focusInputLine puts focus back on the input, leaving no cursor behind in the
@@ -458,7 +487,7 @@ func (m Model) submitText() (Model, tea.Cmd) {
 	blocks = append(blocks, renderUserEcho(text))
 
 	m.pending = true
-	return m, tea.Sequence(commit(blocks), sendText(m.proc, text))
+	return m, tea.Sequence(commit(blocks), tea.Batch(m.spin.Tick, sendText(m.proc, text)))
 }
 
 // receive renders the Processor's answer to a turn: every reply commits to
@@ -552,6 +581,11 @@ func (m Model) View() string {
 	var b strings.Builder
 	if m.live != nil {
 		b.WriteString(renderLiveReply(*m.live, m.focus == focusButtons, m.row, m.col))
+		b.WriteByte('\n')
+	}
+	if m.pending {
+		b.WriteString(m.spin.View())
+		b.WriteString(pendingStyle.Render(pendingLabel))
 		b.WriteByte('\n')
 	}
 	b.WriteString(m.input.View())
@@ -698,6 +732,7 @@ var (
 	inertButtonStyle   = lipgloss.NewStyle().Faint(true)
 	focusedButtonStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	footerStyle        = lipgloss.NewStyle().Faint(true).Padding(0, 1)
+	pendingStyle       = lipgloss.NewStyle().Faint(true)
 	errStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
@@ -731,7 +766,12 @@ const (
 // state shows and the hints it does not.
 const (
 	footerHelpInput     = "enter send · esc quit · ^c quit"
-	footerHelpInputLive = "enter send · ↓ buttons · esc quit · ^c quit"
+	footerHelpInputLive = "enter send · ↑ buttons · esc quit · ^c quit"
 	footerHelpButtons   = "enter press · ↑↓←→ move · esc back · ^c quit"
 	footerHelpPending   = "waiting for a reply · ^c quit"
 )
+
+// pendingLabel names what the typing indicator is waiting for. It sits beside
+// the spinner: the words say what is happening, the motion says the session is
+// working rather than hung (REQ: pending-is-visible).
+const pendingLabel = "Sneat is typing…"
