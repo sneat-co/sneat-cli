@@ -37,3 +37,8 @@ go.work.sum
 # .idea/
 # .vscode/
 .DS_Store
+specscore.local.yaml
+
+# SpecScore local state (event log, scratch). Reviewer configs stay tracked.
+.specscore/*
+!.specscore/reviewers/

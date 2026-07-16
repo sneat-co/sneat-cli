@@ -11,7 +11,7 @@
           },
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path' | { read -r f; case \"$f\" in *.go) output=$(golangci-lint run \"$f\" 2>&1); rc=$?; if [ $rc -ne 0 ]; then jq -n --arg ctx \"golangci-lint found issues in $f. Fix them:\\n$output\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; exit $rc; fi;; esac; }",
+            "command": "jq -r '.tool_input.file_path' | { read -r f; case \"$f\" in *.go) d=$(dirname \"$f\"); raw=$(golangci-lint run \"$d\" --output.text.print-issued-lines=false --output.text.colors=false 2>&1); if printf '%s\\n' \"$raw\" | grep -q '(typecheck)'; then out=\"$raw\"; else out=$(printf '%s\\n' \"$raw\" | grep -F \"${f#\"$PWD/\"}\" || true); fi; if [ -n \"$out\" ]; then jq -n --arg ctx \"golangci-lint found issues in ${f#\"$PWD/\"}:\n$out\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; exit 2; fi;; esac; }",
             "statusMessage": "Running golangci-lint..."
           }
         ]

@@ -1,0 +1,35 @@
+# SpecScore Repo Config Schema: https://specscore.md/repo-config
+
+project:
+    title: Sneat CLI
+    host: github.com
+    org: sneat-co
+    repo: sneat-cli
+
+# Gate keys are event-keyed, not command-keyed. `gates.specify` is a legacy
+# form the reviewer-gates loader rejects outright; the canonical key for the
+# specify gate is the lifecycle event it guards, `feature.approved`.
+gates:
+    feature.approved:
+        reviewers:
+            - name: ai-spec-reviewer
+              type: ai
+              prompt: .specscore/reviewers/specify-feature-reviewer.md
+            - name: human-approval
+              type: human
+
+    # Batches commit autonomously. This does not disable the anomaly halts —
+    # sibling conflicts, BLOCKED subagents, lint unresolved after one --fix,
+    # and source-Feature drift still stop the run regardless of gate config.
+    implementation.pre_commit:
+        reviewers:
+            - name: auto-approve
+              type: auto-approve
+
+    # Pushing is the outward-facing step and keeps a human. Publication-policy
+    # branch-safety (deny main/master/release/*) still runs underneath this —
+    # the gate complements that floor, it does not replace it.
+    implementation.pre_push:
+        reviewers:
+            - name: human-approval
+              type: human
