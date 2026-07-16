@@ -1,12 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
-status: Approved
+status: Stable
 ---
 
 # Feature: Chat Messenger
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-messenger?op=explore) | [Edit](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-messenger?op=edit) | [Ask question](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-messenger?op=ask) | [Request change](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-messenger?op=request-change) |
-**Status:** Approved
+**Status:** Stable
 **Source Ideas:** —
 
 ## Summary
