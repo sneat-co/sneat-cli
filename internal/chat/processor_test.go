@@ -128,7 +128,7 @@ func TestProcessor_HelpNamesTheCommands(t *testing.T) {
 
 // TestProcessor_SpacesListsRealSpacesAsButtons is the scenario from
 // _tests/slash-commands-act-on-real-spaces.md: /spaces lists what the reader
-// returned, one titled button per row, ordered by space ID.
+// returned, one titled button per row, in the requirement's order.
 func TestProcessor_SpacesListsRealSpacesAsButtons(t *testing.T) {
 	p := newTestProcessor(twoSpaces())
 	reply := send(t, p, "/spaces")
@@ -139,9 +139,11 @@ func TestProcessor_SpacesListsRealSpacesAsButtons(t *testing.T) {
 	}
 
 	// The keyboard has exactly 2 rows, each holding one button, labelled with
-	// the space titles and ordered by space ID: family1 precedes personal1.
+	// the space titles. The fixture's spaces are a private and a family one, so
+	// the order is the requirement's rather than the IDs': family is ranked last,
+	// nearest the renderer's entry point (REQ: spaces-command).
 	buttons := spaceButtons(t, reply)
-	want := []string{"Family", "Personal"}
+	want := []string{"Personal", "Family"}
 	if got := buttonLabels(buttons); !slices.Equal(got, want) {
 		t.Errorf("button labels = %v, want %v", got, want)
 	}
@@ -210,22 +212,79 @@ func TestProcessor_SpaceButtonLabelFallsBackToID(t *testing.T) {
 // sorted order by luck often enough for the guard to be worthless. Ten spaces
 // inserted out of order, listed on repeated passes, leaves an unsorted
 // implementation no room to pass by chance.
-func TestProcessor_SpaceButtonsAreOrderedByID(t *testing.T) {
+func TestProcessor_SpaceButtonsAreOrdered(t *testing.T) {
 	// Inserted out of order, and titled with nothing, so each button's label is
-	// its own ID and the assertion reads the ordering directly.
+	// its own ID and the assertion reads the ordering directly. All are custom
+	// types, so they rank together and sort alphabetically among themselves.
 	spaces := map[string]any{}
 	for _, id := range []string{"s07", "s02", "s10", "s04", "s09", "s01", "s06", "s03", "s08", "s05"} {
 		spaces[id] = map[string]any{"title": ""}
 	}
 	want := []string{"s01", "s02", "s03", "s04", "s05", "s06", "s07", "s08", "s09", "s10"}
 
+	// Many passes, and ten entries rather than two: Go randomizes map iteration
+	// per range, so a two-entry map would agree with an unsorted implementation
+	// half the time and the guard would pass by luck.
 	const passes = 50
 	for pass := range passes {
 		p := newTestProcessor(spaces)
 		reply := send(t, p, "/spaces")
 		got := buttonLabels(spaceButtons(t, reply))
 		if !slices.Equal(got, want) {
-			t.Fatalf("pass %d: buttons = %v, want them ordered by space ID %v", pass, got, want)
+			t.Fatalf("pass %d: button order = %v, want %v", pass, got, want)
+		}
+	}
+}
+
+// TestProcessor_SpaceButtonsRankFamilyLast pins the order the requirement
+// states: custom spaces alphabetically, then private, then family last — the
+// seat nearest the renderer's entry point, and so the cheapest to reach
+// (chat-messenger#req:spaces-command).
+func TestProcessor_SpaceButtonsRankFamilyLast(t *testing.T) {
+	spaces := map[string]any{
+		"fam1":  map[string]any{"title": "", "type": "family"},
+		"priv1": map[string]any{"title": "", "type": "private"},
+		"z2":    map[string]any{"title": "Z Space 2", "type": "club"},
+		"s1":    map[string]any{"title": "Space 1", "type": "company"},
+	}
+	want := []string{"Space 1", "Z Space 2", "Private (priv1)", "Family (fam1)"}
+
+	const passes = 50
+	for pass := range passes {
+		p := newTestProcessor(spaces)
+		got := buttonLabels(spaceButtons(t, send(t, p, "/spaces")))
+		if !slices.Equal(got, want) {
+			t.Fatalf("pass %d: button order = %v, want %v: custom alphabetically, then private, then family last", pass, got, want)
+		}
+	}
+}
+
+// TestProcessor_SpaceButtonOrderIsTotal pins the tiebreak. Two spaces can share
+// a label; without a further key their relative order would ride on map
+// iteration and flip between invocations.
+func TestProcessor_SpaceButtonOrderIsTotal(t *testing.T) {
+	spaces := map[string]any{
+		"b2": map[string]any{"title": "Shared", "type": "club"},
+		"a1": map[string]any{"title": "Shared", "type": "club"},
+	}
+
+	// Asserted on callback data, not labels. The labels are equal by
+	// construction — that is the whole point of the fixture — so comparing them
+	// would compare ["Shared","Shared"] with itself and pass however the buttons
+	// were ordered. The data carries the ID, which is what the tiebreak sorts on
+	// and the only thing that can show a swap.
+	want := []string{"space?id=a1", "space?id=b2"}
+
+	const passes = 50
+	for pass := range passes {
+		p := newTestProcessor(spaces)
+		buttons := spaceButtons(t, send(t, p, "/spaces"))
+		got := make([]string, 0, len(buttons))
+		for _, b := range buttons {
+			got = append(got, b.Data)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("pass %d: order = %v, want %v: equal labels must break on space ID, not on map iteration", pass, got, want)
 		}
 	}
 }
@@ -432,8 +491,9 @@ func TestProcessor_PressingWhatSpacesEncodedSelectsThatSpace(t *testing.T) {
 				b.Data, reply.Text, b.GetText())
 		}
 	}
-	// The last button pressed is the space left active.
-	if want := "personal1"; p.activeSpace != want {
+	// The last button pressed is the space left active — family, which the
+	// ordering pins to the end.
+	if want := "family1"; p.activeSpace != want {
 		t.Errorf("activeSpace = %q, want %q", p.activeSpace, want)
 	}
 }

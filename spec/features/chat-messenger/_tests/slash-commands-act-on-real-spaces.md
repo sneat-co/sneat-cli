@@ -13,7 +13,15 @@ WHEN `SendText` is called with `/spaces`
 THEN the reply text states that the user has 2 spaces
 AND the keyboard has exactly 2 rows
 AND each row holds exactly one button, labelled "Family" and "Personal" respectively
-AND the buttons are ordered by space ID, so `family1` precedes `personal1`
+
+GIVEN a fake spaces reader returning an untitled `family` space, an untitled `private` space, and two titled custom spaces "Z Space 2" and "Space 1"
+WHEN `SendText` is called with `/spaces`
+THEN the buttons read, top to bottom: "Space 1", "Z Space 2", "Private (…)", "Family (…)"
+AND the family space is last, because the renderer's entry point is nearest the end
+
+GIVEN a fake spaces reader returning two custom spaces sharing the title "Shared"
+WHEN `SendText` is called with `/spaces`
+THEN their relative order is stable across invocations, broken by space ID
 
 GIVEN a fake spaces reader returning a space `vaoyj` whose title is empty and whose type is `family`
 WHEN `SendText` is called with `/spaces`

@@ -88,7 +88,19 @@ Each button's label MUST be the space's title. When the title is empty the label
 
 The empty title is the common case rather than an edge: Sneat creates a user's built-in spaces without one, so a real signed-in user's buttons are all fallbacks. A bare ID (`ao58m`) tells that user nothing. The ID stays in the fallback rather than being dropped because built-in spaces share a type — two `family` spaces would otherwise render identically, and the button's whole job is to distinguish them.
 
-Buttons MUST be ordered by space ID. Ordering is load-bearing rather than cosmetic: the spaces source is a Go map (`SpacesReader.ListSpaces` returns `map[string]any`), whose iteration order is randomized, so an unordered implementation would reshuffle the user's buttons on every invocation. The existing `spaceItemsFrom` resolves the same problem the same way, sorting IDs before reading each brief.
+Buttons MUST be ordered so that the space a user reaches for most often sits **last**:
+
+1. every other space, alphabetically by label;
+2. the `private` space;
+3. the `family` space, last of all.
+
+Space ID breaks any remaining tie, so the order is total and two spaces sharing a label cannot swap between invocations.
+
+Ordering *at all* is load-bearing rather than cosmetic: the source is a Go map (`SpacesReader.ListSpaces` returns `map[string]any`), whose iteration order Go randomizes, so an unordered implementation would reshuffle the user's buttons on every invocation.
+
+The *particular* order is a cost argument. `private` and `family` are the two spaces Sneat creates for every user, so they are the two every user has and the ones a bare alphabetical sort would scatter among custom spaces. `family` is the one most opened, so it earns the cheapest seat — and the cheapest seat is the end of the list, because a renderer's entry point sits after it ([chat-tui#req:focus-and-keys](../chat-tui/README.md#req-focus-and-keys) enters the block at its last row).
+
+That last clause couples this Feature's ordering to a renderer's key model, which is a deliberate exception to its platform-agnosticism and is recorded rather than hidden. The contract fixes the **order**; it does not claim the last position is nearest for every renderer. A web renderer entering the list from the top would want this order reversed, and it should reverse the presentation rather than reorder the data — the ranking of *importance* is what this Feature knows, and that ranking is the same either way.
 
 When the user has no spaces, the reply MUST say so and MUST carry no keyboard — not an empty one. A renderer branches on keyboard presence to decide whether a reply is focusable, so an empty-but-present keyboard would leave it with a focus block containing nothing to focus.
 

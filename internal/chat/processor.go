@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -232,7 +233,7 @@ func (p *processor) spacesCmd(ctx context.Context) ([]Reply, error) {
 	// Sorted, not ranged: ListSpaces returns a map, whose iteration order Go
 	// randomizes, so ranging it directly would reshuffle the user's buttons on
 	// every /spaces. internal/tui's spaceItemsFrom sorts for the same reason.
-	ids := slices.Sorted(maps.Keys(spaces))
+	ids := orderSpaces(spaces)
 
 	rows := make([][]botkb.Button, 0, len(ids))
 	for _, id := range ids {
@@ -274,6 +275,51 @@ func spaceLabel(brief any, id string) string {
 		return fmt.Sprintf("%s (%s)", capitalize(spaceType), id)
 	}
 	return id
+}
+
+// Space types Sneat creates for every user. They are the two spaces every user
+// has, and the ones a plain alphabetical sort would scatter among custom
+// spaces, so they are pinned to the end instead — family last of all
+// (REQ: spaces-command).
+const (
+	spaceTypePrivate = "private"
+	spaceTypeFamily  = "family"
+)
+
+// spaceRank orders the classes of space. Lower sorts earlier, so family — the
+// space a user opens most — lands last, in the seat nearest the renderer's
+// entry point and so the cheapest to reach.
+func spaceRank(brief any) int {
+	b, _ := brief.(map[string]any)
+	switch spaceType, _ := b["type"].(string); strings.ToLower(spaceType) {
+	case spaceTypeFamily:
+		return 2
+	case spaceTypePrivate:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// orderSpaces returns the space IDs in the order their buttons render:
+// custom spaces alphabetically by label, then private, then family.
+//
+// Sorting at all is what stops the buttons reshuffling — ListSpaces returns a
+// map and Go randomizes its iteration. The ID tiebreak is what makes the order
+// total: two spaces can share a label, and without a further key their relative
+// order would ride on that same iteration.
+func orderSpaces(spaces map[string]any) []string {
+	ids := slices.Collect(maps.Keys(spaces))
+	slices.SortFunc(ids, func(a, b string) int {
+		if c := cmp.Compare(spaceRank(spaces[a]), spaceRank(spaces[b])); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(spaceLabel(spaces[a], a), spaceLabel(spaces[b], b)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a, b)
+	})
+	return ids
 }
 
 // capitalize upper-cases the first rune of s, leaving the rest as-is: the space
