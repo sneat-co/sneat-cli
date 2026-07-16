@@ -13,7 +13,7 @@ require (
 	github.com/dal-go/dalgo2firestore v0.8.9
 	github.com/sneat-co/contactus/backend v0.1.5
 	github.com/sneat-co/ext-contactus/backend v0.1.2
-	github.com/sneat-co/sneat-bots v0.3.6
+	github.com/sneat-co/sneat-bots v0.3.7-0.20260716135026-e1bfc5ff8007
 	github.com/sneat-co/sneat-core-modules v0.45.3
 	github.com/sneat-co/sneat-go-core v0.58.6
 	github.com/spf13/cobra v1.10.2
