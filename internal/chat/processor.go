@@ -253,7 +253,9 @@ func (p *processor) spacesCmd(ctx context.Context) ([]Reply, error) {
 	}}, nil
 }
 
-// spaceLabel returns a space's button label: its title, falling back to the ID.
+// spaceLabel returns a space's button label: its title; failing that, the
+// capitalized space type with the ID in parentheses — "Family (vaoyj)"; failing
+// that, the bare ID.
 //
 // The brief arrives as an untyped value out of a map[string]any, so "no title"
 // has three shapes — the key absent, its value not a string, or the string

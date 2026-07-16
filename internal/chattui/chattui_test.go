@@ -780,7 +780,7 @@ func TestPressCommitsTheLiveReplyThenEchoesTheLabel(t *testing.T) {
 func TestPressSequencesTheCommitAheadOfThePress(t *testing.T) {
 	m, _ := pressKeys(t, liveModel(fakeProcessor{replies: []chat.Reply{{Text: "Family space:"}}}, spacesKeyboard()), "up")
 	if m.focus != focusButtons {
-		t.Fatal("setup: expected focus in the button block after down")
+		t.Fatal("setup: expected focus in the button block after up")
 	}
 
 	_, cmd := m.Update(key(t, "enter"))
@@ -1297,7 +1297,7 @@ func TestFocusMovement(t *testing.T) {
 	}
 }
 
-// TestDownEntersTheButtonBlockAtTheFirstRow pins where down puts focus, and not
+// TestUpEntersTheButtonBlockAtTheLastRow pins where up puts focus, and not
 // merely that it moves it: entry is at the last row
 // (chat-tui#req:focus-and-keys).
 //
@@ -1318,6 +1318,33 @@ func TestUpEntersTheButtonBlockAtTheLastRow(t *testing.T) {
 	}
 	if got := focusedLabel(m); got != "Work" {
 		t.Errorf("up entered the button block on %q, want the last button %q: the block renders above the input, so entry is at the row nearest it (chat-tui#req:focus-and-keys)", got, "Work")
+	}
+}
+
+// TestDownFromTheInputDoesNotEnterTheButtonBlock pins the other half of the
+// direction: up is the ONLY way in.
+//
+// Without this, a `down` that also entered the block would go unnoticed — every
+// other test walks focus in with up and would pass regardless. That is exactly
+// the shape of the bug this Feature had: the first cut entered with down, into a
+// block rendered above the input, which read as backwards on sight
+// (chat-tui#req:focus-and-keys).
+func TestDownFromTheInputDoesNotEnterTheButtonBlock(t *testing.T) {
+	m := liveModel(fakeProcessor{}, spacesKeyboard())
+	if m.focus != focusInput {
+		t.Fatal("setup: expected focus on the input")
+	}
+
+	m, cmd := pressKeys(t, m, "down")
+
+	if m.focus != focusInput {
+		t.Errorf("focus = %v after down from the input, want focusInput: the block renders above the input, so up is the only way in", m.focus)
+	}
+	if got := focusedLabel(m); got != "" {
+		t.Errorf("down from the input focused %q; it must focus no button at all", got)
+	}
+	if quits(t, cmd) {
+		t.Error("down from the input quit the program")
 	}
 }
 
@@ -1345,7 +1372,7 @@ func TestKeysWithNoMeaningInTheButtonBlockDoNotReachTheInput(t *testing.T) {
 			m.input.SetValue("hello")
 			m, _ = pressKeys(t, m, "up")
 			if m.focus != focusButtons {
-				t.Fatal("setup: expected focus in the button block after down")
+				t.Fatal("setup: expected focus in the button block after up")
 			}
 
 			m, cmd := pressKeys(t, m, name)
@@ -1442,7 +1469,7 @@ func TestCtrlCAlwaysQuits(t *testing.T) {
 			model: func(t *testing.T) Model {
 				m, _ := pressKeys(t, liveModel(fakeProcessor{}, spacesKeyboard()), "up")
 				if m.focus != focusButtons {
-					t.Fatal("setup: expected focus in the button block after down")
+					t.Fatal("setup: expected focus in the button block after up")
 				}
 				return m
 			},

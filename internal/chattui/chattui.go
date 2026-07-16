@@ -368,8 +368,8 @@ func (m Model) pressFocusedButton() (Model, tea.Cmd) {
 // focusInputLine puts focus back on the input, leaving no cursor behind in the
 // button block.
 //
-// Focus is focusButtons only while there is a block to point into, and down
-// re-enters at the first row, so a cursor left where focus used to be would be
+// Focus is focusButtons only while there is a block to point into, and up
+// re-enters at the last row, so a cursor left where focus used to be would be
 // state nothing reads and every path would have to remember to reset.
 func (m *Model) focusInputLine() {
 	m.focus = focusInput
@@ -505,7 +505,7 @@ func (m Model) receive(replies []chat.Reply) (Model, tea.Cmd) {
 		m.live = &last
 		m.row, m.col = 0, 0
 		replies = replies[:n-1]
-		// Focus stays on the input: entering the button block is `down`
+		// Focus stays on the input: entering the button block is `up`
 		// (REQ: focus-and-keys), not something a reply does to the user.
 	}
 	blocks := make([]string, 0, len(replies))
