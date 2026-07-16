@@ -25,6 +25,8 @@ func (f fakeProcessor) PressButton(context.Context, string) ([]Reply, error) {
 	return f.replies, f.err
 }
 
+func (f fakeProcessor) Commands() []CommandInfo { return nil }
+
 // The seam is satisfied structurally: any type with the two methods is a
 // Processor, so a renderer can depend on the interface alone.
 var _ Processor = fakeProcessor{}

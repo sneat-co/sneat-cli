@@ -57,6 +57,13 @@ type Model struct {
 	// only while focus is focusButtons.
 	row, col int
 
+	// cmdIndex is the highlighted row in the command palette, read only while
+	// the palette is open. paletteOff suppresses the palette after esc dismisses
+	// it, until the typed command changes — so a dismissed palette does not
+	// spring back on the next keystroke (REQ: command-palette).
+	cmdIndex   int
+	paletteOff bool
+
 	// pending reports whether a reply is in flight. While set, keys other than
 	// ctrl+c are ignored (REQ: input-locked-while-pending) and the typing
 	// indicator renders (REQ: pending-is-visible).
@@ -230,7 +237,79 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if m.focus == focusButtons {
 		return m.handleButtonKey(msg)
 	}
+	if m.paletteOpen() {
+		return m.handleCommandKey(msg)
+	}
 	return m.handleInputKey(msg)
+}
+
+// --- command palette (REQ: command-palette) ---
+
+// commandQuery reports whether s is a command still being typed: a leading
+// slash and no space yet. A bare "/" qualifies, so the palette opens the moment
+// the slash is typed and lists everything.
+func commandQuery(s string) bool {
+	return strings.HasPrefix(s, "/") && !strings.ContainsRune(s, ' ')
+}
+
+// paletteMatches are the commands the current input is a prefix of, in the
+// processor's own order. Empty when the input is not a command query.
+func (m Model) paletteMatches() []chat.CommandInfo {
+	q := m.input.Value()
+	if !commandQuery(q) {
+		return nil
+	}
+	var out []chat.CommandInfo
+	for _, c := range m.proc.Commands() {
+		if strings.HasPrefix(c.Name, q) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// paletteOpen reports whether the palette is showing and holding the focus. It
+// is derived, not stored: the palette is exactly "the input holds a command
+// query that matches something, and esc has not dismissed it". Focus stays
+// {input, buttons}; the palette is an overlay on the input, so a press can only
+// reach it from the input, never from the button block.
+func (m Model) paletteOpen() bool {
+	return m.focus == focusInput && !m.paletteOff && len(m.paletteMatches()) > 0
+}
+
+// handleCommandKey routes a key while the palette is open. up/down move the
+// highlight and stop at the ends, enter runs the highlighted command, esc
+// dismisses without running; anything else edits the input, which re-filters
+// the list and clears the dismissal.
+func (m Model) handleCommandKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	matches := m.paletteMatches()
+	switch msg.String() {
+	case keyUp:
+		if m.cmdIndex > 0 {
+			m.cmdIndex--
+		}
+		return m, nil
+	case keyDown:
+		if m.cmdIndex < len(matches)-1 {
+			m.cmdIndex++
+		}
+		return m, nil
+	case keyEnter:
+		// Run the highlighted command by submitting its name — the same path a
+		// typed command takes, so the transcript and the send are identical.
+		m.input.SetValue(matches[m.cmdIndex].Name)
+		return m.submitText()
+	case keyEsc:
+		m.paletteOff = true
+		return m, nil
+	}
+	// Editing the query: let the input handle the key, then clear the dismissal
+	// so the palette re-opens, and keep the highlight inside the narrowed list.
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	m.paletteOff = false
+	m.cmdIndex = clampCol(m.cmdIndex, len(m.paletteMatches()))
+	return m, cmd
 }
 
 // handleInputKey gives a key its meaning while the input holds focus. Keys it
@@ -261,6 +340,12 @@ func (m Model) handleInputKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	// An edit here can turn the input into a command query — typing the leading
+	// slash — so re-arm the palette and start its highlight at the top. Refining
+	// an already-open palette goes through handleCommandKey, which keeps the
+	// highlight instead.
+	m.paletteOff = false
+	m.cmdIndex = 0
 	return m, cmd
 }
 
@@ -584,6 +669,10 @@ func (m Model) View() string {
 		b.WriteString(renderLiveReply(*m.live, m.focus == focusButtons, m.row, m.col))
 		b.WriteByte('\n')
 	}
+	if m.paletteOpen() {
+		b.WriteString(renderPalette(m.paletteMatches(), m.cmdIndex))
+		b.WriteByte('\n')
+	}
 	if m.pending {
 		b.WriteString(m.spin.View())
 		b.WriteString(pendingStyle.Render(pendingLabel))
@@ -608,6 +697,8 @@ func (m Model) footerHelp() string {
 	switch {
 	case m.pending:
 		return footerHelpPending
+	case m.paletteOpen():
+		return footerHelpPalette
 	case m.focus == focusButtons:
 		return footerHelpButtons
 	case len(m.liveButtonRows()) > 0:
@@ -703,6 +794,38 @@ func renderReply(r chat.Reply, unfocused lipgloss.Style, focusRow, focusCol int)
 // has no mid-border divider — a rule rendered as content would float inside the
 // frame instead of meeting it, which reads as another line of the message and
 // so says the opposite of what it is for.
+// renderPalette draws the command list above the input, the highlighted row
+// marked and inverted (REQ: command-palette). It is framed like a reply so it
+// reads as one attached block, and its glyph marker — not colour alone — is
+// what a monochrome terminal and a test both see, the same reason the focused
+// button carries one.
+func renderPalette(cmds []chat.CommandInfo, index int) string {
+	// Align the summaries into a column: the widest "name arg" sets it.
+	head := make([]string, len(cmds))
+	headWidth := 0
+	for i, c := range cmds {
+		h := c.Name
+		if c.Arg != "" {
+			h += " " + c.Arg
+		}
+		head[i] = h
+		if w := lipgloss.Width(h); w > headWidth {
+			headWidth = w
+		}
+	}
+
+	lines := make([]string, len(cmds))
+	for i, c := range cmds {
+		row := head[i] + strings.Repeat(" ", headWidth-lipgloss.Width(head[i])) + "  " + c.Summary
+		if i == index {
+			lines[i] = focusedButtonStyle.Render(focusedMarkLeft + row)
+		} else {
+			lines[i] = "  " + buttonStyle.Render(row)
+		}
+	}
+	return frameReply(lines, nil)
+}
+
 func frameReply(text, buttons []string) string {
 	b := lipgloss.RoundedBorder()
 
@@ -833,6 +956,7 @@ const (
 	footerHelpInputLive = "enter send · ↑ buttons · esc quit · ^c quit"
 	footerHelpButtons   = "enter press · ↑↓←→ move · esc back · ^c quit"
 	footerHelpPending   = "waiting for a reply · ^c quit"
+	footerHelpPalette   = "enter run · ↑↓ move · esc dismiss · ^c quit"
 )
 
 // pendingLabel names what the typing indicator is waiting for. It sits beside

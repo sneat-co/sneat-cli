@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,11 +24,14 @@ import (
 // somewhere to record: that a turn reached the Processor at all — and from a
 // command rather than from Update — is otherwise not observable from the model.
 type fakeProcessor struct {
-	replies []chat.Reply
-	err     error
-	sent    *[]string
-	pressed *[]string
+	replies  []chat.Reply
+	err      error
+	sent     *[]string
+	pressed  *[]string
+	commands []chat.CommandInfo
 }
+
+func (f fakeProcessor) Commands() []chat.CommandInfo { return f.commands }
 
 func (f fakeProcessor) SendText(_ context.Context, text string) ([]chat.Reply, error) {
 	if f.sent != nil {
@@ -1092,6 +1096,7 @@ var keyMsgs = map[string]tea.KeyMsg{
 	"right":  {Type: tea.KeyRight},
 	"tab":    {Type: tea.KeyTab},
 	"x":      {Type: tea.KeyRunes, Runes: []rune("x")},
+	"a":      {Type: tea.KeyRunes, Runes: []rune("a")},
 }
 
 // key returns the KeyMsg for the key the requirement calls name.
@@ -1855,5 +1860,178 @@ func TestFailureIsWordedByTheRenderer(t *testing.T) {
 	}
 	if !strings.Contains(block, errProcessorFailure.Error()) {
 		t.Errorf("renderError(%q) = %q, want it to name the failure it renders", errProcessorFailure, block)
+	}
+}
+
+// --- command palette (REQ: command-palette) ---
+
+// paletteCommands is the fake command list the palette tests filter and run.
+func paletteCommands() []chat.CommandInfo {
+	return []chat.CommandInfo{
+		{Name: "/spaces", Summary: "list your spaces"},
+		{Name: "/space", Summary: "show the active space"},
+		{Name: "/contacts", Summary: "list contacts of a space", Arg: "[space]"},
+		{Name: "/help", Summary: "show this message"},
+	}
+}
+
+// openPalette builds a model whose palette is open on the given query.
+func openPalette(t *testing.T, sent *[]string, query string) Model {
+	t.Helper()
+	m := New(fakeProcessor{commands: paletteCommands(), sent: sent})
+	m.input.SetValue(query)
+	if !m.paletteOpen() {
+		t.Fatalf("setup: palette not open on %q", query)
+	}
+	return m
+}
+
+func TestPaletteOpensAndListsMatchingCommands(t *testing.T) {
+	m := openPalette(t, nil, "/")
+	view := m.View()
+	for _, want := range []string{"/spaces", "/space", "/contacts", "/help"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("palette on %q does not list %q\n%s", "/", want, view)
+		}
+	}
+	// Each row carries its summary, and /contacts its arg hint.
+	if !strings.Contains(view, "list your spaces") {
+		t.Errorf("palette row does not show the command summary\n%s", view)
+	}
+	if !strings.Contains(view, "[space]") {
+		t.Errorf("palette does not show /contacts' argument hint\n%s", view)
+	}
+}
+
+func TestPaletteFiltersAsTheQueryNarrows(t *testing.T) {
+	m := openPalette(t, nil, "/sp")
+	got := m.paletteMatches()
+	var names []string
+	for _, c := range got {
+		names = append(names, c.Name)
+	}
+	if !slices.Equal(names, []string{"/spaces", "/space"}) {
+		t.Errorf("palette on %q lists %v, want only /spaces and /space", "/sp", names)
+	}
+}
+
+func TestPaletteDownMovesTheHighlightAndStopsAtTheEnd(t *testing.T) {
+	m := openPalette(t, nil, "/") // 4 commands, highlight at 0
+
+	m, _ = pressKeys(t, m, "down")
+	if m.cmdIndex != 1 {
+		t.Errorf("cmdIndex = %d after one down, want 1", m.cmdIndex)
+	}
+	// The button block is not entered — a live reply's buttons are unreachable
+	// while the palette holds focus.
+	if m.focus != focusInput {
+		t.Errorf("focus = %v while the palette is open, want it to stay on the input", m.focus)
+	}
+
+	m, _ = pressKeys(t, m, "down", "down", "down", "down")
+	if m.cmdIndex != len(paletteCommands())-1 {
+		t.Errorf("cmdIndex = %d after paging past the end, want it clamped to %d", m.cmdIndex, len(paletteCommands())-1)
+	}
+}
+
+func TestPaletteEnterRunsTheHighlightedCommand(t *testing.T) {
+	var sent []string
+	m := openPalette(t, &sent, "/sp") // /spaces, /space
+
+	// Move off the top before running, so the test tells the highlighted command
+	// apart from the first one — otherwise enter running matches[0] would pass.
+	m, _ = pressKeys(t, m, "down") // highlight /space
+	next, cmd := m.Update(key(t, "enter"))
+	m2, _ := pump(t, next.(Model), cmd)
+
+	if !slices.Equal(sent, []string{"/space"}) {
+		t.Errorf("enter ran %v, want it to run the highlighted /space (not the first row)", sent)
+	}
+	if m2.paletteOpen() {
+		t.Error("the palette is still open after running a command")
+	}
+}
+
+// TestCommandQueryStopsAtASpace pins the predicate the palette opens on: a
+// leading slash and no space. It is asserted directly because paletteOpen is
+// equivalent under this rule as long as no command name contains a space — a
+// spaced query prefix-matches nothing regardless — so a test through the
+// palette could not tell the guard was removed.
+func TestCommandQueryStopsAtASpace(t *testing.T) {
+	for q, want := range map[string]bool{
+		"/":                true,
+		"/sp":              true,
+		"/who-am-i":        true,
+		"/contacts family": false, // an argument has begun
+		"/sp x":            false,
+		"hello":            false, // not a command
+		"":                 false,
+	} {
+		if got := commandQuery(q); got != want {
+			t.Errorf("commandQuery(%q) = %v, want %v", q, got, want)
+		}
+	}
+}
+
+func TestPaletteEscDismissesWithoutRunningAndStaysClosed(t *testing.T) {
+	var sent []string
+	m := openPalette(t, &sent, "/sp")
+
+	next, cmd := m.Update(key(t, "esc"))
+	m = next.(Model)
+
+	if len(sent) != 0 {
+		t.Errorf("esc ran %v, want it to run nothing", sent)
+	}
+	if quits(t, cmd) {
+		t.Error("esc dismissing the palette also quit the program")
+	}
+	if m.paletteOpen() {
+		t.Error("the palette is still open after esc")
+	}
+	// It stays closed while the typed text is unchanged — the query still
+	// matches, but the dismissal holds.
+	if m.paletteOpen() {
+		t.Error("the dismissed palette reopened while its text was unchanged")
+	}
+	// Editing the query re-arms it: a printable key reaches the input through
+	// handleInputKey, which clears the dismissal, and the palette reopens on a
+	// query that still matches.
+	m, _ = pressKeys(t, m, "a") // "/spa" — matches /spaces and /space
+	if !m.paletteOpen() {
+		t.Error("the palette did not reopen after the query was edited")
+	}
+}
+
+func TestPaletteHoldsUpAwayFromTheButtonBlock(t *testing.T) {
+	var sent []string
+	m := New(fakeProcessor{commands: paletteCommands(), sent: &sent})
+	// A live reply with buttons AND a command being typed.
+	m.live = &chat.Reply{Text: "Your spaces:", Keyboard: spacesKeyboard()}
+	m.input.SetValue("/sp")
+	if !m.paletteOpen() {
+		t.Fatal("setup: palette not open")
+	}
+
+	m, _ = pressKeys(t, m, "up")
+
+	// up moved the palette highlight, not the button focus.
+	if m.focus == focusButtons {
+		t.Error("up entered the button block while the palette was open; the block is unreachable then")
+	}
+}
+
+func TestPaletteClosesWhenAnArgumentBegins(t *testing.T) {
+	var sent []string
+	m := New(fakeProcessor{commands: paletteCommands(), sent: &sent})
+	m.input.SetValue("/contacts family") // a space after the command
+	if m.paletteOpen() {
+		t.Error("the palette is open on a command line that has begun its argument")
+	}
+	// enter submits the line as written, arg and all.
+	next, cmd := m.Update(key(t, "enter"))
+	_, _ = pump(t, next.(Model), cmd)
+	if !slices.Equal(sent, []string{"/contacts family"}) {
+		t.Errorf("enter sent %v, want the whole line \"/contacts family\"", sent)
 	}
 }

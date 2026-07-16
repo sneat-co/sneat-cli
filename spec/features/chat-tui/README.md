@@ -77,7 +77,15 @@ The direction is not arbitrary and the first cut had it inverted: `down` entered
 
 `enter` submits the input or presses the focused button according to focus; `esc` quits from the input and returns focus to the input from the button block; `ctrl+c` always quits.
 
-#### REQ: input-locked-while-pending
+When the command palette is open (REQ: command-palette), it holds the focus instead: `up`/`down` move its highlight, `enter` runs the highlighted command, `esc` dismisses it, and the button block is unreachable — the user is choosing a command, not a space. `up` therefore has one meaning per state, as everywhere else: the palette when it is open, the button block when it is not.
+
+#### REQ: command-palette
+
+When the input holds a `/` command being typed — a leading `/` and no space yet — a palette MUST open above the input listing the commands whose names that text is a prefix of, drawn from the same registry `/help` reads (chat-messenger#req:command-registry). Each row shows the command's name, its summary, and its argument hint when it has one, so the list teaches what each command does rather than only completing its name.
+
+The palette filters as the user types: `/` lists every command, `/sp` narrows to those starting `/sp`. It holds the focus while open (REQ: focus-and-keys): `up`/`down` move a highlight that stays within the list, `enter` runs the highlighted command, and `esc` dismisses the palette without running anything — after which it stays closed until the typed command changes, so a user who dismissed it is not fought by its reopening on the next keystroke.
+
+Once the text stops being a bare command name — a space typed to begin an argument, or the leading `/` removed — the palette closes and `enter` submits the line as written, so `/contacts family` is typed and sent without the palette intercepting it.
 
 While a reply is in flight, keyboard input MUST be ignored, with the sole exception of `ctrl+c`, which MUST still quit. This mirrors the guard the existing confirm screen uses while a delete is in flight, except that the confirm screen ignores every key — a chat session may block on a slow backend, so the user must always retain a way out.
 
@@ -109,7 +117,7 @@ The conversation accumulates as ordinary terminal scrollback, so past turns rema
 
 ### AC: interaction-is-unambiguous
 
-**Requirements:** chat-tui#req:focus-and-keys, chat-tui#req:input-locked-while-pending, chat-tui#req:pending-is-visible
+**Requirements:** chat-tui#req:focus-and-keys, chat-tui#req:input-locked-while-pending, chat-tui#req:pending-is-visible, chat-tui#req:command-palette
 
 At any moment exactly one target holds focus, every key has one defined meaning for that focus, and focus moves in the direction the layout implies. Input that could race an in-flight reply is refused — and while it is refused the user can see that the session is working rather than ignoring them. A user is never left unsure whether their input registered.
 

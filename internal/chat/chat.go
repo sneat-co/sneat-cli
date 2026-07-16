@@ -47,4 +47,9 @@ type Processor interface {
 
 	// PressButton processes a button press, identified by its callback data.
 	PressButton(ctx context.Context, data string) ([]Reply, error)
+
+	// Commands returns the available slash commands, in display order, for a
+	// renderer's command palette and for /help — the same registry, so a
+	// command cannot exist in one and not the other (chat-messenger#req:command-registry).
+	Commands() []CommandInfo
 }
