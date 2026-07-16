@@ -47,7 +47,51 @@ AND the reply confirms the active space is now "Family"
 
 GIVEN the same processor
 WHEN `SendText` is called with `/help`
-THEN the reply text names the available commands, including `/spaces`
+THEN the reply text names the available commands, including `/spaces`, `/space`, `/who-am-i`, `/contacts`, and `/version`
+
+GIVEN a processor built with the signed-in user's email "user@example.com"
+WHEN `SendText` is called with `/who-am-i`
+THEN the reply names the email "user@example.com"
+
+GIVEN a processor built with the CLI version "1.2.3"
+WHEN `SendText` is called with `/version`
+THEN the reply names "1.2.3"
+
+GIVEN a processor with no active space selected
+WHEN `SendText` is called with `/space`
+THEN the reply states that no space is selected
+AND points the user at `/spaces`
+
+GIVEN a processor whose active space was set to `family1` by a prior press
+WHEN `SendText` is called with `/space`
+THEN the reply names the active space
+
+GIVEN a processor whose active space is `family1`, backed by a contacts reader returning "Alice" and "Bob" for `family1`
+WHEN `SendText` is called with `/contacts`
+THEN the reply lists "Alice" and "Bob"
+
+GIVEN a processor backed by a family-typed space `vaoyj` and a contacts reader returning "Carol" for `vaoyj`
+WHEN `SendText` is called with `/contacts family`
+THEN the space type resolves to `vaoyj`
+AND the reply lists "Carol"
+
+GIVEN a processor backed by a space `ao58m`
+WHEN `SendText` is called with `/contacts ao58m`
+THEN the argument matches the space ID directly
+
+GIVEN a processor with no active space and a `/contacts` call carrying no argument
+WHEN `SendText` is called with `/contacts`
+THEN the reply says no space is selected
+AND points the user at `/spaces`
+
+GIVEN a processor whose spaces include two of type `club`
+WHEN `SendText` is called with `/contacts club`
+THEN the reply says the type is ambiguous, rather than picking one
+
+GIVEN a processor
+WHEN `SendText` is called with `/contacts nope`
+THEN the reply says there is no such space, naming "nope"
+AND no error is returned
 
 GIVEN the same processor
 WHEN `SendText` is called with `/nope`

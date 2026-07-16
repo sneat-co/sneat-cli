@@ -74,8 +74,14 @@ func main() {
 		// RunChat is the chat session's composition root: the one place that
 		// builds a concrete processor and hands the renderer only the
 		// chat.Processor interface (chat-messenger#req:processor-seam).
-		RunChat: func(spaces commands.SpacesReader, uid string) error {
-			return chattui.Run(chat.NewProcessor(spaces, uid))
+		RunChat: func(spaces commands.SpacesReader, contacts commands.ContactsReader, uid, email string) error {
+			return chattui.Run(chat.NewProcessor(chat.Deps{
+				Spaces:   spaces,
+				Contacts: chatContacts{contacts},
+				UID:      uid,
+				Email:    email,
+				Version:  version,
+			}))
 		},
 	}
 	root := commands.Root(env)
@@ -95,4 +101,41 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sneat:", err)
 		os.Exit(1)
 	}
+}
+
+// chatContacts adapts the CLI's Firestore-backed contacts reader to the lean
+// interface internal/chat consumes. It exists at the composition root, the one
+// place that knows both the concrete reader and the chat seam, so the chat
+// package stays a leaf that names no Firestore type.
+type chatContacts struct{ r commands.ContactsReader }
+
+func (c chatContacts) ListContacts(ctx context.Context, spaceID string) ([]chat.Contact, error) {
+	cs, err := c.r.ListContacts(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]chat.Contact, 0, len(cs))
+	for _, x := range cs {
+		out = append(out, chat.Contact{Name: contactDisplayName(x)})
+	}
+	return out, nil
+}
+
+// contactDisplayName reads a contact's display name the way the browsing UI
+// does: an explicit title, else the full name, else empty for the chat package
+// to render as "(unnamed)".
+func contactDisplayName(c firestoredb.Contact) string {
+	d := c.Contact
+	if d == nil {
+		return ""
+	}
+	if d.Title != "" {
+		return d.Title
+	}
+	if d.Names != nil {
+		if n := d.Names.GetFullName(); n != "" {
+			return n
+		}
+	}
+	return ""
 }

@@ -32,5 +32,9 @@ func runChat(env Env, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	return env.RunChat(spaces, sess.UID)
+	contacts, err := env.NewContactsReader(cfg)
+	if err != nil {
+		return err
+	}
+	return env.RunChat(spaces, contacts, sess.UID, sess.Email)
 }

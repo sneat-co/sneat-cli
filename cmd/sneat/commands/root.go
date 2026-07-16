@@ -47,7 +47,7 @@ type Env struct {
 	RunTUI func(spaces SpacesReader, contacts ContactsReader, deleter ContactDeleter, uid string) error
 	// RunChat launches the interactive chat session. It is the composition root:
 	// it builds the concrete chat processor from the reader and uid.
-	RunChat func(spaces SpacesReader, uid string) error
+	RunChat func(spaces SpacesReader, contacts ContactsReader, uid, email string) error
 }
 
 // ContactDeleter deletes a contact by space and id. It is the id-based view of

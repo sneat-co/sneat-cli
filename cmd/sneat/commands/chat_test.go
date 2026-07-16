@@ -15,7 +15,8 @@ func chatEnv(isTTY bool, store SessionStore, gotUID *string, calls *int) Env {
 	env := testEnv(store, sneatauth.Result{})
 	env.NewSpacesReader = func(config.Config) (SpacesReader, error) { return &fakeSpacesReader{}, nil }
 	env.IsTerminal = func() bool { return isTTY }
-	env.RunChat = func(_ SpacesReader, uid string) error {
+	env.NewContactsReader = func(config.Config) (ContactsReader, error) { return &fakeContactsReader{}, nil }
+	env.RunChat = func(_ SpacesReader, _ ContactsReader, uid, _ string) error {
 		*calls++
 		*gotUID = uid
 		return nil

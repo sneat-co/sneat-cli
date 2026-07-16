@@ -24,10 +24,39 @@ type SpacesReader interface {
 	ListSpaces(ctx context.Context, uid string) (map[string]any, error)
 }
 
+// ContactsReader lists a space's contacts. Like SpacesReader it is declared
+// here, so this package stays a leaf, and it hands back only the display name
+// each command shows rather than a Firestore record — the composition root
+// adapts the real reader to this shape.
+type ContactsReader interface {
+	ListContacts(ctx context.Context, spaceID string) ([]Contact, error)
+}
+
+// Contact is the sliver of a contact this package renders: its display name.
+type Contact struct {
+	Name string
+}
+
+// Deps are what a processor needs to answer against the signed-in user's real
+// data. It is a struct rather than a parameter list because it has grown past
+// the point where positional arguments read clearly, and because most callers
+// set only a few fields.
+type Deps struct {
+	Spaces   SpacesReader
+	Contacts ContactsReader
+	UID      string
+	Email    string
+	Version  string
+}
+
 // Command names, as the user types them.
 const (
-	cmdSpaces = "/spaces"
-	cmdHelp   = "/help"
+	cmdSpaces   = "/spaces"
+	cmdSpace    = "/space"
+	cmdWhoAmI   = "/who-am-i"
+	cmdContacts = "/contacts"
+	cmdVersion  = "/version"
+	cmdHelp     = "/help"
 )
 
 // Callback vocabulary: the command a button's callback data names, and the
@@ -41,12 +70,26 @@ const (
 	cbArgSpaceID = "id"
 )
 
-// command is one slash command: how it is typed, how /help describes it, and
-// what runs when text routes to it.
+// command is one slash command: how it is typed, how /help and the palette
+// describe it, and what runs when text routes to it.
+//
+// arg is the hint shown for a command that takes one — "[space]" for
+// /contacts — and empty for a command that takes none. handle receives the
+// text after the command name, trimmed; a command that takes no argument
+// ignores it.
 type command struct {
 	name    string
 	summary string
-	handle  func(ctx context.Context) ([]Reply, error)
+	arg     string
+	handle  func(ctx context.Context, arg string) ([]Reply, error)
+}
+
+// CommandInfo is one entry of the command registry, as a renderer's palette and
+// /help both read it (REQ: command-registry).
+type CommandInfo struct {
+	Name    string
+	Summary string
+	Arg     string
 }
 
 // processor answers a chat turn in this process, against the signed-in user's
@@ -58,13 +101,22 @@ type command struct {
 // REQ: processor-seam's "MUST NOT reference any concrete implementation" is
 // enforced by the compiler rather than by discipline.
 type processor struct {
-	spaces SpacesReader
-	uid    string
+	spaces   SpacesReader
+	contacts ContactsReader
+	uid      string
+	email    string
+	version  string
 
 	// activeSpace is the session's selected space ID: set by pressing a space
 	// button, read by later space-scoped commands. Empty until the user picks
 	// one.
 	activeSpace string
+
+	// listedSpaces is the spaces map the most recent /spaces drew its buttons
+	// from. A press resolves against it rather than fetching again — the button
+	// pressed was built from exactly this map — so selecting a space is instant
+	// instead of waiting on the network (REQ: active-space-selection).
+	listedSpaces map[string]any
 
 	// commands is the routing table keyed by command name; order lists the
 	// same commands in the sequence /help prints them, which ranging over the
@@ -78,16 +130,34 @@ type processor struct {
 //
 // It returns the interface, not the concrete type, so no caller — the chat
 // renderer's composition root above all — can name an implementation.
-func NewProcessor(spaces SpacesReader, uid string) Processor {
+func NewProcessor(deps Deps) Processor {
 	p := &processor{
-		spaces:   spaces,
-		uid:      uid,
+		spaces:   deps.Spaces,
+		contacts: deps.Contacts,
+		uid:      deps.UID,
+		email:    deps.Email,
+		version:  deps.Version,
 		commands: map[string]command{},
 	}
-	// Registration order is the order /help prints.
+	// Registration order is the order /help and the palette list the commands.
 	p.register(command{name: cmdSpaces, summary: "list your spaces", handle: p.spacesCmd})
+	p.register(command{name: cmdSpace, summary: "show the active space", handle: p.spaceCmd})
+	p.register(command{name: cmdContacts, summary: "list contacts of a space", arg: "[space]", handle: p.contactsCmd})
+	p.register(command{name: cmdWhoAmI, summary: "show who you are signed in as", handle: p.whoamiCmd})
+	p.register(command{name: cmdVersion, summary: "show the CLI version", handle: p.versionCmd})
 	p.register(command{name: cmdHelp, summary: "show this message", handle: p.helpCmd})
 	return p
+}
+
+// Commands returns the registry every command-listing surface reads, in
+// registration order (REQ: command-registry).
+func (p *processor) Commands() []CommandInfo {
+	out := make([]CommandInfo, 0, len(p.order))
+	for _, name := range p.order {
+		c := p.commands[name]
+		out = append(out, CommandInfo{Name: c.name, Summary: c.summary, Arg: c.arg})
+	}
+	return out
 }
 
 // register adds a command to the routing table and to /help's listing.
@@ -110,7 +180,7 @@ func (p *processor) SendText(ctx context.Context, text string) ([]Reply, error) 
 	if !ok {
 		return p.unknownCommand(name), nil
 	}
-	return cmd.handle(ctx)
+	return cmd.handle(ctx, commandArg(text))
 }
 
 // PressButton processes a button press, identified by its callback data. It
@@ -160,14 +230,13 @@ func (p *processor) PressButton(ctx context.Context, data string) ([]Reply, erro
 // naming no space the user can currently see leaves activeSpace alone and comes
 // back as an error — the failure is real, and this package cannot know how the
 // surface shows one (REQ: errors-are-returned-not-formatted).
-func (p *processor) selectSpace(ctx context.Context, id string) ([]Reply, error) {
-	spaces, err := p.spaces.ListSpaces(ctx, p.uid)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list spaces: %w", err)
-	}
-	brief, ok := spaces[id]
+func (p *processor) selectSpace(_ context.Context, id string) ([]Reply, error) {
+	// Resolved against the last listing, not a fresh fetch: the button pressed
+	// was drawn from exactly this map, so selection is instant instead of
+	// waiting on the network (REQ: active-space-selection).
+	brief, ok := p.listedSpaces[id]
 	if !ok {
-		return nil, fmt.Errorf("space %q is not among the spaces %q can see", id, p.uid)
+		return nil, fmt.Errorf("space %q was not among the spaces last listed", id)
 	}
 	// Assigned only past the lookup: an unknown id must leave the previously
 	// active space standing.
@@ -200,8 +269,146 @@ func commandName(text string) string {
 	return text
 }
 
+// commandArg returns the text after the command name, trimmed — the argument a
+// command like /contacts reads. Empty when the line is just the command.
+func commandArg(text string) string {
+	if i := strings.IndexFunc(text, unicode.IsSpace); i >= 0 {
+		return strings.TrimSpace(text[i:])
+	}
+	return ""
+}
+
+// spaceCmd reports the active space, or that none is chosen yet
+// (REQ: space-command). It is the only way to see the active space after the
+// one line that names it when it is picked.
+func (p *processor) spaceCmd(ctx context.Context, _ string) ([]Reply, error) {
+	if p.activeSpace == "" {
+		return []Reply{{Text: "No space is selected. Use /spaces to pick one."}}, nil
+	}
+	label, err := p.spaceLabelByID(ctx, p.activeSpace)
+	if err != nil {
+		return nil, err
+	}
+	return []Reply{{Text: "Active space: " + label}}, nil
+}
+
+// whoamiCmd reports who the session is signed in as (REQ: whoami-command).
+func (p *processor) whoamiCmd(context.Context, string) ([]Reply, error) {
+	if p.email == "" {
+		return []Reply{{Text: "Signed in, but no email is on the session."}}, nil
+	}
+	return []Reply{{Text: "Signed in as " + p.email}}, nil
+}
+
+// versionCmd reports the CLI build version (REQ: version-command).
+func (p *processor) versionCmd(context.Context, string) ([]Reply, error) {
+	v := p.version
+	if v == "" {
+		v = "unknown"
+	}
+	return []Reply{{Text: "sneat " + v}}, nil
+}
+
+// contactsCmd lists a space's contacts by name (REQ: contacts-command). Which
+// space it acts on is resolveSpace's decision — the active space, an ID, or a
+// type — and its refusals (none selected, no such space, ambiguous type) are
+// returned as replies rather than errors: they answer the user, they do not
+// signal a backend failure.
+func (p *processor) contactsCmd(ctx context.Context, arg string) ([]Reply, error) {
+	spaceID, reply, err := p.resolveSpace(ctx, arg)
+	if err != nil {
+		return nil, err
+	}
+	if reply != nil {
+		return []Reply{*reply}, nil
+	}
+	if p.contacts == nil {
+		return nil, fmt.Errorf("contacts are not available")
+	}
+	contacts, err := p.contacts.ListContacts(ctx, spaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list contacts: %w", err)
+	}
+	if len(contacts) == 0 {
+		return []Reply{{Text: "That space has no contacts."}}, nil
+	}
+	var b strings.Builder
+	_, _ = fmt.Fprintf(&b, "%d %s:", len(contacts), plural(len(contacts), "contact", "contacts"))
+	for _, c := range contacts {
+		name := c.Name
+		if name == "" {
+			name = "(unnamed)"
+		}
+		_, _ = fmt.Fprintf(&b, "\n%s", name)
+	}
+	return []Reply{{Text: b.String()}}, nil
+}
+
+// resolveSpace turns a /contacts argument into the space ID to act on. It
+// returns exactly one of: a space ID to use; a reply to send back instead (no
+// space selected, no such space, ambiguous type); or an error, only when
+// reading the spaces failed.
+func (p *processor) resolveSpace(ctx context.Context, arg string) (id string, reply *Reply, err error) {
+	if arg == "" {
+		if p.activeSpace == "" {
+			return "", &Reply{Text: "No space is selected. Use /spaces to pick one, or name one: /contacts <space>."}, nil
+		}
+		return p.activeSpace, nil, nil
+	}
+
+	spaces, err := p.spaces.ListSpaces(ctx, p.uid)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to list spaces: %w", err)
+	}
+
+	// An exact ID wins: the user named a specific space.
+	if _, ok := spaces[arg]; ok {
+		return arg, nil, nil
+	}
+
+	// Otherwise treat the argument as a space type and resolve it — but only
+	// when exactly one space has that type. Zero or several is answered, never
+	// guessed: acting on a space the user did not name is the mistake to avoid.
+	var matches []string
+	for id, brief := range spaces {
+		if b, _ := brief.(map[string]any); b != nil {
+			if t, _ := b["type"].(string); strings.EqualFold(t, arg) {
+				matches = append(matches, id)
+			}
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil, nil
+	case 0:
+		return "", &Reply{Text: fmt.Sprintf("You have no space %q.", arg)}, nil
+	default:
+		return "", &Reply{Text: fmt.Sprintf("You have %d %q spaces — name one by ID: /contacts <id>.", len(matches), arg)}, nil
+	}
+}
+
+// spaceLabelByID reads a single space's label, for a command naming the active
+// space. It reuses spaceLabel so /space and a /spaces button agree.
+func (p *processor) spaceLabelByID(ctx context.Context, id string) (string, error) {
+	// Prefer the last listing: the active space is set by a press, which drew
+	// from it, so its label is usually already in hand and /space needs no
+	// fetch. Fall back to a read only when it is not.
+	if brief, ok := p.listedSpaces[id]; ok {
+		return spaceLabel(brief, id), nil
+	}
+	spaces, err := p.spaces.ListSpaces(ctx, p.uid)
+	if err != nil {
+		return "", fmt.Errorf("failed to list spaces: %w", err)
+	}
+	brief, ok := spaces[id]
+	if !ok {
+		return id, nil
+	}
+	return spaceLabel(brief, id), nil
+}
+
 // helpCmd lists the commands this processor serves (REQ: help-command).
-func (p *processor) helpCmd(context.Context) ([]Reply, error) {
+func (p *processor) helpCmd(context.Context, string) ([]Reply, error) {
 	var b strings.Builder
 	b.WriteString("Commands:")
 	for _, name := range p.order {
@@ -217,7 +424,7 @@ func (p *processor) helpCmd(context.Context) ([]Reply, error) {
 // package cannot know how the surface renders a failure, and a listing the
 // reader never produced would be the fixture-shaped lie this Feature exists to
 // prevent (REQ: errors-are-returned-not-formatted).
-func (p *processor) spacesCmd(ctx context.Context) ([]Reply, error) {
+func (p *processor) spacesCmd(ctx context.Context, _ string) ([]Reply, error) {
 	spaces, err := p.spaces.ListSpaces(ctx, p.uid)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list spaces: %w", err)
@@ -229,6 +436,11 @@ func (p *processor) spacesCmd(ctx context.Context) ([]Reply, error) {
 		// to focus.
 		return []Reply{{Text: "You have no spaces."}}, nil
 	}
+
+	// Remember what was listed: a press resolves against this rather than
+	// fetching again, since the button pressed is built from exactly this map
+	// (REQ: active-space-selection).
+	p.listedSpaces = spaces
 
 	// Sorted, not ranged: ListSpaces returns a map, whose iteration order Go
 	// randomizes, so ranging it directly would reshuffle the user's buttons on

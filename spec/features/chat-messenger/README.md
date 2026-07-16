@@ -106,7 +106,36 @@ When the user has no spaces, the reply MUST say so and MUST carry no keyboard �
 
 #### REQ: help-command
 
-`/help` MUST list the available commands.
+`/help` MUST list the available commands. It draws from the same registry every other part of the system does, so a command cannot exist without `/help` naming it (see REQ: command-registry).
+
+#### REQ: command-registry
+
+The processor MUST expose its commands as a registry: an ordered list, each entry carrying the command's name, a one-line summary, and — for a command that takes an argument — a short hint naming it (`[space]` for `/contacts`). `/help` renders it, and a renderer's command palette (chat-tui) renders it too; neither hard-codes the list. The order is the order commands were registered, which is the order both surfaces present them.
+
+#### REQ: space-command
+
+`/space` MUST report the session's active space — the one a bare `/contacts` acts on — or state that none is selected yet. It is how the active space, which is otherwise only ever named once at the moment it is picked, stays inspectable.
+
+#### REQ: whoami-command
+
+`/who-am-i` MUST report the signed-in user's identity — at least their email — so a user sharing a screen or juggling accounts can confirm who they are acting as without leaving the chat.
+
+#### REQ: version-command
+
+`/version` MUST report the CLI build version, so it is at hand for a bug report without quitting the session.
+
+#### REQ: contacts-command
+
+`/contacts` MUST list the contacts of a space, each contact one line, by its display name.
+
+Which space it acts on is resolved from its optional argument, in this order:
+
+1. no argument — the session's active space; if none is selected, a reply saying so and pointing at `/spaces`;
+2. an argument matching a space ID the user has — that space;
+3. an argument matching a space **type** (`family`, `private`, …) that exactly one of the user's spaces has — that space, so `/contacts family` finds the family space without its ID;
+4. anything else — a reply saying no such space, naming what was asked for; a type matching more than one space is named as ambiguous rather than guessed.
+
+A type resolving to zero or several spaces is answered, never guessed: picking one would act on data the user did not name.
 
 #### REQ: free-text-deferred
 
@@ -116,7 +145,9 @@ Text not beginning with `/` MUST return a reply stating that free-text chat is n
 
 Pressing a button whose callback data path is `space` MUST set the session's active space to the `id` argument, and MUST return at least one `Reply` naming the newly active space. The active space is session state that later space-scoped commands read. Returning no reply is not permitted: a renderer would have nothing to show, leaving the user unable to tell whether the press registered.
 
-When the `id` names no space the user can currently see — a stale button, or a space revoked mid-session — the processor MUST NOT change the active space and MUST return an error. This case is deliberately not covered by REQ: unrecognized-callback-data, whose triggers are structural: such data parses cleanly, names a known path, and carries its required argument. It fails only on the lookup that naming the space requires.
+A press MUST resolve against the spaces the processor most recently listed — the set the pressed button was drawn from — and MUST NOT fetch afresh. A button can only be pressed if `/spaces` drew it, and it was drawn from a listing the processor already held; re-fetching to confirm and to name the space repeats work just done and makes selection wait on the network, when a user expects it to be immediate. The confirmation names the space from that same listing, so it echoes the label the button carried.
+
+When the `id` names no space in that listing — a callback for a button this session never drew — the processor MUST NOT change the active space and MUST return an error. This is distinct from REQ: unrecognized-callback-data, whose triggers are structural: such data parses cleanly, names a known path, and carries its `id`. It fails only against the listing.
 
 ## Acceptance Criteria
 
@@ -128,9 +159,9 @@ A renderer is decoupled from where messages are processed. Replacing the in-proc
 
 ### AC: conversation-input-is-handled-honestly
 
-**Requirements:** chat-messenger#req:slash-command-routing, chat-messenger#req:spaces-command, chat-messenger#req:help-command, chat-messenger#req:active-space-selection, chat-messenger#req:free-text-deferred, chat-messenger#req:unrecognized-callback-data
+**Requirements:** chat-messenger#req:slash-command-routing, chat-messenger#req:spaces-command, chat-messenger#req:command-registry, chat-messenger#req:space-command, chat-messenger#req:whoami-command, chat-messenger#req:version-command, chat-messenger#req:contacts-command, chat-messenger#req:help-command, chat-messenger#req:active-space-selection, chat-messenger#req:free-text-deferred, chat-messenger#req:unrecognized-callback-data
 
-Every input a user can produce — typed or pressed — receives an honest answer. Supported commands act on the signed-in user's actual spaces rather than sandbox fixtures, present results as pressable inline buttons in a stable order, and carry selections into session state. Unsupported input — an unknown command, an unhandleable press, or free text whose capability does not exist yet — is answered plainly and never reaches the sandbox-only conversational runtime. A user is never shown a reply that appears to act on real data while actually acting on fixtures, and never left unsure whether their input registered.
+Every input a user can produce — typed or pressed — receives an honest answer. Supported commands act on the signed-in user's actual spaces, contacts, and identity rather than sandbox fixtures; present results as pressable inline buttons in a stable order where buttons apply; and carry selections into session state. A command that acts on a space resolves which one from its argument or the active space, and answers plainly when the argument names no space or an ambiguous one. Unsupported input — an unknown command, an unhandleable press, or free text whose capability does not exist yet — is answered and never reaches the sandbox-only conversational runtime. A user is never shown a reply that appears to act on real data while actually acting on fixtures, and never left unsure whether their input registered.
 
 ## Out of Scope
 

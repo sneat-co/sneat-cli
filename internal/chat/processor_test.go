@@ -39,7 +39,17 @@ func twoSpaces() map[string]any {
 
 // newTestProcessor builds a processor over the given spaces.
 func newTestProcessor(spaces map[string]any) Processor {
-	return NewProcessor(fakeSpaces{spaces: spaces}, "u1")
+	return NewProcessor(Deps{Spaces: fakeSpaces{spaces: spaces}, UID: "u1"})
+}
+
+// fakeContacts returns canned contacts per space ID.
+type fakeContacts struct {
+	bySpace map[string][]Contact
+	err     error
+}
+
+func (f fakeContacts) ListContacts(_ context.Context, spaceID string) ([]Contact, error) {
+	return f.bySpace[spaceID], f.err
 }
 
 // spaceButtons returns a /spaces reply's buttons, one per row, asserting the
@@ -322,7 +332,7 @@ func TestProcessor_SpacesWithNoSpacesSaysSoAndCarriesNoKeyboard(t *testing.T) {
 // reply prose the processor formatted for a surface it cannot see.
 func TestProcessor_SpacesReaderErrorIsReturnedNotFormatted(t *testing.T) {
 	boom := errors.New("boom")
-	p := NewProcessor(fakeSpaces{err: boom}, "u1")
+	p := NewProcessor(Deps{Spaces: fakeSpaces{err: boom}, UID: "u1"})
 
 	replies, err := p.SendText(context.Background(), "/spaces")
 	if err == nil {
@@ -430,6 +440,7 @@ func press(t *testing.T, p Processor, data string) Reply {
 // that space and says so, naming it as the button did (REQ: active-space-selection).
 func TestProcessor_PressSpaceButtonSetsTheActiveSpace(t *testing.T) {
 	p := newTestProcessor(twoSpaces()).(*processor)
+	send(t, p, "/spaces")
 	reply := press(t, p, "space?id=family1")
 
 	if p.activeSpace != "family1" {
@@ -463,6 +474,10 @@ func TestProcessor_PressSpaceButtonConfirmsByLabel(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := newTestProcessor(map[string]any{"solo1": tt.brief}).(*processor)
+			// List first: a press resolves against the last listing, which is
+			// what the button it presses was drawn from. This is also what makes
+			// the press need no fetch of its own.
+			send(t, p, "/spaces")
 			reply := press(t, p, "space?id=solo1")
 
 			if p.activeSpace != "solo1" {
@@ -573,6 +588,7 @@ func TestProcessor_PressSpaceWithEmptyIDIsAStaleLookupNotAMissingArgument(t *tes
 // error, and the active space survives it (REQ: active-space-selection).
 func TestProcessor_PressStaleSpaceButtonErrorsAndKeepsTheActiveSpace(t *testing.T) {
 	p := newTestProcessor(twoSpaces()).(*processor)
+	send(t, p, "/spaces")
 
 	// Establish the active space through the same door the user would use.
 	press(t, p, "space?id=family1")
@@ -596,23 +612,38 @@ func TestProcessor_PressStaleSpaceButtonErrorsAndKeepsTheActiveSpace(t *testing.
 
 // A reader failure during a press comes back as an error, like /spaces's does:
 // the selection cannot be confirmed if the spaces it would name never arrived.
-func TestProcessor_PressSpaceReaderErrorIsReturnedNotFormatted(t *testing.T) {
-	boom := errors.New("boom")
-	p := NewProcessor(fakeSpaces{err: boom}, "u1").(*processor)
+func TestProcessor_PressDoesNotFetchSpaces(t *testing.T) {
+	// A press must resolve against the last listing without fetching again —
+	// that redundant fetch was a real, user-visible delay on every selection
+	// (REQ: active-space-selection). Pinned by counting reads: one for /spaces,
+	// none for the press.
+	r := &countingSpaces{spaces: twoSpaces()}
+	p := NewProcessor(Deps{Spaces: r, UID: "u1"}).(*processor)
 
-	replies, err := p.PressButton(context.Background(), "space?id=family1")
-	if err == nil {
-		t.Fatal("PressButton with a failing reader = nil error, want the failure returned")
+	send(t, p, "/spaces")
+	if r.calls != 1 {
+		t.Fatalf("setup: /spaces made %d reads, want 1", r.calls)
 	}
-	if !errors.Is(err, boom) {
-		t.Errorf("err = %v, does not unwrap to the reader's error", err)
+
+	press(t, p, "space?id=family1")
+	if r.calls != 1 {
+		t.Errorf("a press made %d reads in total, want the press to add none: it must resolve against the last listing", r.calls)
 	}
-	if len(replies) != 0 {
-		t.Errorf("a failure must not produce replies, got %v", replies)
+	if p.activeSpace != "family1" {
+		t.Errorf("activeSpace = %q, want family1", p.activeSpace)
 	}
-	if p.activeSpace != "" {
-		t.Errorf("activeSpace = %q, want it unchanged by a failed selection", p.activeSpace)
-	}
+}
+
+// countingSpaces is a spaces reader that records how many times it was read, to
+// prove a press adds no fetch of its own.
+type countingSpaces struct {
+	spaces map[string]any
+	calls  int
+}
+
+func (c *countingSpaces) ListSpaces(context.Context, string) (map[string]any, error) {
+	c.calls++
+	return c.spaces, nil
 }
 
 // sandboxPackages are the packages that wire the sandbox — a mock LLM over a
@@ -687,5 +718,141 @@ func assertNotSandbox(t *testing.T, where, importPath string) {
 		if strings.Contains(importPath, bad.path) {
 			t.Errorf("%s: depends on %q — %s; free text must stop at the deferral reply", where, importPath, bad.why)
 		}
+	}
+}
+
+// --- new commands (REQ: space-command, whoami-command, version-command, contacts-command, command-registry) ---
+
+func TestProcessor_HelpAndRegistryNameEveryCommand(t *testing.T) {
+	p := newTestProcessor(twoSpaces())
+	// /help renders the registry, so every registered command appears in both.
+	help := send(t, p, "/help").Text
+	names := make(map[string]bool)
+	for _, c := range p.(*processor).Commands() {
+		names[c.Name] = true
+		if !strings.Contains(help, c.Name) {
+			t.Errorf("/help does not name %q, but the registry lists it", c.Name)
+		}
+	}
+	for _, want := range []string{"/spaces", "/space", "/who-am-i", "/contacts", "/version", "/help"} {
+		if !names[want] {
+			t.Errorf("the command registry is missing %q", want)
+		}
+	}
+	// The arg hint reaches the registry for a command that takes one.
+	for _, c := range p.(*processor).Commands() {
+		if c.Name == "/contacts" && c.Arg == "" {
+			t.Error("/contacts registry entry carries no arg hint")
+		}
+	}
+}
+
+func TestProcessor_WhoAmINamesTheEmail(t *testing.T) {
+	p := NewProcessor(Deps{Spaces: fakeSpaces{}, UID: "u1", Email: "user@example.com"})
+	if got := send(t, p, "/who-am-i").Text; !strings.Contains(got, "user@example.com") {
+		t.Errorf("/who-am-i = %q, does not name the email", got)
+	}
+}
+
+func TestProcessor_VersionNamesTheBuild(t *testing.T) {
+	p := NewProcessor(Deps{Spaces: fakeSpaces{}, UID: "u1", Version: "1.2.3"})
+	if got := send(t, p, "/version").Text; !strings.Contains(got, "1.2.3") {
+		t.Errorf("/version = %q, does not name the version", got)
+	}
+}
+
+func TestProcessor_SpaceReportsTheActiveSpace(t *testing.T) {
+	p := newTestProcessor(twoSpaces()).(*processor)
+
+	// None selected yet.
+	if got := send(t, p, "/space").Text; !strings.Contains(strings.ToLower(got), "no space") || !strings.Contains(got, "/spaces") {
+		t.Errorf("/space with none selected = %q, want it to say none is selected and point at /spaces", got)
+	}
+
+	// After a press, it names the active space by label.
+	send(t, p, "/spaces")
+	press(t, p, "space?id=family1")
+	if got := send(t, p, "/space").Text; !strings.Contains(got, "Family") {
+		t.Errorf("/space after selecting family1 = %q, want it to name Family", got)
+	}
+}
+
+func TestProcessor_ContactsResolvesTheSpace(t *testing.T) {
+	spaces := map[string]any{
+		"vaoyj": map[string]any{"title": "", "type": "family"},
+		"ao58m": map[string]any{"title": "", "type": "private"},
+		"c1":    map[string]any{"title": "Club A", "type": "club"},
+		"c2":    map[string]any{"title": "Club B", "type": "club"},
+	}
+	contacts := fakeContacts{bySpace: map[string][]Contact{
+		"vaoyj": {{Name: "Carol"}},
+		"ao58m": {{Name: "Alice"}, {Name: "Bob"}},
+	}}
+	newP := func() *processor {
+		return NewProcessor(Deps{Spaces: fakeSpaces{spaces: spaces}, Contacts: contacts, UID: "u1"}).(*processor)
+	}
+
+	t.Run("no arg, no active space, points at /spaces", func(t *testing.T) {
+		got := send(t, newP(), "/contacts").Text
+		if !strings.Contains(strings.ToLower(got), "no space") || !strings.Contains(got, "/spaces") {
+			t.Errorf("= %q, want it to say no space is selected and point at /spaces", got)
+		}
+	})
+
+	t.Run("no arg uses the active space", func(t *testing.T) {
+		p := newP()
+		send(t, p, "/spaces")
+		press(t, p, "space?id=ao58m")
+		got := send(t, p, "/contacts").Text
+		if !strings.Contains(got, "Alice") || !strings.Contains(got, "Bob") {
+			t.Errorf("= %q, want Alice and Bob from the active space", got)
+		}
+	})
+
+	t.Run("type resolves to the one space of that type", func(t *testing.T) {
+		got := send(t, newP(), "/contacts family").Text
+		if !strings.Contains(got, "Carol") {
+			t.Errorf("/contacts family = %q, want Carol from the family space", got)
+		}
+	})
+
+	t.Run("exact ID", func(t *testing.T) {
+		got := send(t, newP(), "/contacts vaoyj").Text
+		if !strings.Contains(got, "Carol") {
+			t.Errorf("/contacts vaoyj = %q, want Carol", got)
+		}
+	})
+
+	t.Run("ambiguous type is named, not guessed", func(t *testing.T) {
+		got := send(t, newP(), "/contacts club").Text
+		if !strings.Contains(strings.ToLower(got), "club") || strings.Contains(got, "Club A") {
+			t.Errorf("/contacts club = %q, want it to report the type as ambiguous rather than list one club's contacts", got)
+		}
+	})
+
+	t.Run("no such space is answered, not errored", func(t *testing.T) {
+		replies, err := newP().SendText(context.Background(), "/contacts nope")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(replies) != 1 || !strings.Contains(replies[0].Text, "nope") {
+			t.Errorf("= %v, want a reply naming the unknown space \"nope\"", replies)
+		}
+	})
+}
+
+func TestProcessor_ContactsReaderErrorIsReturnedNotFormatted(t *testing.T) {
+	boom := errors.New("boom")
+	p := NewProcessor(Deps{
+		Spaces:   fakeSpaces{spaces: map[string]any{"s1": map[string]any{"type": "family"}}},
+		Contacts: fakeContacts{err: boom},
+		UID:      "u1",
+	})
+	replies, err := p.SendText(context.Background(), "/contacts family")
+	if err == nil || !errors.Is(err, boom) {
+		t.Errorf("err = %v, want the reader's error returned unwrapped", err)
+	}
+	if len(replies) != 0 {
+		t.Errorf("a failure must produce no replies, got %v", replies)
 	}
 }
