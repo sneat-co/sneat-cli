@@ -203,21 +203,35 @@ func runSaySession(cmd *cobra.Command, messages []string, scope []string, spaceI
 func printTurns(cmd *cobra.Command, turns []convoTurn) error {
 	w := cmd.OutOrStdout()
 	for _, t := range turns {
-		fmt.Fprintf(w, "> %s\n", t.Text)
-		fmt.Fprintln(w, t.Response.ReplyText)
+		if _, err := fmt.Fprintf(w, "> %s\n", t.Text); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w, t.Response.ReplyText); err != nil {
+			return err
+		}
 		for _, ex := range t.Response.Executed {
-			fmt.Fprintf(w, "  [executed] %s: %s\n", ex.ActionID, ex.Summary)
+			if _, err := fmt.Fprintf(w, "  [executed] %s: %s\n", ex.ActionID, ex.Summary); err != nil {
+				return err
+			}
 		}
 		if t.Response.Pending != nil {
-			fmt.Fprintf(w, "  [pending] %s\n", t.Response.Pending.Prompt)
+			if _, err := fmt.Fprintf(w, "  [pending] %s\n", t.Response.Pending.Prompt); err != nil {
+				return err
+			}
 			b, _ := json.MarshalIndent(t.Response.Pending.Call, "    ", "  ")
-			fmt.Fprintf(w, "    %s\n", string(b))
+			if _, err := fmt.Fprintf(w, "    %s\n", string(b)); err != nil {
+				return err
+			}
 		}
 		if t.Response.Clarification != nil {
-			fmt.Fprintf(w, "  [clarification] %s\n", t.Response.Clarification.Question)
+			if _, err := fmt.Fprintf(w, "  [clarification] %s\n", t.Response.Clarification.Question); err != nil {
+				return err
+			}
 		}
 		if t.Resolution != nil {
-			fmt.Fprintf(w, "  [resolved] %s\n", t.Resolution.ReplyText)
+			if _, err := fmt.Fprintf(w, "  [resolved] %s\n", t.Resolution.ReplyText); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

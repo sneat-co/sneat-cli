@@ -129,11 +129,17 @@ func TestConvoReplay_BuyAndRemoveMilk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(f.Name())
+	defer func() {
+		if err := os.Remove(f.Name()); err != nil {
+			t.Logf("warning: failed to remove temp file: %v", err)
+		}
+	}()
 	if _, err := f.WriteString(script); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	buf, exec := buildConvoCmd(t)
 	if err := exec("convo", "replay", f.Name(), "--json"); err != nil {
