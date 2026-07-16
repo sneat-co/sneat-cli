@@ -4,7 +4,7 @@ format: https://specscore.md/scenario-specification
 
 # Scenario: slash commands list real spaces and selection sets the active space
 
-**Validates:** [chat-messenger#ac:conversation-input-is-handled-honestly](../README.md#ac-conversation-input-is-handled-honestly), [chat-messenger#req:spaces-command](../README.md#req-spaces-command), [chat-messenger#req:help-command](../README.md#req-help-command), [chat-messenger#req:slash-command-routing](../README.md#req-slash-command-routing), [chat-messenger#req:active-space-selection](../README.md#req-active-space-selection), [chat-messenger#req:unrecognized-callback-data](../README.md#req-unrecognized-callback-data)
+**Validates:** [chat-messenger#ac:conversation-input-is-handled-honestly](../README.md#ac-conversation-input-is-handled-honestly), [chat-messenger#req:spaces-command](../README.md#req-spaces-command), [chat-messenger#req:help-command](../README.md#req-help-command), [chat-messenger#req:slash-command-routing](../README.md#req-slash-command-routing), [chat-messenger#req:active-space-selection](../README.md#req-active-space-selection), [chat-messenger#req:card-edit](../README.md#req-card-edit), [chat-messenger#req:button-kinds](../README.md#req-button-kinds), [chat-messenger#req:contacts-card](../README.md#req-contacts-card), [chat-messenger#req:unrecognized-callback-data](../README.md#req-unrecognized-callback-data)
 
 ## Steps
 
@@ -40,10 +40,26 @@ WHEN `SendText` is called with `/spaces`
 THEN the reply states the user has no spaces
 AND the reply carries no keyboard
 
-GIVEN that same processor with no active space set
+GIVEN that same processor with no active space set, having just listed its spaces
 WHEN `PressButton` is called with `space?id=family1`
 THEN the processor's active space is `family1`
-AND the reply confirms the active space is now "Family"
+AND the reply is an `Edit` reply that re-renders the pressed message in place
+AND its text names the "Family" space
+AND its keyboard carries a callback button to the space's contacts, a URL button opening the space in the browser, a send button, and a callback button back to the spaces list
+
+GIVEN the processor showing the "Family" space card, backed by a contacts reader returning "Alice" and "Bob" for `family1`
+WHEN `PressButton` is called with `contacts?space=family1`
+THEN the reply is an `Edit` reply listing "Alice" and "Bob"
+AND its keyboard carries a callback button back to the space card
+
+GIVEN the processor showing the contacts card
+WHEN `PressButton` is called with `space?id=family1`
+THEN the reply is an `Edit` reply re-rendering the space card
+
+GIVEN the processor showing a space card
+WHEN `PressButton` is called with `spaces`
+THEN the reply is an `Edit` reply re-rendering the spaces list
+AND its keyboard carries one button per listed space
 
 GIVEN the same processor
 WHEN `SendText` is called with `/help`

@@ -435,10 +435,10 @@ func press(t *testing.T, p Processor, data string) Reply {
 	return replies[0]
 }
 
-// TestProcessor_PressSpaceButtonSetsTheActiveSpace is the scenario from
-// _tests/slash-commands-act-on-real-spaces.md: pressing a space button selects
-// that space and says so, naming it as the button did (REQ: active-space-selection).
-func TestProcessor_PressSpaceButtonSetsTheActiveSpace(t *testing.T) {
+// TestProcessor_PressSpaceButtonOpensTheCard: pressing a space button selects
+// that space and re-renders the pressed message as the space card — named by
+// label, carrying its action buttons, marked Edit (REQ: active-space-selection).
+func TestProcessor_PressSpaceButtonOpensTheCard(t *testing.T) {
 	p := newTestProcessor(twoSpaces()).(*processor)
 	send(t, p, "/spaces")
 	reply := press(t, p, "space?id=family1")
@@ -446,21 +446,41 @@ func TestProcessor_PressSpaceButtonSetsTheActiveSpace(t *testing.T) {
 	if p.activeSpace != "family1" {
 		t.Errorf("activeSpace = %q, want %q", p.activeSpace, "family1")
 	}
-	// The confirmation names the space the way the button did — by title, not
-	// by the ID the callback data carried.
-	if !strings.Contains(reply.Text, "Family") {
-		t.Errorf("reply %q does not confirm that the active space is now %q", reply.Text, "Family")
+	// The card names the space the way the button did — by title, not the ID.
+	if !strings.Contains(reply.Text, "Family") || strings.Contains(reply.Text, "family1") {
+		t.Errorf("card text = %q, want it to name the space by label \"Family\" and not its ID", reply.Text)
 	}
-	if strings.Contains(reply.Text, "family1") {
-		t.Errorf("reply %q names the space by ID; the user pressed a button labelled %q", reply.Text, "Family")
+	// It edits the pressed message in place rather than appending.
+	if !reply.Edit {
+		t.Error("a space press did not return an Edit reply; the card must re-render in place")
 	}
-	if reply.Keyboard != nil {
-		t.Errorf("confirmation reply should carry no keyboard, got %v", reply.Keyboard)
+	// It offers the card's actions, including a Contacts button.
+	if reply.Keyboard == nil {
+		t.Fatal("the space card carries no keyboard")
+	}
+	if !strings.Contains(buttonLabelsFlat(reply.Keyboard), "Contacts") {
+		t.Errorf("the space card has no Contacts button; its buttons are %q", buttonLabelsFlat(reply.Keyboard))
 	}
 }
 
-// A space with no title is confirmed by its ID, the same fallback its button
-// label took: the confirmation must name what the user actually pressed.
+// buttonLabelsFlat joins every button's label across all rows, for assertions
+// that a card offers a given action.
+func buttonLabelsFlat(kb botkb.Keyboard) string {
+	mk, ok := kb.(*botkb.MessageKeyboard)
+	if !ok {
+		return ""
+	}
+	var labels []string
+	for _, row := range mk.Buttons {
+		for _, b := range row {
+			labels = append(labels, b.GetText())
+		}
+	}
+	return strings.Join(labels, " | ")
+}
+
+// A space with no title names the card by its ID fallback, the same the button
+// label took: the card must name what the user actually pressed.
 func TestProcessor_PressSpaceButtonConfirmsByLabel(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
@@ -854,5 +874,96 @@ func TestProcessor_ContactsReaderErrorIsReturnedNotFormatted(t *testing.T) {
 	}
 	if len(replies) != 0 {
 		t.Errorf("a failure must produce no replies, got %v", replies)
+	}
+}
+
+// --- card navigation (REQ: card-edit, active-space-selection, contacts-card, button-kinds) ---
+
+// cardSetup lists spaces and opens the family space card, returning the processor
+// mid-navigation for the tests below.
+func cardSetup(t *testing.T) *processor {
+	t.Helper()
+	p := NewProcessor(Deps{
+		Spaces:   fakeSpaces{spaces: map[string]any{"vaoyj": map[string]any{"title": "", "type": "family"}}},
+		Contacts: fakeContacts{bySpace: map[string][]Contact{"vaoyj": {{Name: "Alice"}, {Name: "Bob"}}}},
+		UID:      "u1",
+	}).(*processor)
+	send(t, p, "/spaces")
+	return p
+}
+
+func TestProcessor_SpaceCardHasAllThreeButtonKinds(t *testing.T) {
+	p := cardSetup(t)
+	card := press(t, p, "space?id=vaoyj")
+	mk, ok := card.Keyboard.(*botkb.MessageKeyboard)
+	if !ok {
+		t.Fatalf("space card keyboard is %T", card.Keyboard)
+	}
+	var kinds = map[botkb.ButtonType]int{}
+	for _, row := range mk.Buttons {
+		for _, b := range row {
+			kinds[b.ButtonType()]++
+		}
+	}
+	// One card carries a callback, a URL, and a send button — the three kinds
+	// (REQ: button-kinds).
+	for kind, name := range map[botkb.ButtonType]string{
+		botkb.ButtonTypeData: "callback",
+		botkb.ButtonTypeURL:  "URL",
+		botkb.ButtonTypeText: "send",
+	} {
+		if kinds[kind] == 0 {
+			t.Errorf("the space card has no %s button; kinds present: %v", name, kinds)
+		}
+	}
+	// The URL button opens the space in the web app.
+	for _, row := range mk.Buttons {
+		for _, b := range row {
+			if u, ok := b.(*botkb.UrlButton); ok && !strings.Contains(u.URL, "vaoyj") {
+				t.Errorf("URL button opens %q, want it to name the space vaoyj", u.URL)
+			}
+		}
+	}
+}
+
+func TestProcessor_ContactsCardListsAndOffersBack(t *testing.T) {
+	p := cardSetup(t)
+	press(t, p, "space?id=vaoyj") // open the space card first (sets the cache-backed label)
+	card := press(t, p, "contacts?space=vaoyj")
+
+	if !card.Edit {
+		t.Error("the contacts card is not an Edit reply; it must re-render the card in place")
+	}
+	if !strings.Contains(card.Text, "Alice") || !strings.Contains(card.Text, "Bob") {
+		t.Errorf("contacts card = %q, want it to list Alice and Bob", card.Text)
+	}
+	if !strings.Contains(buttonLabelsFlat(card.Keyboard), "Back") {
+		t.Errorf("the contacts card has no ← Back button; its buttons are %q", buttonLabelsFlat(card.Keyboard))
+	}
+}
+
+func TestProcessor_CardNavigationIsALoop(t *testing.T) {
+	p := cardSetup(t)
+
+	space := press(t, p, "space?id=vaoyj")
+	if !strings.Contains(space.Text, "Space:") {
+		t.Fatalf("space card = %q", space.Text)
+	}
+	contacts := press(t, p, "contacts?space=vaoyj")
+	if !strings.Contains(contacts.Text, "Alice") {
+		t.Fatalf("contacts card = %q", contacts.Text)
+	}
+	// ← Back returns to the space card.
+	back := press(t, p, "space?id=vaoyj")
+	if !strings.Contains(back.Text, "Space:") || !back.Edit {
+		t.Errorf("← Back = %q (edit=%v), want the space card as an Edit reply", back.Text, back.Edit)
+	}
+	// ← Spaces returns to the list, as an Edit (re-render), not a new turn.
+	list := press(t, p, "spaces")
+	if !strings.Contains(list.Text, "space") || !list.Edit {
+		t.Errorf("← Spaces = %q (edit=%v), want the spaces list re-rendered in place", list.Text, list.Edit)
+	}
+	if list.Keyboard == nil {
+		t.Error("the re-rendered spaces list carries no space buttons")
 	}
 }

@@ -59,7 +59,25 @@ The terminal program MUST NOT use the alternate screen. It MUST render a live re
 
 A completed turn MUST be committed to terminal scrollback and never repainted. A bot reply carrying a keyboard is not complete until its buttons stop being focusable, at which point it commits with its buttons rendered inert. A reply with no keyboard commits immediately.
 
-Submitting text and pressing a button are both user input for this purpose. Each MUST commit the live reply, then commit an echo of what the user did — the submitted text, or the pressed button's label — before the resulting replies render. A button press therefore always ends the previous reply's focusability, so no live reply is ever stranded.
+Submitting text commits the live reply, then commits an echo of the submitted text, before the reply renders.
+
+A button press is more than one case (REQ: button-kinds). A **callback** press whose reply edits the card (REQ: card-edit-in-place) commits nothing and echoes nothing — the card mutates in place, the way navigating an inline menu does. Any other press — a callback that appends, or a **send** button — commits the live reply and an echo of the pressed label before the reply renders, exactly as a submit does. Because whether a callback edits or appends is only known once its reply returns, the commit for a press is deferred until then rather than done eagerly; a submit, which always appends, still commits eagerly so a fast reply cannot land ahead of the line that prompted it.
+
+#### REQ: card-edit-in-place
+
+When a callback press returns a single reply with its `Edit` flag set (chat-messenger#req:card-edit), the renderer MUST replace the live card in place — its text and its buttons — without committing anything to scrollback and without an echo. The card is the live region; an edit mutates it. It commits, frozen with its buttons inert, only when a later turn supersedes it, the same rule any live reply follows.
+
+After an edit, focus MUST stay in the new card's button block, at its first button, so the user chains presses through a menu — Contacts, then Back — without returning to the input between each. This is a deliberate exception to REQ: focus-and-keys' rule that `up` enters the block at its last row: that rule is about entering from the input, whereas here the user is already navigating the card and the first button is its primary action.
+
+#### REQ: button-kinds
+
+The renderer MUST carry out a press according to the pressed button's kind (chat-messenger#req:button-kinds):
+
+- a **callback** button (`botkb.DataButton`) MUST run `PressButton` with its callback data;
+- a **send** button (`botkb.TextButton`) MUST send its own text through `SendText`, exactly as if the user had typed and submitted it;
+- a **URL** button (`botkb.UrlButton`) MUST open its URL in the user's browser and produce no chat turn; a browser that fails to open MUST surface as a transcript message, not a crash.
+
+Opening a browser is a side effect on the world, so the mechanism that opens it MUST be injected rather than hard-called, so a test drives a press without launching one.
 
 #### REQ: errors-render-in-transcript
 
@@ -111,7 +129,7 @@ A chat session becomes available only when the environment can support it: a rea
 
 ### AC: transcript-is-durable-terminal-text
 
-**Requirements:** chat-tui#req:inline-rendering, chat-tui#req:scrollback-commit, chat-tui#req:errors-render-in-transcript
+**Requirements:** chat-tui#req:inline-rendering, chat-tui#req:scrollback-commit, chat-tui#req:errors-render-in-transcript, chat-tui#req:card-edit-in-place, chat-tui#req:button-kinds
 
 The conversation accumulates as ordinary terminal scrollback, so past turns remain selectable, copyable, and searchable with the terminal's own tooling, and survive exit. Only the region that can still change is repainted. A backend failure joins the transcript as a message rather than destroying it.
 

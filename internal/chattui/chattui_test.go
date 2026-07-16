@@ -84,11 +84,27 @@ func raggedKeyboard() botkb.Keyboard {
 // It is built directly rather than driven through one so a test can choose the
 // keyboard's shape — no command emits a multi-button row yet — and so a key
 // assertion is not also an assertion about the turn that got there.
+//
+// The browser opener is stubbed to a no-op: New wires the real platform launcher
+// (REQ: button-kinds), and a test that pressed a URL button without overriding it
+// would open a real browser. A test that cares what a URL press opens installs
+// recordingBrowser instead.
 func liveModel(proc chat.Processor, kb botkb.Keyboard) Model {
 	m := New(proc)
 	reply := chat.Reply{Text: "Your spaces:", Keyboard: kb}
 	m.live = &reply
+	m.browser = func(string) error { return nil }
 	return m
+}
+
+// recordingBrowser is a stub browser opener that records the URLs it is asked to
+// open into opened, and returns err for every one. It lets a test assert what a
+// URL button press opened without launching a browser (REQ: button-kinds).
+func recordingBrowser(opened *[]string, err error) func(string) error {
+	return func(url string) error {
+		*opened = append(*opened, url)
+		return err
+	}
 }
 
 // --- alt screen ---
@@ -776,29 +792,34 @@ func TestPressCommitsTheLiveReplyThenEchoesTheLabel(t *testing.T) {
 	}
 }
 
-// TestPressSequencesTheCommitAheadOfThePress pins how a press's ordering is
-// guaranteed rather than merely likely, for the same reason
-// TestSubmitSequencesTheCommitAheadOfTheSend does it for a submit: tea.Batch
-// would run the commit and the turn concurrently, so a Processor that answered
-// fast enough could land its reply in scrollback ahead of the press that prompted
-// it (chat-tui#req:scrollback-commit).
-func TestPressSequencesTheCommitAheadOfThePress(t *testing.T) {
+// TestCallbackPressDefersItsCommitUntilTheReplyReturns pins how a callback press
+// differs from a submit: it does NOT commit eagerly. A callback's reply may edit
+// the card in place or supersede it, and which is only known once the reply
+// returns, so committing the card and echo up front — the way a submit does —
+// would freeze a card into scrollback that a card edit means to rewrite silently.
+// The commit is held instead, and ordered ahead of the reply by receive
+// (chat-tui#req:scrollback-commit, chat-tui#req:card-edit-in-place).
+func TestCallbackPressDefersItsCommitUntilTheReplyReturns(t *testing.T) {
 	m, _ := pressKeys(t, liveModel(fakeProcessor{replies: []chat.Reply{{Text: "Family space:"}}}, spacesKeyboard()), "up")
 	if m.focus != focusButtons {
 		t.Fatal("setup: expected focus in the button block after up")
 	}
 
-	_, cmd := m.Update(key(t, "enter"))
+	next, cmd := m.Update(key(t, "enter"))
+	m = next.(Model)
 
-	cmds, ok := sequenceIn(t, cmd)
-	if !ok {
-		t.Fatal("a press dispatched no tea.Sequence: the commit must be ordered ahead of the press, not raced against it (chat-tui#req:scrollback-commit)")
+	// The press commits nothing yet: everything it produces is the pending
+	// spinner and the press itself, no scrollback.
+	if got := scrollbackOf(drain(t, cmd)); len(got) != 0 {
+		t.Errorf("a callback press committed %q eagerly; its commit is deferred until the reply returns (chat-tui#req:scrollback-commit)", got)
 	}
-	if len(cmds) != 2 {
-		t.Fatalf("a press sequenced %d commands, want 2: the commit then the press", len(cmds))
+	// What it will commit is held on the model — the superseded card and the echo
+	// of the pressed label — and the card is still live meanwhile.
+	if len(m.deferred) == 0 {
+		t.Error("a callback press held nothing to commit; the superseded card and echo must be deferred, not dropped")
 	}
-	if _, ok := printedBody(cmds[0]()); !ok {
-		t.Error("the first command a press sequences does not commit to scrollback; the commit must come first")
+	if m.live == nil {
+		t.Error("a callback press cleared the live card; it must stay live until the reply decides whether it is superseded or edited")
 	}
 }
 
@@ -1603,18 +1624,18 @@ func TestEnterInTheButtonBlockDoesNotSubmitTheInput(t *testing.T) {
 	}
 }
 
-// TestEnterOnAButtonCarryingNoCallbackDataDoesNothing pins the one button enter
-// cannot press. chat.Processor names a press by its callback data
-// (chat-messenger#req:processor-seam) and a URL button carries none, so there is
-// no turn to make. It must not put the session in flight either: nothing would
-// answer it, and the lock would never lift
-// (chat-tui#req:input-locked-while-pending).
-func TestEnterOnAButtonCarryingNoCallbackDataDoesNothing(t *testing.T) {
-	var pressed []string
+// TestPressingAURLButtonOpensTheBrowserAndMakesNoTurn pins the URL button kind
+// (chat-tui#req:button-kinds). A URL button opens its URL in the browser and makes
+// no chat turn: it reaches the Processor for nothing, commits and echoes nothing,
+// and — because no turn is in flight — never takes the pending lock, so the card
+// stays live and the user can press on.
+func TestPressingAURLButtonOpensTheBrowserAndMakesNoTurn(t *testing.T) {
+	var pressed, opened []string
 	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
 		[]botkb.Button{botkb.NewUrlButton("Open in browser", "https://sneat.app")},
 	)
 	m, _ := pressKeys(t, liveModel(fakeProcessor{pressed: &pressed}, kb), "up")
+	m.browser = recordingBrowser(&opened, nil)
 	if m.focus != focusButtons {
 		t.Fatal("setup: expected focus in the button block")
 	}
@@ -1623,21 +1644,54 @@ func TestEnterOnAButtonCarryingNoCallbackDataDoesNothing(t *testing.T) {
 	m = next.(Model)
 	msgs := drain(t, cmd)
 
+	if !reflect.DeepEqual(opened, []string{"https://sneat.app"}) {
+		t.Errorf("a URL button press opened %q, want the button's URL [%q] in the browser (chat-tui#req:button-kinds)", opened, "https://sneat.app")
+	}
 	if len(pressed) != 0 {
-		t.Errorf("PressButton received %q for a button carrying no callback data", pressed)
+		t.Errorf("a URL button press reached the Processor with %q; opening a browser is not a chat turn (chat-tui#req:button-kinds)", pressed)
 	}
 	if m.pending {
-		t.Error("pending = true after enter on a button carrying no callback data: nothing is in flight, and nothing would ever lift the lock (chat-tui#req:input-locked-while-pending)")
+		t.Error("pending = true after a URL button press: opening a browser makes no turn, so nothing would ever lift the lock (chat-tui#req:input-locked-while-pending)")
 	}
-	// No turn was made, so nothing superseded the reply: it is still the live
-	// one, and its buttons are still focusable. A press that committed before
-	// working out whether it had a turn to make would take the transcript, and
-	// the user's buttons, with it.
+	// No turn was made, so nothing superseded the card: it is still live and its
+	// buttons are still the user's to press.
 	if got := scrollbackOf(msgs); len(got) != 0 {
-		t.Errorf("enter on a button carrying no callback data committed %q to scrollback; it makes no turn, so there is nothing to commit and nothing to echo (chat-tui#req:scrollback-commit)", got)
+		t.Errorf("a URL button press committed %q to scrollback; it makes no turn, so there is nothing to commit and nothing to echo (chat-tui#req:scrollback-commit)", got)
 	}
 	if m.live == nil {
-		t.Error("live = nil after enter on a button carrying no callback data; it makes no turn, so the reply is not superseded and its buttons stay focusable (chat-tui#req:scrollback-commit)")
+		t.Error("live = nil after a URL button press; it makes no turn, so the card is not superseded and stays focusable (chat-tui#req:scrollback-commit)")
+	}
+	if m.focus != focusButtons {
+		t.Errorf("focus = %v after a URL button press, want it left in the button block: the card stays and the user presses on", m.focus)
+	}
+}
+
+// TestAURLButtonThatWillNotOpenSurfacesInTheTranscript pins the failure half of
+// the URL kind: a browser that fails to open becomes a bot message in the
+// transcript rather than crashing the session (chat-tui#req:button-kinds,
+// chat-tui#req:errors-render-in-transcript).
+func TestAURLButtonThatWillNotOpenSurfacesInTheTranscript(t *testing.T) {
+	var opened []string
+	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewUrlButton("Open in browser", "https://sneat.app")},
+	)
+	m, _ := pressKeys(t, liveModel(fakeProcessor{}, kb), "up")
+	m.browser = recordingBrowser(&opened, errProcessorFailure)
+
+	// pump, not drain: the opener's failure arrives as an errMsg that must go back
+	// through Update to be rendered, the same path a Processor failure takes.
+	next, cmd := m.Update(key(t, "enter"))
+	m, msgs := pump(t, next.(Model), cmd)
+
+	if quitsIn(msgs) {
+		t.Error("a browser that failed to open quit the program; it must surface in the transcript instead (chat-tui#req:button-kinds)")
+	}
+	sb := scrollbackOf(msgs)
+	if len(sb) != 1 || !strings.Contains(sb[0], errProcessorFailure.Error()) {
+		t.Errorf("a failed browser open committed %q, want exactly one block naming the failure (chat-tui#req:errors-render-in-transcript)", sb)
+	}
+	if m.pending {
+		t.Error("pending = true after a failed browser open; opening a browser is not a turn and takes no lock")
 	}
 }
 
@@ -2033,5 +2087,223 @@ func TestPaletteClosesWhenAnArgumentBegins(t *testing.T) {
 	_, _ = pump(t, next.(Model), cmd)
 	if !slices.Equal(sent, []string{"/contacts family"}) {
 		t.Errorf("enter sent %v, want the whole line \"/contacts family\"", sent)
+	}
+}
+
+// --- card edit in place (chat-tui#req:card-edit-in-place) ---
+
+// cardKeyboard is a space card's keyboard: a callback button (Contacts), a URL
+// button (Open in browser), a send button (/help), and a callback back button —
+// the three button kinds plus the navigation the card-edit flow uses.
+func cardKeyboard() botkb.Keyboard {
+	return botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewDataButton("Contacts", "contacts?space=family1")},
+		[]botkb.Button{botkb.NewUrlButton("Open in browser", "https://sneat.app/space/family1")},
+		[]botkb.Button{botkb.NewTextButton("/help")},
+		[]botkb.Button{botkb.NewDataButton("← Spaces", "spaces")},
+	)
+}
+
+// TestCardEditReplacesTheLiveCardInPlace pins the card-edit primitive: a callback
+// press answered with a single Edit reply rewrites the live card — its text and
+// its buttons — without committing or echoing anything, the way navigating an
+// inline menu does (chat-tui#req:card-edit-in-place).
+func TestCardEditReplacesTheLiveCardInPlace(t *testing.T) {
+	card := chat.Reply{Text: "Space: Family", Keyboard: cardKeyboard(), Edit: true}
+	m := liveModel(fakeProcessor{replies: []chat.Reply{card}}, spacesKeyboard())
+
+	m, msgs := pressTurn(t, m, "up")
+
+	if got := scrollbackOf(msgs); len(got) != 0 {
+		t.Errorf("a card edit committed %q to scrollback; it mutates the card in place, committing and echoing nothing (chat-tui#req:card-edit-in-place)", got)
+	}
+	if m.live == nil || m.live.Text != "Space: Family" {
+		t.Fatalf("live = %+v after a card edit, want the new card %q replacing the old one in place", m.live, "Space: Family")
+	}
+	if view := m.View(); strings.Contains(view, "Your spaces:") {
+		t.Errorf("View() = %q still draws the old card; a card edit replaces it (chat-tui#req:card-edit-in-place)", view)
+	}
+}
+
+// TestCardEditKeepsFocusOnTheNewCardsFirstButton pins the focus exception a card
+// edit makes: focus stays in the button block, on the new card's first button, so
+// the user chains presses through a menu without returning to the input between
+// each. This is deliberately unlike a normal reply, which leaves focus on the
+// input (chat-tui#req:card-edit-in-place, chat-tui#req:focus-and-keys).
+func TestCardEditKeepsFocusOnTheNewCardsFirstButton(t *testing.T) {
+	card := chat.Reply{Text: "Space: Family", Keyboard: cardKeyboard(), Edit: true}
+	m := liveModel(fakeProcessor{replies: []chat.Reply{card}}, spacesKeyboard())
+
+	m, _ = pressTurn(t, m, "up")
+
+	if m.focus != focusButtons {
+		t.Errorf("focus = %v after a card edit, want focusButtons: the user chains presses through the card without returning to the input (chat-tui#req:card-edit-in-place)", m.focus)
+	}
+	if m.row != 0 || m.col != 0 {
+		t.Errorf("focus is at row %d col %d after a card edit, want the first button (0,0): its first button is the card's primary action", m.row, m.col)
+	}
+	if got := focusedLabel(m); got != "Contacts" {
+		t.Errorf("the card edit marks %q as focused, want the new card's first button %q", got, "Contacts")
+	}
+}
+
+// TestChainedCardEditsNavigateWithoutTouchingScrollback pins the whole point of
+// the flow: a press on the edited card edits again, and neither hop commits — the
+// card is navigated, spaces → space → contacts, entirely in the live region
+// (chat-tui#req:card-edit-in-place).
+func TestChainedCardEditsNavigateWithoutTouchingScrollback(t *testing.T) {
+	space := chat.Reply{Text: "Space: Family", Keyboard: cardKeyboard(), Edit: true}
+	contacts := chat.Reply{
+		Text:     "Contacts of Family:\nAlice",
+		Keyboard: botkb.NewMessageKeyboard(botkb.KeyboardTypeInline, []botkb.Button{botkb.NewDataButton("← Back", "space?id=family1")}),
+		Edit:     true,
+	}
+
+	// First hop: press a space, get the space card.
+	m, msgs1 := pressTurn(t, liveModel(fakeProcessor{replies: []chat.Reply{space}}, spacesKeyboard()), "up")
+	if got := scrollbackOf(msgs1); len(got) != 0 {
+		t.Fatalf("the first card hop committed %q, want nothing", got)
+	}
+	if m.live == nil || !strings.Contains(m.live.Text, "Space: Family") {
+		t.Fatalf("after the first hop live = %+v, want the space card", m.live)
+	}
+
+	// Second hop: press Contacts on the space card — focus is already on it — and
+	// get the contacts card. The press's reply comes from a fresh processor.
+	m.proc = fakeProcessor{replies: []chat.Reply{contacts}}
+	if got := focusedLabel(m); got != "Contacts" {
+		t.Fatalf("setup: focus is on %q, want Contacts as the card's first button", got)
+	}
+	next, cmd := m.Update(key(t, "enter"))
+	m, msgs2 := pump(t, next.(Model), cmd)
+
+	if got := scrollbackOf(msgs2); len(got) != 0 {
+		t.Errorf("the second card hop committed %q, want nothing: the card is navigated in place (chat-tui#req:card-edit-in-place)", got)
+	}
+	if m.live == nil || !strings.Contains(m.live.Text, "Alice") {
+		t.Errorf("after the second hop live = %+v, want the contacts card listing Alice", m.live)
+	}
+}
+
+// --- send button (chat-tui#req:button-kinds) ---
+
+// TestSendButtonSubmitsItsTextLikeATypedLine pins the send button kind: it sends
+// its own text through SendText exactly as if the user had typed and submitted it,
+// committing the card and an echo eagerly the way a submit does
+// (chat-tui#req:button-kinds).
+func TestSendButtonSubmitsItsTextLikeATypedLine(t *testing.T) {
+	var sent []string
+	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewTextButton("/help")},
+	)
+	m := liveModel(fakeProcessor{replies: []chat.Reply{{Text: "Commands: /spaces"}}, sent: &sent}, kb)
+
+	m, sb := func() (Model, []string) {
+		m, _ := pressKeys(t, m, "up")
+		if m.focus != focusButtons {
+			t.Fatal("setup: expected focus in the button block")
+		}
+		next, cmd := m.Update(key(t, "enter"))
+		mm, msgs := pump(t, next.(Model), cmd)
+		return mm, scrollbackOf(msgs)
+	}()
+
+	if !reflect.DeepEqual(sent, []string{"/help"}) {
+		t.Errorf("a send button sent %q, want its own text [%q] through SendText (chat-tui#req:button-kinds)", sent, "/help")
+	}
+	// The card commits with an echo of the sent text, then the reply renders —
+	// exactly a submit's shape.
+	if len(sb) < 2 {
+		t.Fatalf("a send button committed %q, want the card with the echo then the reply", sb)
+	}
+	if !strings.Contains(sb[0], inputPrompt+"/help") {
+		t.Errorf("a send button committed %q first, want the card carrying an echo of the sent text", sb[0])
+	}
+	if !strings.Contains(sb[len(sb)-1], "Commands: /spaces") {
+		t.Errorf("a send button committed %q last, want the reply its text prompted", sb[len(sb)-1])
+	}
+}
+
+// --- distinguishing button kinds in the UI (chat-tui#req:button-kinds) ---
+
+// TestButtonKindsAreMarkedDistinctlyInTheUI pins that a rendered card tells its
+// three button kinds apart by a glyph in the label — not by colour, which a
+// monochrome terminal and a copied transcript both lose (chat-tui#req:button-kinds).
+func TestButtonKindsAreMarkedDistinctlyInTheUI(t *testing.T) {
+	m := liveModel(fakeProcessor{}, cardKeyboard())
+	view := m.View()
+
+	// The URL button is marked as leaving for the browser, the send button as
+	// putting its text into the conversation, and the callback carries no mark —
+	// it acts inside the card.
+	if !strings.Contains(view, "Open in browser ↗") {
+		t.Errorf("the URL button is not marked with ↗ in %q; its kind must read apart on any terminal (chat-tui#req:button-kinds)", view)
+	}
+	if !strings.Contains(view, "/help »") {
+		t.Errorf("the send button is not marked with » in %q; its kind must read apart on any terminal (chat-tui#req:button-kinds)", view)
+	}
+	if strings.Contains(view, "Contacts ↗") || strings.Contains(view, "Contacts »") {
+		t.Errorf("the callback button carries a kind mark in %q; a callback acts inside the card and takes none", view)
+	}
+	// The marks are distinct, so no two kinds read alike.
+	if strings.Count(view, "↗") != 1 {
+		t.Errorf("the ↗ mark appears %d times in %q, want once — only the URL button", strings.Count(view, "↗"), view)
+	}
+	if strings.Count(view, "»") != 1 {
+		t.Errorf("the » mark appears %d times in %q, want once — only the send button", strings.Count(view, "»"), view)
+	}
+}
+
+// TestACardEditLeavesNoDeferredCommitToResurface pins that a card edit clears the
+// commit its press deferred. A callback press holds the superseded card and echo
+// aside until its reply returns; an Edit reply means neither belongs in the
+// transcript, so both must be dropped. Were they left on the model, the next turn
+// that commits — a plain text submit, which does not touch the deferred slot —
+// would drag the stale card and a phantom echo into scrollback ahead of its own
+// reply (chat-tui#req:card-edit-in-place).
+func TestACardEditLeavesNoDeferredCommitToResurface(t *testing.T) {
+	card := chat.Reply{Text: "Space: Family", Keyboard: cardKeyboard(), Edit: true}
+	m := liveModel(fakeProcessor{replies: []chat.Reply{card}}, spacesKeyboard())
+
+	// Press a space; the reply edits the card in place.
+	m, _ = pressTurn(t, m, "up")
+	if len(m.deferred) != 0 {
+		t.Errorf("a card edit left %q deferred; an edit supersedes nothing, so nothing is held to commit later", m.deferred)
+	}
+
+	// Leave the card for the input and submit a line. Its scrollback must be only
+	// the submitted line and the reply — never the space list the edit replaced.
+	m.proc = fakeProcessor{replies: []chat.Reply{{Text: "Noted."}}}
+	m, _ = pressKeys(t, m, "esc")
+	_, sb := submitTurn(t, m, "hello")
+
+	for _, block := range sb {
+		if strings.Contains(block, "Your spaces:") {
+			t.Errorf("a submit after a card edit committed %q, resurrecting the card the edit had replaced: the edit's deferred commit was not cleared (chat-tui#req:card-edit-in-place)", block)
+		}
+	}
+}
+
+// TestAFailedCallbackPressStillCommitsTheCard pins the deferred-commit half of a
+// failed press. A callback press holds the superseded card and echo aside until
+// its reply returns; when that reply is a failure, the card is superseded all the
+// same, so the held card and echo commit ahead of the error rather than vanishing
+// with the live region (chat-tui#req:scrollback-commit,
+// chat-tui#req:errors-render-in-transcript).
+func TestAFailedCallbackPressStillCommitsTheCard(t *testing.T) {
+	m, msgs := pressTurn(t, liveModel(fakeProcessor{err: errProcessorFailure}, spacesKeyboard()), "up")
+
+	sb := scrollbackOf(msgs)
+	if len(sb) != 2 {
+		t.Fatalf("a failed callback press committed %q, want two blocks: the superseded card with its echo, then the failure", sb)
+	}
+	if !strings.Contains(sb[0], "Your spaces:") || !strings.Contains(sb[0], inputPrompt+"Work") {
+		t.Errorf("a failed callback press committed %q first, want the pressed card carrying an echo of the press; a press that failed must not drop the card it superseded (chat-tui#req:scrollback-commit)", sb[0])
+	}
+	if !strings.Contains(sb[1], errProcessorFailure.Error()) {
+		t.Errorf("a failed callback press committed %q last, want the failure (chat-tui#req:errors-render-in-transcript)", sb[1])
+	}
+	if m.live != nil {
+		t.Error("live is non-nil after a failed press; the failure superseded the card")
 	}
 }

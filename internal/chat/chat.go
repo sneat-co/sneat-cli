@@ -25,6 +25,12 @@ type Reply struct {
 
 	// Keyboard is the buttons to show with the message, or nil for none.
 	Keyboard botkb.Keyboard
+
+	// Edit marks a reply that re-renders the pressed message in place rather
+	// than appending a new one — the primitive behind a navigable card
+	// (chat-messenger#req:card-edit). It is meaningful only on a PressButton
+	// result; SendText always appends.
+	Edit bool
 }
 
 // Processor processes a chat turn and returns the bot's replies.

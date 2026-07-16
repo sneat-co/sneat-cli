@@ -63,12 +63,26 @@ const (
 // argument it carries. Buttons are encoded with these and presses dispatch on
 // them, so the two sides cannot drift into `space?id=` vs `space?spaceID=`.
 const (
-	// cbSpace selects a space: `space?id=<spaceID>`.
+	// cbSpace opens a space's card: `space?id=<spaceID>`.
 	cbSpace = "space"
 
 	// cbArgSpaceID names the space cbSpace acts on.
 	cbArgSpaceID = "id"
+
+	// cbContacts opens a space's contacts card: `contacts?space=<spaceID>`.
+	cbContacts = "contacts"
+
+	// cbArgSpace names the space cbContacts acts on.
+	cbArgSpace = "space"
+
+	// cbSpaces re-renders the card back to the spaces list: `spaces`.
+	cbSpaces = "spaces"
 )
+
+// spaceWebURL is the web app address a space card's URL button opens.
+func spaceWebURL(id string) string {
+	return "https://sneat.app/space/" + id
+}
 
 // command is one slash command: how it is typed, how /help and the palette
 // describe it, and what runs when text routes to it.
@@ -209,42 +223,25 @@ func (p *processor) PressButton(ctx context.Context, data string) ([]Reply, erro
 	switch cb.command {
 	case cbSpace:
 		// The bool, not the value: an id passed empty is not an id omitted, so
-		// it goes on to selectSpace and fails there on the lookup, which is the
+		// it goes on to spaceCard and fails there on the lookup, which is the
 		// stale-button case rather than a structural one. That is the whole
 		// reason callbackData.arg reports presence separately from value.
 		id, ok := cb.arg(cbArgSpaceID)
 		if !ok {
 			return p.unhandledPress(), nil
 		}
-		return p.selectSpace(ctx, id)
+		return p.spaceCard(id)
+	case cbContacts:
+		id, ok := cb.arg(cbArgSpace)
+		if !ok {
+			return p.unhandledPress(), nil
+		}
+		return p.contactsCard(ctx, id)
+	case cbSpaces:
+		return p.spacesListCard()
 	default:
 		return p.unhandledPress(), nil
 	}
-}
-
-// selectSpace makes id the session's active space and says so
-// (REQ: active-space-selection).
-//
-// The reader is consulted rather than trusted: a button's id is only as fresh
-// as the listing that emitted it, and a space can be revoked mid-session. An id
-// naming no space the user can currently see leaves activeSpace alone and comes
-// back as an error — the failure is real, and this package cannot know how the
-// surface shows one (REQ: errors-are-returned-not-formatted).
-func (p *processor) selectSpace(_ context.Context, id string) ([]Reply, error) {
-	// Resolved against the last listing, not a fresh fetch: the button pressed
-	// was drawn from exactly this map, so selection is instant instead of
-	// waiting on the network (REQ: active-space-selection).
-	brief, ok := p.listedSpaces[id]
-	if !ok {
-		return nil, fmt.Errorf("space %q was not among the spaces last listed", id)
-	}
-	// Assigned only past the lookup: an unknown id must leave the previously
-	// active space standing.
-	p.activeSpace = id
-	// Named by label, through the same resolution the button's own label took,
-	// so the confirmation echoes what the user pressed rather than the ID the
-	// callback data happened to carry.
-	return []Reply{{Text: fmt.Sprintf("Active space is now %s.", spaceLabel(brief, id))}}, nil
 }
 
 // unhandledPress answers callback data this processor cannot dispatch — never a
@@ -429,18 +426,30 @@ func (p *processor) spacesCmd(ctx context.Context, _ string) ([]Reply, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to list spaces: %w", err)
 	}
+	// Remember what was listed: a press resolves against this rather than
+	// fetching again, since the button pressed is built from exactly this map
+	// (REQ: active-space-selection).
+	p.listedSpaces = spaces
+	return p.spacesList(spaces, false)
+}
+
+// spacesListCard re-renders the current card as the spaces list, for a space
+// card's ← Spaces button. It reuses the last listing rather than fetching, since
+// the buttons that reach it were drawn from it.
+func (p *processor) spacesListCard() ([]Reply, error) {
+	return p.spacesList(p.listedSpaces, true)
+}
+
+// spacesList builds the spaces list reply. edit marks it as a card re-render
+// (the ← Spaces button) rather than a new turn (the /spaces command).
+func (p *processor) spacesList(spaces map[string]any, edit bool) ([]Reply, error) {
 	if len(spaces) == 0 {
 		// No keyboard at all rather than an empty one: a renderer branches on
 		// keyboard presence to decide whether a reply is focusable, so an
 		// empty-but-present keyboard would give it a focus block with nothing
 		// to focus.
-		return []Reply{{Text: "You have no spaces."}}, nil
+		return []Reply{{Text: "You have no spaces.", Edit: edit}}, nil
 	}
-
-	// Remember what was listed: a press resolves against this rather than
-	// fetching again, since the button pressed is built from exactly this map
-	// (REQ: active-space-selection).
-	p.listedSpaces = spaces
 
 	// Sorted, not ranged: ListSpaces returns a map, whose iteration order Go
 	// randomizes, so ranging it directly would reshuffle the user's buttons on
@@ -462,7 +471,83 @@ func (p *processor) spacesCmd(ctx context.Context, _ string) ([]Reply, error) {
 	return []Reply{{
 		Text:     fmt.Sprintf("You have %d %s:", len(ids), plural(len(ids), "space", "spaces")),
 		Keyboard: botkb.NewMessageKeyboard(botkb.KeyboardTypeInline, rows...),
+		Edit:     edit,
 	}}, nil
+}
+
+// spaceCard opens a space's card: the space named, the actions on it, and the
+// space made active. It re-renders the pressed message in place (Edit), so the
+// spaces list becomes the space card rather than growing a new message
+// (REQ: active-space-selection).
+func (p *processor) spaceCard(id string) ([]Reply, error) {
+	// Resolved against the last listing, not a fresh fetch: the button pressed
+	// was drawn from exactly this map, so opening the card is instant
+	// (REQ: active-space-selection).
+	brief, ok := p.listedSpaces[id]
+	if !ok {
+		return nil, fmt.Errorf("space %q was not among the spaces last listed", id)
+	}
+	// Assigned only past the lookup: an unknown id must leave the previously
+	// active space standing.
+	p.activeSpace = id
+	label := spaceLabel(brief, id)
+
+	contactsData, err := encodeCallbackData(cbContacts, url.Values{cbArgSpace: {id}})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build the contacts button: %w", err)
+	}
+	backData, err := encodeCallbackData(cbSpaces, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build the spaces button: %w", err)
+	}
+	// Three button kinds on one card (REQ: button-kinds): Contacts and ← Spaces
+	// are callbacks that re-render the card; Open in browser is a URL button;
+	// /help is a send button, whose text is what it sends.
+	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewDataButton("Contacts", contactsData)},
+		[]botkb.Button{botkb.NewUrlButton("Open in browser", spaceWebURL(id))},
+		[]botkb.Button{botkb.NewTextButton(cmdHelp)},
+		[]botkb.Button{botkb.NewDataButton("← Spaces", backData)},
+	)
+	return []Reply{{Text: "Space: " + label, Keyboard: kb, Edit: true}}, nil
+}
+
+// contactsCard re-renders the card as a space's contacts, with a ← Back button
+// to the space card (REQ: contacts-card).
+func (p *processor) contactsCard(ctx context.Context, spaceID string) ([]Reply, error) {
+	if p.contacts == nil {
+		return nil, fmt.Errorf("contacts are not available")
+	}
+	contacts, err := p.contacts.ListContacts(ctx, spaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list contacts: %w", err)
+	}
+	label := "this space"
+	if brief, ok := p.listedSpaces[spaceID]; ok {
+		label = spaceLabel(brief, spaceID)
+	}
+
+	var b strings.Builder
+	if len(contacts) == 0 {
+		_, _ = fmt.Fprintf(&b, "%s has no contacts.", label)
+	} else {
+		_, _ = fmt.Fprintf(&b, "Contacts of %s:", label)
+		for _, c := range contacts {
+			name := c.Name
+			if name == "" {
+				name = "(unnamed)"
+			}
+			_, _ = fmt.Fprintf(&b, "\n%s", name)
+		}
+	}
+	backData, err := encodeCallbackData(cbSpace, url.Values{cbArgSpaceID: {spaceID}})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build the back button: %w", err)
+	}
+	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewDataButton("← Back", backData)},
+	)
+	return []Reply{{Text: b.String(), Keyboard: kb, Edit: true}}, nil
 }
 
 // spaceLabel returns a space's button label: its title; failing that, the

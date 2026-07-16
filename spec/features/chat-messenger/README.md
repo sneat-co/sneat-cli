@@ -50,6 +50,8 @@ A renderer MUST depend on a `Processor` interface exposing `SendText(ctx, text)`
 
 A `Reply` carries the bot's message text and an optional keyboard (see REQ: botkb-vocabulary). Both methods return `[]Reply` rather than a single `Reply` because a chat turn may produce more than one message: a confirmation flow — which Sneat's conversational runtime already models as a staged action a transport renders with Yes/Cancel inline buttons — is a reply plus a prompt. A renderer commits them in order. Every command specified here returns exactly one reply; the plural keeps a multi-message turn from becoming a seam-wide signature change later.
 
+A `Reply` also carries an `Edit` flag (see REQ: card-edit). When a `PressButton` result is a single reply with `Edit` set, it replaces the message the pressed button belonged to — the same message, re-rendered — rather than appending a new one. This is how a card navigates in place, the way a Telegram inline menu edits its own message on a callback.
+
 #### REQ: errors-are-returned-not-formatted
 
 A `Processor` MUST return failures as an `error` and MUST NOT format user-facing error text. Presentation belongs to the renderer, the only layer that knows how errors should look on its surface.
@@ -61,6 +63,16 @@ Buttons are modeled on Telegram's, using the framework's own types rather than l
 #### REQ: botkb-vocabulary
 
 A `Reply` MUST carry its buttons as a `botkb.Keyboard` from `bots-go-core`, not a locally-defined button type. Keyboards are built as rows of buttons (`[][]botkb.Button`), matching Telegram's `inline_keyboard` shape. `bots-go-core` is a zero-dependency module, so this costs nothing today and makes a future `botmsg.MessageFromBot` translation a field copy rather than a mapping layer.
+
+#### REQ: button-kinds
+
+A keyboard MAY mix three kinds of button, each a distinct `botkb` type, and pressing each does a different thing:
+
+- a **callback** button (`botkb.DataButton`) carries callback data and, when pressed, runs the processor's `PressButton` — which either re-renders the card in place (REQ: card-edit) or appends a reply;
+- a **send** button (`botkb.TextButton`) carries text and, when pressed, sends that text as if the user had typed it — a shortcut that produces an ordinary turn;
+- a **URL** button (`botkb.UrlButton`) carries a URL and, when pressed, opens it in the user's browser and produces no chat turn.
+
+The processor's job is to build keyboards of the right kinds; carrying out a press is the renderer's (chat-tui#req:button-kinds). Modelling all three on Telegram's own button types keeps a future server-side transport a field copy rather than a translation.
 
 #### REQ: callback-data-url
 
@@ -141,25 +153,37 @@ A type resolving to zero or several spaces is answered, never guessed: picking o
 
 Text not beginning with `/` MUST return a reply stating that free-text chat is not yet available and naming the working commands. It MUST NOT be routed to `convoruntime`. That runtime is wired only to the sandbox (mock LLM, fake space and user), so routing real-data chat into it would mix sandbox-only action execution with real space listings in one transcript.
 
+#### REQ: card-edit
+
+A `Reply` with its `Edit` flag set, returned from a press, replaces the message the pressed button belonged to instead of appending a new one. This is the primitive behind a card: pressing a button re-renders the same message with new text and new buttons, so a space's detail and its contacts occupy one message the user navigates rather than a growing stack of them. A renderer carries this out (chat-tui#req:card-edit-in-place); the processor's part is to set `Edit` on the replies that are card re-renders.
+
 #### REQ: active-space-selection
 
-Pressing a button whose callback data path is `space` MUST set the session's active space to the `id` argument, and MUST return at least one `Reply` naming the newly active space. The active space is session state that later space-scoped commands read. Returning no reply is not permitted: a renderer would have nothing to show, leaving the user unable to tell whether the press registered.
+Pressing a `space` button MUST set the session's active space to the `id` argument and MUST return the **space card** as an `Edit` reply — the pressed message re-rendered to show that space and the actions on it. Returning no reply is not permitted: a renderer would have nothing to show. The active space is session state that later space-scoped commands read.
 
-A press MUST resolve against the spaces the processor most recently listed — the set the pressed button was drawn from — and MUST NOT fetch afresh. A button can only be pressed if `/spaces` drew it, and it was drawn from a listing the processor already held; re-fetching to confirm and to name the space repeats work just done and makes selection wait on the network, when a user expects it to be immediate. The confirmation names the space from that same listing, so it echoes the label the button carried.
+The space card MUST offer, as buttons: **Contacts** — a callback that re-renders the card as the contacts card (REQ: contacts-card); **← Spaces** — a callback (`spaces`) that re-renders the card back to the spaces list; and a **URL** button that opens the space in the Sneat web app. Contacts and ← Spaces are how the card navigates without leaving the one message.
 
-When the `id` names no space in that listing — a callback for a button this session never drew — the processor MUST NOT change the active space and MUST return an error. This is distinct from REQ: unrecognized-callback-data, whose triggers are structural: such data parses cleanly, names a known path, and carries its `id`. It fails only against the listing.
+A press MUST resolve against the spaces the processor most recently listed — the set the pressed button was drawn from — and MUST NOT fetch afresh. A button can only be pressed if the list drew it, and it was drawn from a listing the processor already held; re-fetching to name the space repeats work just done and makes selection wait on the network, when a user expects it immediate.
+
+When the `id` names no space in that listing — a callback for a button this session never drew — the processor MUST NOT change the active space and MUST return an error. This is distinct from REQ: unrecognized-callback-data, whose triggers are structural.
+
+#### REQ: contacts-card
+
+Pressing a space card's **Contacts** button MUST return the **contacts card** as an `Edit` reply: the same message re-rendered to list that space's contacts by name, with a single **← Back** callback button that re-renders the card back to the space card. This is the second level of the same one-message navigation; leaving it is a press, not a scroll.
+
+Pressing a space card's **← Spaces** button MUST return the spaces list as an `Edit` reply — the same content `/spaces` produces, but re-rendering the current card rather than appending, so the user is back where they started in the one message they have been navigating.
 
 ## Acceptance Criteria
 
 ### AC: processing-is-swappable
 
-**Requirements:** chat-messenger#req:processor-seam, chat-messenger#req:errors-are-returned-not-formatted, chat-messenger#req:botkb-vocabulary, chat-messenger#req:callback-data-url
+**Requirements:** chat-messenger#req:processor-seam, chat-messenger#req:errors-are-returned-not-formatted, chat-messenger#req:botkb-vocabulary, chat-messenger#req:button-kinds, chat-messenger#req:callback-data-url, chat-messenger#req:card-edit
 
 A renderer is decoupled from where messages are processed. Replacing the in-process implementation with a server-backed one requires no renderer change, because both speak the same framework-compatible vocabulary for buttons and callback data, and both hand failures back rather than rendering them. This is the property that makes the deferred messenger adapter additive rather than a rewrite.
 
 ### AC: conversation-input-is-handled-honestly
 
-**Requirements:** chat-messenger#req:slash-command-routing, chat-messenger#req:spaces-command, chat-messenger#req:command-registry, chat-messenger#req:space-command, chat-messenger#req:whoami-command, chat-messenger#req:version-command, chat-messenger#req:contacts-command, chat-messenger#req:help-command, chat-messenger#req:active-space-selection, chat-messenger#req:free-text-deferred, chat-messenger#req:unrecognized-callback-data
+**Requirements:** chat-messenger#req:slash-command-routing, chat-messenger#req:spaces-command, chat-messenger#req:command-registry, chat-messenger#req:space-command, chat-messenger#req:whoami-command, chat-messenger#req:version-command, chat-messenger#req:contacts-command, chat-messenger#req:help-command, chat-messenger#req:active-space-selection, chat-messenger#req:contacts-card, chat-messenger#req:free-text-deferred, chat-messenger#req:unrecognized-callback-data
 
 Every input a user can produce — typed or pressed — receives an honest answer. Supported commands act on the signed-in user's actual spaces, contacts, and identity rather than sandbox fixtures; present results as pressable inline buttons in a stable order where buttons apply; and carry selections into session state. A command that acts on a space resolves which one from its argument or the active space, and answers plainly when the argument names no space or an ambiguous one. Unsupported input — an unknown command, an unhandleable press, or free text whose capability does not exist yet — is answered and never reaches the sandbox-only conversational runtime. A user is never shown a reply that appears to act on real data while actually acting on fixtures, and never left unsure whether their input registered.
 

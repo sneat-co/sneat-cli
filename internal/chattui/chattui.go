@@ -14,6 +14,8 @@ package chattui
 
 import (
 	"context"
+	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -69,6 +71,20 @@ type Model struct {
 	// indicator renders (REQ: pending-is-visible).
 	pending bool
 
+	// deferred holds the scrollback a callback press would commit — the
+	// superseded card and the echo of the pressed label — held until the press's
+	// reply returns. Only then is it known whether that reply edits the card in
+	// place (commit nothing, discard these) or supersedes it (commit these, then
+	// render the reply), so the commit cannot be done eagerly the way a submit's
+	// is (REQ: scrollback-commit, REQ: card-edit-in-place). Nil unless a callback
+	// press is in flight.
+	deferred []string
+
+	// browser opens a URL in the user's browser, for a URL button
+	// (REQ: button-kinds). It is injected rather than called directly so a test
+	// drives a URL press without launching one; New wires the platform opener.
+	browser func(url string) error
+
 	// spin animates the typing indicator. It is ticked only while pending, so an
 	// idle session schedules no work.
 	spin spinner.Model
@@ -94,12 +110,34 @@ func New(proc chat.Processor) Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = pendingStyle
 	return Model{
-		proc:  proc,
-		input: in,
-		spin:  sp,
-		width: defaultWidth,
-		focus: focusInput,
+		proc:    proc,
+		input:   in,
+		spin:    sp,
+		width:   defaultWidth,
+		focus:   focusInput,
+		browser: openInBrowser,
 	}
+}
+
+// openInBrowser opens url in the user's default browser, using the platform's
+// own launcher. It is the default wired into New; a test injects its own opener
+// instead, so pressing a URL button never launches a real browser
+// (REQ: button-kinds).
+//
+// The launcher is started, not waited on: it hands the URL to the browser and
+// returns, rather than blocking until the browser exits.
+func openInBrowser(url string) error {
+	var name string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		name, args = "open", []string{url}
+	case "windows":
+		name, args = "rundll32", []string{"url.dll,FileProtocolHandler", url}
+	default:
+		name, args = "xdg-open", []string{url}
+	}
+	return exec.Command(name, args...).Start()
 }
 
 // inputWidth converts a terminal width into the width the text input renders
@@ -162,6 +200,22 @@ func pressButton(p chat.Processor, data string) tea.Cmd {
 			return errMsg{err}
 		}
 		return repliesMsg{replies}
+	}
+}
+
+// openBrowser opens url through open, from a command, so a launcher that blocks
+// does not block the live region (REQ: button-kinds).
+//
+// A URL button makes no chat turn: on success the command produces no message at
+// all, so nothing commits and the card stays live. A launcher that fails becomes
+// a bot message in the transcript rather than taking the session down, exactly as
+// a Processor failure does (REQ: errors-render-in-transcript).
+func openBrowser(open func(string) error, url string) tea.Cmd {
+	return func() tea.Msg {
+		if err := open(url); err != nil {
+			return errMsg{err}
+		}
+		return nil
 	}
 }
 
@@ -404,51 +458,72 @@ func (m Model) handleButtonKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// pressFocusedButton makes the turn the focused button stands for.
+// pressFocusedButton makes the turn the focused button stands for, dispatched by
+// the button's kind (REQ: button-kinds).
 //
-// A press is user input exactly as a submitted line is, so it commits the same
-// way submitText does and in the same order: the live reply first, then an echo
-// of what the user did, and only then does the turn go to the Processor
-// (REQ: scrollback-commit). The reply it commits is the very one carrying the
-// button being pressed, which is what makes a press always end the previous
-// reply's focusability — no live reply is ever stranded, because the only way to
-// press a button is from the block that commits with it.
+// The three kinds part ways in what a press means and so in how it commits:
 //
-// The echo names the button's label rather than its callback data: the label is
-// what the user saw and chose, and `space?id=family1` is an implementation detail
-// of the seam it travels over.
+//   - A callback button (botkb.DataButton) runs PressButton. Its reply may edit
+//     the card in place or supersede it, and which is only known once the reply
+//     returns, so the commit is deferred rather than done eagerly: the superseded
+//     card and the echo are held in m.deferred until receive decides
+//     (REQ: scrollback-commit, REQ: card-edit-in-place).
 //
-// Both commits are joined into a single Println, and the press is sequenced after
-// it rather than batched alongside — see submitText for why the difference
-// matters.
+//   - A send button (botkb.TextButton) puts its own text into the conversation
+//     through SendText, exactly as if the user had typed and submitted it. It
+//     always appends, so it commits eagerly, the way submit does.
+//
+//   - A URL button (botkb.UrlButton) opens its URL in the browser and makes no
+//     chat turn at all: nothing commits, nothing echoes, and the card stays live
+//     so the user can press on.
+//
+// The echo, for the two kinds that make one, names the button's label rather than
+// its callback data: the label is what the user saw and chose, and
+// `space?id=family1` is an implementation detail of the seam it travels over.
 func (m Model) pressFocusedButton() (Model, tea.Cmd) {
 	btn, ok := m.focusedButton()
 	if !ok {
 		return m, nil
 	}
+	switch btn.ButtonType() {
+	case botkb.ButtonTypeText:
+		// A send button is a submit whose text is the button's own: same commit,
+		// same order, same path to the Processor.
+		return m.submit(btn.GetText())
+	case botkb.ButtonTypeURL:
+		// Opening a browser is a side effect on the world, not a chat turn: no
+		// commit, no echo, no pending lock, and the card stays live. A URL that
+		// will not open surfaces in the transcript rather than crashing the
+		// session (REQ: button-kinds).
+		if url, ok := buttonURL(btn); ok {
+			return m, openBrowser(m.browser, url)
+		}
+		return m, nil
+	}
 	data, ok := buttonData(btn)
 	if !ok {
-		// A button carrying no callback data names no turn: chat.Processor
-		// identifies a press by its data and there is none
-		// (chat-messenger#req:processor-seam). Nothing is committed, because
-		// nothing happened: no turn means the reply is not superseded, and its
-		// buttons are still the user's to press. It must not go pending either —
-		// nothing would answer, and the lock would never lift.
+		// A callback button with no data names no turn: chat.Processor identifies a
+		// press by its data and there is none (chat-messenger#req:processor-seam).
+		// Nothing is committed, because nothing happened — the reply is not
+		// superseded and its buttons are still the user's to press — and it must
+		// not go pending, or the lock would never lift.
 		return m, nil
 	}
 
-	var blocks []string
-	if live := m.commitLive(); live != "" {
-		blocks = append(blocks, live)
+	// A callback press defers its commit. The superseded card and the echo are
+	// rendered now, while the card is still live, but held in m.deferred rather
+	// than printed: receive commits them only if the reply supersedes the card,
+	// and discards them if it edits the card in place. The card stays live
+	// meanwhile, so a slow reply leaves the pressed card on screen rather than a
+	// blank region.
+	m.deferred = nil
+	if m.live != nil {
+		m.deferred = append(m.deferred, renderCommittedReply(*m.live))
 	}
-	blocks = append(blocks, renderUserEcho(btn.GetText()))
+	m.deferred = append(m.deferred, renderUserEcho(btn.GetText()))
 
 	m.pending = true
-	// The spinner starts inside the sequence, after the commit — not batched
-	// around it. Batching would let the tick race the commit, and the commit
-	// being ordered first is the whole point of the sequence
-	// (REQ: scrollback-commit).
-	return m, tea.Sequence(commit(blocks), tea.Batch(m.spin.Tick, pressButton(m.proc, data)))
+	return m, tea.Batch(m.spin.Tick, pressButton(m.proc, data))
 }
 
 // focusInputLine puts focus back on the input, leaving no cursor behind in the
@@ -532,6 +607,24 @@ func buttonData(b botkb.Button) (string, bool) {
 	return "", false
 }
 
+// buttonURL returns b's URL, and whether it carries one.
+//
+// Like buttonData, it reads a concrete botkb type off the Button interface — the
+// URL button in both its value and pointer forms, since either can be stored in
+// the interface. Any other kind of button opens no browser.
+func buttonURL(b botkb.Button) (string, bool) {
+	switch b := b.(type) {
+	case *botkb.UrlButton:
+		if b == nil {
+			return "", false
+		}
+		return b.URL, true
+	case botkb.UrlButton:
+		return b.URL, true
+	}
+	return "", false
+}
+
 // clampCol keeps the button cursor inside a row of width buttons.
 //
 // Rows need not be the same width, so moving between them can leave the column
@@ -565,7 +658,19 @@ func (m Model) submitText() (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.input.SetValue("")
+	return m.submit(text)
+}
 
+// submit commits the live reply and an echo of text, then sends text to the
+// Processor — the eager-commit path a typed line and a send button share.
+//
+// SendText always appends a reply, so the commit is done eagerly and ordered
+// ahead of the send: both commits are joined into a single Println so nothing can
+// interleave them, and the send is sequenced after that Println rather than
+// batched alongside it — tea.Batch runs its commands concurrently, which would
+// let a fast Processor land its answer in scrollback ahead of the line that
+// prompted it (REQ: scrollback-commit).
+func (m Model) submit(text string) (Model, tea.Cmd) {
 	var blocks []string
 	if live := m.commitLive(); live != "" {
 		blocks = append(blocks, live)
@@ -586,19 +691,45 @@ func (m Model) submitText() (Model, tea.Cmd) {
 // commits with the reply that carries it, inert.
 func (m Model) receive(replies []chat.Reply) (Model, tea.Cmd) {
 	m.pending = false
+
+	// A card edit: a single reply with its Edit flag set replaces the live card in
+	// place — no commit, no echo — and focus stays on the new card's first button,
+	// so the user chains presses through a menu without returning to the input
+	// between each (REQ: card-edit-in-place). Whatever the press deferred is
+	// discarded: the card was not superseded, it was rewritten, and its earlier
+	// form belongs nowhere in the transcript.
+	if len(replies) == 1 && replies[0].Edit {
+		card := replies[0]
+		m.live = &card
+		m.deferred = nil
+		m.focus = focusButtons
+		m.row, m.col = 0, 0
+		return m, nil
+	}
+
+	// Any other outcome supersedes the card. Whatever a press deferred — the
+	// superseded card and the echo of the pressed label — commits now, ahead of
+	// the replies (a submit deferred nothing: it committed its echo eagerly). The
+	// old card's live slot is then dropped; it is already in the deferred block.
+	deferred := m.deferred
+	m.deferred = nil
+	m.live = nil
+	m.focusInputLine()
+
 	if n := len(replies); n > 0 && len(buttonRows(replies[n-1])) > 0 {
 		last := replies[n-1]
 		m.live = &last
 		m.row, m.col = 0, 0
 		replies = replies[:n-1]
 		// Focus stays on the input: entering the button block is `up`
-		// (REQ: focus-and-keys), not something a reply does to the user.
+		// (REQ: focus-and-keys), not something a reply does to the user. A card
+		// edit is the one exception, handled above.
 	}
 	blocks := make([]string, 0, len(replies))
 	for _, r := range replies {
 		blocks = append(blocks, renderCommittedReply(r))
 	}
-	return m, commit(blocks)
+	return m, commitGroups(deferred, blocks)
 }
 
 // fail renders a Processor failure as a bot message in the transcript and leaves
@@ -617,7 +748,16 @@ func (m Model) receive(replies []chat.Reply) (Model, tea.Cmd) {
 // do — a failure is an answer — and the input goes on taking messages.
 func (m Model) fail(err error) (Model, tea.Cmd) {
 	m.pending = false
-	return m, commit([]string{renderError(err)})
+	// A callback press deferred its commit until its reply returned; the reply is
+	// this failure, which supersedes the card just as a real reply would. So the
+	// deferred card and echo commit first, ahead of the error, and the card's live
+	// slot is dropped. A submit deferred nothing — it committed eagerly — so this
+	// is just the error for it.
+	deferred := m.deferred
+	m.deferred = nil
+	m.live = nil
+	m.focusInputLine()
+	return m, commitGroups(deferred, []string{renderError(err)})
 }
 
 // commitLive renders the live reply for scrollback and clears it, returning the
@@ -653,6 +793,32 @@ func commit(blocks []string) tea.Cmd {
 		return nil
 	}
 	return tea.Println(strings.Join(blocks, "\n"))
+}
+
+// commitGroups commits each group of blocks as its own scrollback entry, in
+// order, skipping empty groups.
+//
+// A press defers two things that are separate turns in the transcript — the
+// superseded card with its echo, and the reply the press prompted — so they must
+// commit as separate Printlns rather than one joined block, or the reply would
+// read as part of the message it answered (REQ: scrollback-commit). The groups
+// are sequenced, not batched, so their order is the string's rather than the
+// event loop's; a single non-empty group needs no sequence at all.
+func commitGroups(groups ...[]string) tea.Cmd {
+	cmds := make([]tea.Cmd, 0, len(groups))
+	for _, g := range groups {
+		if c := commit(g); c != nil {
+			cmds = append(cmds, c)
+		}
+	}
+	switch len(cmds) {
+	case 0:
+		return nil
+	case 1:
+		return cmds[0]
+	default:
+		return tea.Sequence(cmds...)
+	}
 }
 
 // View renders the live region — the only part of the chat that is repainted.
@@ -771,15 +937,37 @@ func renderReply(r chat.Reply, unfocused lipgloss.Style, focusRow, focusCol int)
 	for i, row := range buttonRows(r) {
 		cells := make([]string, 0, len(row))
 		for j, btn := range row {
+			label := btn.GetText() + buttonKindMark(btn)
 			if i == focusRow && j == focusCol {
-				cells = append(cells, focusedButtonStyle.Render(focusedMarkLeft+btn.GetText()+focusedMarkRight))
+				cells = append(cells, focusedButtonStyle.Render(focusedMarkLeft+label+focusedMarkRight))
 				continue
 			}
-			cells = append(cells, unfocused.Render("[ "+btn.GetText()+" ]"))
+			cells = append(cells, unfocused.Render("[ "+label+" ]"))
 		}
 		buttons = append(buttons, strings.Join(cells, " "))
 	}
 	return frameReply(strings.Split(r.Text, "\n"), buttons)
+}
+
+// buttonKindMark is the glyph that tells a button's kind apart in its label
+// (REQ: button-kinds). A callback acts inside the card and carries none; a send
+// button » puts its own text into the conversation; a URL button ↗ leaves for the
+// browser. The mark rides in the label rather than in colour alone, for the
+// reason the focused button's does: a monochrome terminal and a copied transcript
+// keep the glyph but lose the colour, and the kind must survive both.
+//
+// It reads the kind off the botkb.Button interface's own ButtonType rather than
+// type-asserting, so a button kind added to the vocabulary is a case here, not a
+// silent fall-through to "callback".
+func buttonKindMark(b botkb.Button) string {
+	switch b.ButtonType() {
+	case botkb.ButtonTypeText:
+		return " »"
+	case botkb.ButtonTypeURL:
+		return " ↗"
+	default:
+		return ""
+	}
 }
 
 // frameReply draws a bot message: its text, then — when it has buttons — a rule
