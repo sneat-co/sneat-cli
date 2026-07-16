@@ -687,7 +687,7 @@ func renderReply(r chat.Reply, unfocused lipgloss.Style, focusRow, focusCol int)
 		}
 		lines = append(lines, strings.Join(cells, " "))
 	}
-	return strings.Join(lines, "\n")
+	return replyStyle.Render(strings.Join(lines, "\n"))
 }
 
 // renderError renders a Processor failure as the bot message it becomes in the
@@ -727,10 +727,27 @@ func renderUserEcho(s string) string {
 // package's unexported vars, and the two packages stay independent.
 
 var (
-	userStyle          = lipgloss.NewStyle().Faint(true)
-	buttonStyle        = lipgloss.NewStyle()
+	userStyle = lipgloss.NewStyle().Faint(true)
+
+	// replyStyle frames a bot message so the transcript reads as a conversation
+	// rather than a wall of lines. The border is dimmed: it groups the message
+	// with its buttons without competing with them for attention.
+	//
+	// Its characters are runes, not ANSI, so they survive a non-terminal writer
+	// and appear in View() — which is why the tests that read committed blocks
+	// look for their content rather than matching a whole frame.
+	replyStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("240")).
+			Padding(0, 1)
+
+	// A button carries its state twice over: in glyphs, which any terminal
+	// shows and a test can read, and in colour, which only a terminal shows.
+	// The glyphs are the carrier of record (see focusedMarkLeft); these styles
+	// are the part that makes it look like a button.
+	buttonStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	inertButtonStyle   = lipgloss.NewStyle().Faint(true)
-	focusedButtonStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	focusedButtonStyle = lipgloss.NewStyle().Bold(true).Reverse(true)
 	footerStyle        = lipgloss.NewStyle().Faint(true).Padding(0, 1)
 	pendingStyle       = lipgloss.NewStyle().Faint(true)
 	errStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
