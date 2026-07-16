@@ -10,6 +10,7 @@ import (
 	"github.com/bots-go-framework/bots-go-core/botkb"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/sneat-co/sneat-cli/internal/chat"
 )
 
@@ -932,6 +933,38 @@ func TestPendingIsVisible(t *testing.T) {
 		t.Errorf("the typing indicator survived the turn failing\n%s", got)
 	}
 	_, _ = cmd, frame
+}
+
+// TestTheRuleAppearsOnlyWithButtons pins the divider between a message and its
+// actions. The rule is where focus stops — everything below it is what `up`
+// reaches — so it belongs on a reply that has buttons and on no other: a reply
+// with no keyboard is one zone, and a rule across it would divide nothing.
+//
+// Asserted on the frame's own corner glyphs rather than on a bare "─", which
+// every horizontal edge of the box is made of and which would therefore match
+// whether the rule was drawn or not.
+func TestTheRuleAppearsOnlyWithButtons(t *testing.T) {
+	b := lipgloss.RoundedBorder()
+	ruleEdge := b.MiddleLeft // "├" — drawn only by the divider, never by the frame
+
+	withButtons := renderLiveReply(chat.Reply{Text: "Your spaces:", Keyboard: spacesKeyboard()}, false, noFocus, noFocus)
+	if !strings.Contains(withButtons, ruleEdge) {
+		t.Errorf("a reply with buttons draws no rule between its text and them\n%s", withButtons)
+	}
+
+	plain := renderLiveReply(chat.Reply{Text: "Free-text chat is not yet available."}, false, noFocus, noFocus)
+	if strings.Contains(plain, ruleEdge) {
+		t.Errorf("a reply with no keyboard drew a rule; there is nothing to divide\n%s", plain)
+	}
+
+	// The rule meets the frame. A rule rendered as content would float inside
+	// it — reading as another line of the message, which is the opposite of
+	// what it is for.
+	for _, line := range strings.Split(withButtons, "\n") {
+		if strings.Contains(line, ruleEdge) && !strings.HasSuffix(line, b.MiddleRight) {
+			t.Errorf("the rule does not meet the right edge of the frame: %q", line)
+		}
+	}
 }
 
 func TestFooterNamesTheKeysThatWorkRightNow(t *testing.T) {

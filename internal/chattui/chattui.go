@@ -14,6 +14,7 @@ package chattui
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/bots-go-framework/bots-go-core/botkb"
@@ -675,7 +676,7 @@ func renderCommittedReply(r chat.Reply) string {
 // not focused take the unfocused style; focusRow and focusCol name the focused
 // one, and noFocus for either means none is.
 func renderReply(r chat.Reply, unfocused lipgloss.Style, focusRow, focusCol int) string {
-	lines := []string{r.Text}
+	var buttons []string
 	for i, row := range buttonRows(r) {
 		cells := make([]string, 0, len(row))
 		for j, btn := range row {
@@ -685,9 +686,58 @@ func renderReply(r chat.Reply, unfocused lipgloss.Style, focusRow, focusCol int)
 			}
 			cells = append(cells, unfocused.Render("[ "+btn.GetText()+" ]"))
 		}
-		lines = append(lines, strings.Join(cells, " "))
+		buttons = append(buttons, strings.Join(cells, " "))
 	}
-	return replyStyle.Render(strings.Join(lines, "\n"))
+	return frameReply(strings.Split(r.Text, "\n"), buttons)
+}
+
+// frameReply draws a bot message: its text, then — when it has buttons — a rule
+// across the frame, then the buttons.
+//
+// The rule is where the message stops and the actions start, which is the same
+// line focus stops at: everything below it is what `up` reaches
+// (REQ: focus-and-keys). Without it the buttons read as more lines of text,
+// since that is exactly what they are.
+//
+// The box is built here rather than by a lipgloss border style because lipgloss
+// has no mid-border divider — a rule rendered as content would float inside the
+// frame instead of meeting it, which reads as another line of the message and
+// so says the opposite of what it is for.
+func frameReply(text, buttons []string) string {
+	b := lipgloss.RoundedBorder()
+
+	// Widths are measured with lipgloss.Width, not len: the button cells carry
+	// ANSI, which has no display width, and every line has to pad to the same
+	// column or the right edge frays.
+	inner := 0
+	for _, line := range slices.Concat(text, buttons) {
+		if w := lipgloss.Width(line); w > inner {
+			inner = w
+		}
+	}
+
+	side := func(s string) string { return borderStyle.Render(s) }
+	rule := borderStyle.Render(strings.Repeat(b.Top, inner+2))
+	row := func(line string) string {
+		return side(b.Left) + " " + line + strings.Repeat(" ", inner-lipgloss.Width(line)) + " " + side(b.Right)
+	}
+
+	out := make([]string, 0, len(text)+len(buttons)+3)
+	out = append(out, side(b.TopLeft)+rule+side(b.TopRight))
+	for _, line := range text {
+		out = append(out, row(line))
+	}
+	if len(buttons) > 0 {
+		// Only when there are buttons: a reply with no keyboard — /help, the
+		// free-text notice, an error — is one zone, and a rule across it would
+		// divide nothing.
+		out = append(out, side(b.MiddleLeft)+rule+side(b.MiddleRight))
+		for _, line := range buttons {
+			out = append(out, row(line))
+		}
+	}
+	out = append(out, side(b.BottomLeft)+rule+side(b.BottomRight))
+	return strings.Join(out, "\n")
 }
 
 // renderError renders a Processor failure as the bot message it becomes in the
@@ -736,10 +786,7 @@ var (
 	// Its characters are runes, not ANSI, so they survive a non-terminal writer
 	// and appear in View() — which is why the tests that read committed blocks
 	// look for their content rather than matching a whole frame.
-	replyStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("240")).
-			Padding(0, 1)
+	borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	// A button carries its state twice over: in glyphs, which any terminal
 	// shows and a test can read, and in colour, which only a terminal shows.
