@@ -9,19 +9,27 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.6
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/dal-go/dalgo v0.62.10
+	github.com/dal-go/dalgo v0.62.12
 	github.com/dal-go/dalgo2firestore v0.8.9
 	github.com/sneat-co/contactus/backend v0.1.5
 	github.com/sneat-co/ext-contactus/backend v0.1.2
 	github.com/sneat-co/sneat-bots v0.4.0
-	github.com/sneat-co/sneat-core-modules v0.45.3
-	github.com/sneat-co/sneat-go-core v0.58.6
+	github.com/sneat-co/sneat-core-modules v0.46.2
+	github.com/sneat-co/sneat-go-core v0.60.0
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/strongoapp v0.31.41
+	github.com/strongo/strongoapp v0.31.44
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.44.0
 	google.golang.org/api v0.287.1
 	gopkg.in/yaml.v3 v3.0.1
+)
+
+require (
+	github.com/gosimple/slug v1.15.0 // indirect
+	github.com/gosimple/unidecode v1.0.1 // indirect
+	github.com/sneat-co/sneat-translations v0.9.0 // indirect
+	github.com/strongo/delaying v0.2.2 // indirect
+	github.com/strongo/i18n v0.8.13 // indirect
 )
 
 require (
@@ -66,7 +74,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
-	github.com/sneat-co/assetus/backend v0.3.0 // indirect
+	github.com/sneat-co/assetus/backend v0.3.1 // indirect
 	github.com/sneat-co/calendarius/backend v0.3.2 // indirect
 	github.com/sneat-co/listus/backend v0.1.6 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
