@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7
 	github.com/charmbracelet/bubbletea v1.3.6
 	github.com/charmbracelet/huh v1.0.0
-	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/charmbracelet/lipgloss/v2 v2.0.5
 	github.com/dal-go/dalgo v0.62.12
 	github.com/dal-go/dalgo2firestore v0.8.9
 	github.com/sneat-co/contactus/backend v0.1.5
