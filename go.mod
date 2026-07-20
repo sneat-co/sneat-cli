@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	cloud.google.com/go/firestore v1.22.0
 	github.com/bots-go-framework/bots-go-core v0.2.4
-	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7
+	github.com/charmbracelet/bubbles/v2 v2.1.1
 	github.com/charmbracelet/bubbletea v1.3.6
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
