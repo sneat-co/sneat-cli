@@ -3,24 +3,24 @@ module github.com/sneat-co/sneat-cli
 go 1.26.1
 
 require (
-	cloud.google.com/go/firestore v1.22.0
-	github.com/bots-go-framework/bots-go-core v0.2.4
-	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7
-	github.com/charmbracelet/bubbletea v1.3.6
+	cloud.google.com/go/firestore v1.24.0
+	github.com/bots-go-framework/bots-go-core v0.2.5
+	github.com/charmbracelet/bubbles v0.21.1
+	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/dal-go/dalgo v0.62.12
-	github.com/dal-go/dalgo2firestore v0.8.9
+	github.com/dal-go/dalgo v0.63.2
+	github.com/dal-go/dalgo2firestore v0.9.6
 	github.com/sneat-co/contactus/backend v0.1.5
 	github.com/sneat-co/ext-contactus/backend v0.1.2
 	github.com/sneat-co/sneat-bots v0.4.0
 	github.com/sneat-co/sneat-core-modules v0.46.2
 	github.com/sneat-co/sneat-go-core v0.60.0
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/strongoapp v0.31.44
+	github.com/strongo/strongoapp v0.31.48
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/term v0.44.0
-	google.golang.org/api v0.287.1
+	golang.org/x/term v0.45.0
+	google.golang.org/api v0.290.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -52,7 +52,7 @@ require (
 	github.com/charmbracelet/x/exp/strings v0.0.0-20240722160745-212f7b056ed0 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/crediterra/money v0.3.1 // indirect
-	github.com/dal-go/dalgo2openvaultdb v0.2.0
+	github.com/dal-go/dalgo2openvaultdb v0.2.1
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
