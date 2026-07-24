@@ -11,11 +11,11 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dal-go/dalgo v0.62.12
 	github.com/dal-go/dalgo2firestore v0.8.9
-	github.com/sneat-co/contactus/backend v0.1.5
-	github.com/sneat-co/ext-contactus/backend v0.1.2
-	github.com/sneat-co/sneat-bots v0.4.0
-	github.com/sneat-co/sneat-core-modules v0.46.2
-	github.com/sneat-co/sneat-go-core v0.60.0
+	github.com/sneat-co/contactus/backend v0.1.9
+	github.com/sneat-co/ext-contactus/backend v0.1.7
+	github.com/sneat-co/sneat-bots v0.20.20
+	github.com/sneat-co/sneat-core-modules v0.53.7
+	github.com/sneat-co/sneat-go-core v0.60.5
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/strongoapp v0.31.44
 	golang.org/x/oauth2 v0.36.0
