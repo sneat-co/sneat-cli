@@ -1,20 +1,17 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/actions4assetus"
-	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/actions4calendarius"
-	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/actions4contactus"
-	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/actions4listus"
-	"github.com/sneat-co/sneat-bots/pkg/convo/convoactions/togdactions"
-	"github.com/sneat-co/sneat-bots/pkg/convo/convodev"
-	"github.com/sneat-co/sneat-bots/pkg/convo/convollm/llmmock"
-	"github.com/sneat-co/sneat-bots/pkg/convo/convomodel"
-	"github.com/sneat-co/sneat-bots/pkg/convo/convoruntime"
+	"github.com/sneat-co/sneat-bots/extensions/anybot/convo/convodev"
+	"github.com/sneat-co/sneat-bots/extensions/anybot/convo/convosetup"
+	togdactions "github.com/sneat-co/sneat-bots/extensions/togethered/convoactions"
+	"github.com/sneat-co/sneat-bots/platform/convo/convomodel"
+	"github.com/sneat-co/sneat-bots/platform/convo/convoruntime"
 	"github.com/sneat-co/sneat-go-core/coretypes"
 	"github.com/sneat-co/sneat-go-core/facade"
 	"github.com/spf13/cobra"
@@ -28,6 +25,8 @@ func Convo(_ Env) *cobra.Command {
 	}
 	cmd.AddCommand(
 		convoActionsCmd(),
+		convoCatalogsCmd(),
+		convoRouteCmd(),
 		convoSayCmd(),
 		convoReplayCmd(),
 	)
@@ -35,15 +34,24 @@ func Convo(_ Env) *cobra.Command {
 }
 
 // newConvoRuntime constructs the runtime used by all convo subcommands.
-// It includes all standard catalogs plus the togethered stub catalog.
+//
+// Composition comes from convosetup, the host's single registration point, so
+// the CLI shows exactly what a bot shows — including extensions added later.
+// The previous hand-rolled catalog list silently went stale: it predated both
+// Trackus and the registry, so `sneat convo actions` had been omitting a whole
+// extension.
+//
+// NewMockRuntime also seeds the deterministic interpreter with the rules each
+// extension declares. That is load-bearing now that catalogs own their own
+// grammar — a plain llmmock client understands nothing at all.
 func newConvoRuntime() (*convoruntime.Runtime, error) {
-	return convoruntime.New(llmmock.NewClient(),
-		actions4contactus.Catalog(),
-		actions4calendarius.Catalog(),
-		actions4listus.Catalog(),
-		actions4assetus.Catalog(),
-		togdStubCatalog(),
-	)
+	return convosetup.NewMockRuntime(convoServices(), togdStubCatalog())
+}
+
+// newConvoRegistry composes the same catalogs without an LLM, for the
+// introspection commands that only read what is registered.
+func newConvoRegistry() (*convoruntime.Registry, error) {
+	return convosetup.NewCatalogRegistry(convoServices(), togdStubCatalog())
 }
 
 // togdStubCatalog returns a convoruntime.Catalog for the togethered scope
@@ -62,23 +70,42 @@ func togdStubCatalog() convoruntime.Catalog {
 	for i, def := range togdactions.AllDefs {
 		actions[i] = convoruntime.BoundAction{Def: def, Execute: stub(def.ID)}
 	}
-	return convoruntime.Catalog{
+	catalog := convoruntime.Catalog{
 		ID:      "togethered",
 		Title:   "ToGethered (stub)",
 		Actions: actions,
 	}
+	// The deterministic interpreter no longer carries any extension's grammar —
+	// each catalog brings its own. Without attaching ToGethered's declared rules
+	// the stub would list its actions but understand nothing said to it.
+	return catalog.MustWithRules(togdactions.Rules, togdactions.RuleFuncs)
 }
 
 // setupSandbox wires the sandbox DB (in-memory by default, OpenVaultDB when
-// SNEAT_STORAGE=openvaultdb) with the given space and user.
-// The returned restore func must be deferred by the caller.
-func setupSandbox(spaceID coretypes.SpaceID, userID string) (func(), error) {
+// SNEAT_STORAGE=openvaultdb) with the given space and user, and returns a
+// context that resolves it.
+//
+// The sandbox now hands back a context rather than swapping a global and
+// returning a restore func, so the DB is passed explicitly to each call
+// instead of being ambient.
+func setupSandbox(spaceID coretypes.SpaceID, userID string) (context.Context, error) {
 	db, err := resolveSandboxDB()
 	if err != nil {
 		return nil, err
 	}
-	_, restore, err := convodev.SetupSandboxWithDB(db, spaceID, userID)
-	return restore, err
+	// Trackus records against a CONTACT, not a user, so its facade needs the
+	// contact-resolution seam bound or every measurement fails. The bots host
+	// binds the same Contactus-backed shape; without it "20 push-ups" would
+	// error out here with "trackus contact resolver is not configured".
+	configureConvoServices()
+	ctx, _, err := convodev.SetupSandboxWithDB(db, spaceID, userID)
+	if err != nil {
+		return nil, err
+	}
+	// Seed a couple of contacts so participant resolution has something to
+	// resolve. Created through the REAL Contactus service rather than written
+	// straight to storage, so the sandbox exercises the same path a bot does.
+	return ctx, seedSandboxContacts(ctx, userID, string(spaceID))
 }
 
 // convoActionsCmd returns the `sneat convo actions` subcommand.
@@ -109,7 +136,7 @@ func convoActionsCmd() *cobra.Command {
 				if d.Confirm {
 					confirm = "yes"
 				}
-				rows = append(rows, []string{d.ID, d.Summary, confirm, string(d.Extension)})
+				rows = append(rows, []string{d.ID, d.Summary, confirm, d.Extension})
 			}
 			return writeTable(cmd.OutOrStdout(), headers, rows)
 		},
@@ -153,11 +180,10 @@ func convoSayCmd() *cobra.Command {
 
 // runSaySession wires the sandbox, creates the runtime and processes messages.
 func runSaySession(cmd *cobra.Command, messages []string, scope []string, spaceID, userID string, autoYes, useJSON bool) error {
-	restore, err := setupSandbox(coretypes.SpaceID(spaceID), userID)
+	ctx, err := setupSandbox(coretypes.SpaceID(spaceID), userID)
 	if err != nil {
 		return fmt.Errorf("sandbox setup: %w", err)
 	}
-	defer restore()
 
 	rt, err := newConvoRuntime()
 	if err != nil {
@@ -174,7 +200,7 @@ func runSaySession(cmd *cobra.Command, messages []string, scope []string, spaceI
 
 	for _, msg := range messages {
 		req.Text = msg
-		resp, err := rt.HandleText(cmd.Context(), req)
+		resp, err := rt.HandleText(ctx, req)
 		if err != nil {
 			return fmt.Errorf("HandleText(%q): %w", msg, err)
 		}
@@ -183,7 +209,7 @@ func runSaySession(cmd *cobra.Command, messages []string, scope []string, spaceI
 		if resp.Pending != nil && autoYes {
 			req2 := req
 			req2.Text = "yes"
-			resolution, err := rt.ResolvePending(cmd.Context(), req2, *resp.Pending, true)
+			resolution, err := rt.ResolvePending(ctx, req2, *resp.Pending, true)
 			if err != nil {
 				return fmt.Errorf("ResolvePending: %w", err)
 			}
@@ -267,11 +293,10 @@ func runReplaySession(cmd *cobra.Command, scriptFile string, scope []string, spa
 		return fmt.Errorf("reading script file: %w", err)
 	}
 
-	restore, err := setupSandbox(coretypes.SpaceID(spaceID), userID)
+	ctx, err := setupSandbox(coretypes.SpaceID(spaceID), userID)
 	if err != nil {
 		return fmt.Errorf("sandbox setup: %w", err)
 	}
-	defer restore()
 
 	rt, err := newConvoRuntime()
 	if err != nil {
@@ -301,7 +326,7 @@ func runReplaySession(cmd *cobra.Command, scriptFile string, scope []string, spa
 			approved := normalized == "yes"
 			req2 := req
 			req2.Text = line
-			resolution, err := rt.ResolvePending(cmd.Context(), req2, *pending, approved)
+			resolution, err := rt.ResolvePending(ctx, req2, *pending, approved)
 			if err != nil {
 				return fmt.Errorf("ResolvePending(%q): %w", line, err)
 			}
@@ -314,7 +339,7 @@ func runReplaySession(cmd *cobra.Command, scriptFile string, scope []string, spa
 		}
 
 		req.Text = line
-		resp, err := rt.HandleText(cmd.Context(), req)
+		resp, err := rt.HandleText(ctx, req)
 		if err != nil {
 			return fmt.Errorf("HandleText(%q): %w", line, err)
 		}

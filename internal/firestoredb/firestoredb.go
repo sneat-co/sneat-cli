@@ -9,6 +9,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo2firestore"
+	"github.com/dal-go/record"
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
@@ -43,7 +44,7 @@ func (d *DB) Close() error { return d.client.Close() }
 // GetDoc reads the document at collection/id into data (a pointer to a struct
 // or a *map[string]any) using DALgo.
 func (d *DB) GetDoc(ctx context.Context, collection, id string, data any) error {
-	rec := dal.NewRecordWithData(dal.NewKeyWithID(collection, id), data)
+	rec := record.NewRecordWithData(record.NewKeyWithID(collection, id), data)
 	return d.dal.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 		return tx.Get(ctx, rec)
 	})
