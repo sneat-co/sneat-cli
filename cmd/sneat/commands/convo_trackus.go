@@ -5,17 +5,13 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/record"
 	"github.com/sneat-co/calendarius/backend/convoservice4calendarius"
 	"github.com/sneat-co/contactus/backend/botservice4contactus"
-	"github.com/sneat-co/contactus/backend/dal4contactus"
 	"github.com/sneat-co/ext-contactus/backend/contract4contactus"
+	"github.com/sneat-co/sneat-bots/extensions/anybot/convo/convobindings"
 	"github.com/sneat-co/sneat-bots/extensions/anybot/convo/convosetup"
 	"github.com/sneat-co/sneat-bots/extensions/contactus/convoactions"
-	"github.com/sneat-co/sneat-go-core/coretypes"
 	"github.com/sneat-co/sneat-go-core/facade"
-	"github.com/sneat-co/trackus/backend/facade4trackus"
 )
 
 // convoServices supplies the services the conversational catalogs call,
@@ -41,57 +37,19 @@ func convoServices() convosetup.Services {
 // configureConvoServices binds the ports that are package-level globals
 // upstream and so cannot be passed through convosetup.Services. Idempotent,
 // because every entry point binds defensively.
+//
+// Trackus records a measurement against a CONTACT, not a user, so its seam must
+// be bound or `sneat convo say "20 push-ups"` fails with "trackus contact
+// resolver is not configured". The binding itself lives in sneat-bots so the
+// CLI, the bots host and the tests all use one implementation.
 func configureConvoServices() {
 	convoServicesOnce.Do(func() {
 		actions4contactus.ConfigureService(botservice4contactus.New())
-		facade4trackus.ConfigureContactResolver(contactusTrackerResolver{})
+		convobindings.ConfigureContactResolver()
 	})
 }
 
 var convoServicesOnce sync.Once
-
-// contactusTrackerResolver binds Trackus's contact-resolution seam to the real
-// Contactus module, the same shape the bots host binds.
-//
-// Trackus records a measurement against a CONTACT, not a user, so facade4trackus
-// fails with "trackus contact resolver is not configured" until this is bound —
-// which would make `sneat convo say "20 push-ups"` error out rather than record
-// anything. The sandbox seeds the member contact briefs this reads, so a seeded
-// space resolves correctly.
-type contactusTrackerResolver struct{}
-
-func (contactusTrackerResolver) ContactIDByUser(ctx context.Context, tx dal.ReadTransaction, spaceID coretypes.SpaceID, userID string) (string, error) {
-	entry := dal4contactus.NewContactusSpaceEntry(spaceID)
-	if err := tx.Get(ctx, entry.Record); err != nil && !record.IsNotFound(err) {
-		return "", fmt.Errorf("get contactus space: %w", err)
-	}
-	contactID, _ := entry.Data.GetContactBriefByUserID(userID)
-	return contactID, nil
-}
-
-func (contactusTrackerResolver) HasContact(ctx context.Context, tx dal.ReadTransaction, spaceID coretypes.SpaceID, contactID string) (bool, error) {
-	entry := dal4contactus.NewContactusSpaceEntry(spaceID)
-	if err := tx.Get(ctx, entry.Record); err != nil && !record.IsNotFound(err) {
-		return false, fmt.Errorf("get contactus space: %w", err)
-	}
-	_, ok := entry.Data.Contacts[contactID]
-	return ok, nil
-}
-
-func (contactusTrackerResolver) ContactBriefs(ctx context.Context, db dal.ReadSession, spaceID coretypes.SpaceID) (map[string]facade4trackus.ContactBrief, error) {
-	entry := dal4contactus.NewContactusSpaceEntry(spaceID)
-	if err := db.Get(ctx, entry.Record); err != nil {
-		return nil, fmt.Errorf("get contactus space: %w", err)
-	}
-	briefs := make(map[string]facade4trackus.ContactBrief, len(entry.Data.Contacts))
-	for contactID, brief := range entry.Data.Contacts {
-		if brief == nil {
-			continue
-		}
-		briefs[contactID] = facade4trackus.ContactBrief{UserID: brief.UserID, Title: brief.Title}
-	}
-	return briefs, nil
-}
 
 // seedSandboxContacts creates the demo contacts the dev scenarios reference
 // ("meet Sarah tomorrow at 3pm"). Without them participant resolution correctly

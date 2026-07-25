@@ -14,8 +14,8 @@ require (
 	github.com/dal-go/record v0.1.0
 	github.com/sneat-co/contactus/backend v0.1.9
 	github.com/sneat-co/ext-contactus/backend v0.1.7
-	github.com/sneat-co/sneat-bots v0.21.3
-	github.com/sneat-co/sneat-core-modules v0.53.6
+	github.com/sneat-co/sneat-bots v0.22.2
+	github.com/sneat-co/sneat-core-modules v0.56.0
 	github.com/sneat-co/sneat-go-core v0.60.4
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/strongoapp v0.31.48
@@ -32,7 +32,7 @@ require (
 	github.com/buger/jsonparser v1.2.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
-	github.com/sneat-co/commitius/backend v0.2.3 // indirect
+	github.com/sneat-co/commitius/backend v0.3.0 // indirect
 	github.com/sneat-co/ext-calendarius/backend v0.0.3 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/strongo/delaying v0.2.3 // indirect
