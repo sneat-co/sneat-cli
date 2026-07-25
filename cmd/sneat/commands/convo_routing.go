@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/sneat-co/sneat-bots/platform/convo/convoruntime"
@@ -65,29 +66,39 @@ func convoRouteCmd() *cobra.Command {
 			}
 			text := args[0]
 			normalized := convospec.NormalizeText(text)
-			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "message   : %q\n", text)
-			fmt.Fprintf(out, "normalized: %q\n\n", normalized)
+			out := &errWriter{w: cmd.OutOrStdout()}
+			out.printf("message   : %q\n", text)
+			out.printf("normalized: %q\n\n", normalized)
 
+			inScope := registry.Catalogs(scope)
 			var matched []string
-			for _, c := range registry.Catalogs(scope) {
+			for _, c := range inScope {
 				if c.MatchesTriggers(normalized) {
 					matched = append(matched, c.ID)
 				}
 			}
 
+			// With fewer than two catalogs in scope the runtime skips the prefilter
+			// altogether — there is nothing to narrow to — so reporting a trigger
+			// match as "narrowing" would describe a step that never runs.
+			if len(inScope) < 2 {
+				out.printf("Only %d catalog in scope, so the prefilter is skipped:\n", len(inScope))
+				out.println("every action in scope is offered and the model decides.")
+				return out.err
+			}
+
 			switch len(matched) {
 			case 0:
-				fmt.Fprintln(out, "No declared trigger matched, so the prefilter FAILS OPEN:")
-				fmt.Fprintln(out, "every action in scope is offered and the model decides.")
+				out.println("No declared trigger matched, so the prefilter FAILS OPEN:")
+				out.println("every action in scope is offered and the model decides.")
 			case 1:
-				fmt.Fprintf(out, "Exactly one catalog claims this, so the prefilter narrows to it:\n  %s\n", matched[0])
+				out.printf("Exactly one catalog claims this, so the prefilter narrows to it:\n  %s\n", matched[0])
 			default:
-				fmt.Fprintf(out, "%d catalogs claim this (%s), so the prefilter FAILS OPEN:\n",
+				out.printf("%d catalogs claim this (%s), so the prefilter FAILS OPEN:\n",
 					len(matched), strings.Join(matched, ", "))
-				fmt.Fprintln(out, "every action in scope is offered rather than one winning by ordering.")
+				out.println("every action in scope is offered rather than one winning by ordering.")
 			}
-			return nil
+			return out.err
 		},
 	}
 	cmd.Flags().StringSliceVar(&scope, "scope", nil, "comma-separated catalog IDs (default: all)")
@@ -98,18 +109,41 @@ func convoRouteCmd() *cobra.Command {
 // an error — the prefilter fails open on both — but each permanently costs the
 // narrowing for the words involved, which is worth seeing.
 func reportTriggerHealth(cmd *cobra.Command, registry *convoruntime.Registry, scope []string) error {
-	out := cmd.OutOrStdout()
+	out := &errWriter{w: cmd.OutOrStdout()}
 	if conflicts := registry.TriggerConflicts(scope); len(conflicts) > 0 {
-		fmt.Fprintf(out, "\n%d trigger conflict(s) — these words can never narrow:\n", len(conflicts))
+		out.printf("\n%d trigger conflict(s) — these words can never narrow:\n", len(conflicts))
 		for _, c := range conflicts {
-			fmt.Fprintf(out, "  %s\n", c)
+			out.printf("  %s\n", c)
 		}
 	}
 	if shadowed := registry.ShadowedTriggers(scope); len(shadowed) > 0 {
-		fmt.Fprintf(out, "\n%d shadowed trigger(s) — a shorter trigger elsewhere matches everything these do:\n", len(shadowed))
+		out.printf("\n%d shadowed trigger(s) — a shorter trigger elsewhere matches everything these do:\n", len(shadowed))
 		for _, c := range shadowed {
-			fmt.Fprintf(out, "  %s\n", c)
+			out.printf("  %s\n", c)
 		}
 	}
-	return nil
+	return out.err
+}
+
+// errWriter latches the first write error so a run of writes reads as prose
+// instead of a chain of if-err-return. A CLI still must not ignore them: stdout
+// can be a closed pipe (`sneat convo catalogs | head`), and silently continuing
+// would report success while producing nothing.
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) printf(format string, args ...any) {
+	if e.err != nil {
+		return
+	}
+	_, e.err = fmt.Fprintf(e.w, format, args...)
+}
+
+func (e *errWriter) println(args ...any) {
+	if e.err != nil {
+		return
+	}
+	_, e.err = fmt.Fprintln(e.w, args...)
 }
