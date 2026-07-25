@@ -14,7 +14,7 @@ require (
 	github.com/dal-go/record v0.1.0
 	github.com/sneat-co/contactus/backend v0.1.9
 	github.com/sneat-co/ext-contactus/backend v0.1.7
-	github.com/sneat-co/sneat-bots v0.22.2
+	github.com/sneat-co/sneat-bots v0.22.5
 	github.com/sneat-co/sneat-core-modules v0.56.0
 	github.com/sneat-co/sneat-go-core v0.60.4
 	github.com/spf13/cobra v1.10.2
@@ -93,7 +93,7 @@ require (
 	github.com/sneat-co/ext-trackus/backend v0.0.1 // indirect
 	github.com/sneat-co/listus/backend v0.1.13 // indirect
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
-	github.com/sneat-co/trackus/backend v0.1.5
+	github.com/sneat-co/trackus/backend v0.1.5 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/strongo/analytics v0.2.5 // indirect
 	github.com/strongo/decimal v0.1.2 // indirect

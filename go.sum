@@ -203,8 +203,8 @@ github.com/sneat-co/ext-trackus/backend v0.0.1 h1:/EOk3l/GHW7uJgYR52t7YdTfX/K50a
 github.com/sneat-co/ext-trackus/backend v0.0.1/go.mod h1:vguJZ7M53CJuOpv+ITAFKavw3YwwudWC4AeHyjDXp0E=
 github.com/sneat-co/listus/backend v0.1.13 h1:zyNOpoTIWXOtFxlOzSaTmh5JLgJf1Zqvy5ROwSCCcRY=
 github.com/sneat-co/listus/backend v0.1.13/go.mod h1:K/B+TFVACQaAi+dPHiZ1ZeYcqUQHIhVKohasZbhwEgE=
-github.com/sneat-co/sneat-bots v0.22.2 h1:yZ088UrcBGDLZK+FElnf+RmmKYS8ZrhK4nUp+Q2ssF8=
-github.com/sneat-co/sneat-bots v0.22.2/go.mod h1:nZxVgwP9UngQHPR2l0Fs6ux0Q8hS7oiNphyAhsEwWZ8=
+github.com/sneat-co/sneat-bots v0.22.5 h1:akeaPuYSttZTuRrvusDKeZXzXzKUVmMg493cJBM9dyk=
+github.com/sneat-co/sneat-bots v0.22.5/go.mod h1:iI60sJR3HOW6Twzfggsx3R1rjTfLbl02TZWJhKRc+MQ=
 github.com/sneat-co/sneat-core-modules v0.56.0 h1:I6qu3gQd76NE3ngqs3JR11miLwwOvdIN/OKaLRm2YPU=
 github.com/sneat-co/sneat-core-modules v0.56.0/go.mod h1:EW27owWQtO6E3hBm/dX1jQ1YHFcDEgoHMsNL37AL/9Q=
 github.com/sneat-co/sneat-go-core v0.60.4 h1:td5D1oFefxVbA5UVU68+fEQSBZ3C39jieecxAdObmH8=
