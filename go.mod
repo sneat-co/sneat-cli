@@ -7,7 +7,7 @@ require (
 	github.com/bots-go-framework/bots-go-core v0.2.5
 	github.com/charmbracelet/bubbles v0.21.1
 	github.com/charmbracelet/bubbletea v1.3.10
-	github.com/charmbracelet/huh v1.0.0
+	github.com/charmbracelet/huh/v2 v2.0.3
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dal-go/dalgo v0.63.2
 	github.com/dal-go/dalgo2firestore v0.9.7
