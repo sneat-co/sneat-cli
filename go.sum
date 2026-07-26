@@ -209,6 +209,8 @@ github.com/sneat-co/sneat-core-modules v0.56.0 h1:I6qu3gQd76NE3ngqs3JR11miLwwOvd
 github.com/sneat-co/sneat-core-modules v0.56.0/go.mod h1:EW27owWQtO6E3hBm/dX1jQ1YHFcDEgoHMsNL37AL/9Q=
 github.com/sneat-co/sneat-go-core v0.60.4 h1:td5D1oFefxVbA5UVU68+fEQSBZ3C39jieecxAdObmH8=
 github.com/sneat-co/sneat-go-core v0.60.4/go.mod h1:iiU41fDzW+E51mhQKp1hH6lvw6eLWZC0Nve9SbmbEJo=
+github.com/sneat-co/sneat-go-core v0.60.6 h1:PgGjj/XJCNKSQ8HyfSQmspIF+ZcfEOPLqFuMF5i4l4Y=
+github.com/sneat-co/sneat-go-core v0.60.6/go.mod h1:3+J9yzMhqYEmfovt35ycan18BqwqPod5PtciLGAKuNw=
 github.com/sneat-co/sneat-go-core/convospec v0.1.2 h1:Mf+dFH0c9c2GlpFWP+sc3KRuOmcK0fw4yPbMPXBMkL4=
 github.com/sneat-co/sneat-go-core/convospec v0.1.2/go.mod h1:Ju/+fggN9yJ1C7/q+o81qulm8xUBVUvAQ75yaohPTgE=
 github.com/sneat-co/trackus/backend v0.1.5 h1:k3JBZd7e0vbSfBsckIzS6k+GgR/6clX0s2sfw0Zq8Ak=
