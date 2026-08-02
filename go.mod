@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	cloud.google.com/go/firestore v1.24.0
-	github.com/bots-go-framework/bots-go-core v0.2.5
+	github.com/bots-go-framework/bots-go-core v0.3.0
 	github.com/charmbracelet/bubbles v0.21.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/huh v1.0.0
@@ -12,11 +12,11 @@ require (
 	github.com/dal-go/dalgo v0.63.2
 	github.com/dal-go/dalgo2firestore v0.9.7
 	github.com/dal-go/record v0.1.0
-	github.com/sneat-co/contactus/backend v0.1.9
+	github.com/sneat-co/contactus/backend v0.1.10
 	github.com/sneat-co/ext-contactus/backend v0.1.7
-	github.com/sneat-co/sneat-bots v0.22.5
+	github.com/sneat-co/sneat-bots v0.30.0
 	github.com/sneat-co/sneat-core-modules v0.56.0
-	github.com/sneat-co/sneat-go-core v0.60.6
+	github.com/sneat-co/sneat-go-core v0.62.0
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/strongoapp v0.31.48
 	golang.org/x/oauth2 v0.36.0
@@ -28,15 +28,15 @@ require (
 require (
 	github.com/anthropics/anthropic-sdk-go v1.58.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/bots-go-framework/bots-fw-store v0.12.0 // indirect
+	github.com/bots-go-framework/bots-fw-store v0.14.1 // indirect
 	github.com/buger/jsonparser v1.2.0 // indirect
 	github.com/clipperhouse/displaywidth v0.9.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.5.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
-	github.com/sneat-co/commitius/backend v0.3.0 // indirect
-	github.com/sneat-co/ext-calendarius/backend v0.0.3 // indirect
+	github.com/sneat-co/commitius/backend v0.4.0 // indirect
+	github.com/sneat-co/ext-calendarius/backend v0.0.4 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/strongo/delaying v0.2.3 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
@@ -68,7 +68,7 @@ require (
 	github.com/dal-go/dalgo2openvaultdb v0.2.1
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
-	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
@@ -87,10 +87,10 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
-	github.com/sneat-co/assetus/backend v0.3.7 // indirect
-	github.com/sneat-co/calendarius/backend v0.4.8
+	github.com/sneat-co/assetus/backend v0.5.0 // indirect
+	github.com/sneat-co/calendarius/backend v0.4.12
 	github.com/sneat-co/ext-listus/backend v0.0.8 // indirect
-	github.com/sneat-co/ext-trackus/backend v0.0.1 // indirect
+	github.com/sneat-co/ext-trackus/backend v0.0.2 // indirect
 	github.com/sneat-co/listus/backend v0.1.13 // indirect
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/sneat-co/trackus/backend v0.1.5 // indirect
