@@ -15,7 +15,7 @@ require (
 	github.com/sneat-co/contactus/backend v0.1.10
 	github.com/sneat-co/ext-contactus/backend v0.1.7
 	github.com/sneat-co/sneat-bots v0.30.0
-	github.com/sneat-co/sneat-core-modules v0.56.0
+	github.com/sneat-co/sneat-core-modules v0.59.0
 	github.com/sneat-co/sneat-go-core v0.62.0
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/strongoapp v0.31.48
