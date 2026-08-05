@@ -8,10 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/bots-go-framework/bots-go-core/botkb"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sneat-co/sneat-cli/internal/chat"
 )
 
@@ -109,50 +110,23 @@ func recordingBrowser(opened *[]string, err error) func(string) error {
 
 // --- alt screen ---
 
-// altScreenBit mirrors bubbletea's own startupOptions bit for the alternate
-// screen — `withAltScreen startupOptions = 1 << iota`, the first bit, in its
-// tea.go. Both the bit and the field it lives in are unexported, so the value
-// is restated here and altScreenStartup reads the field reflectively.
-//
-// That restatement is only safe because it is checked rather than trusted:
-// TestNewProgramWithAltScreenIsDetected builds a program that does ask for the
-// alternate screen and fails if this bit does not show up in it. Without that
-// control, a bubbletea rename would silently turn the assertion below into one
-// that passes no matter what Run does.
-const altScreenBit = 1
-
-// altScreenStartup reports whether p was constructed with tea.WithAltScreen().
-//
-// tea.NewProgram applies each ProgramOption to the Program it returns, so the
-// options a program was given are readable off the program itself — there is no
-// exported accessor, hence the reflection. Reading an unexported field's scalar
-// value is allowed; only Interface() and the setters reject a read-only Value.
-func altScreenStartup(t *testing.T, p *tea.Program) bool {
-	t.Helper()
-	f := reflect.ValueOf(p).Elem().FieldByName("startupOptions")
-	if !f.IsValid() {
-		t.Fatal("tea.Program has no startupOptions field: bubbletea changed, and this test can no longer see whether the alternate screen was requested")
-	}
-	return f.Int()&altScreenBit != 0
-}
-
-// TestNewProgramWithAltScreenIsDetected is the control for the assertion below:
-// it proves altScreenStartup actually observes the alternate-screen option, so
-// that TestNewProgramDoesNotUseAltScreen is a test that can fail.
-func TestNewProgramWithAltScreenIsDetected(t *testing.T) {
-	p := tea.NewProgram(New(fakeProcessor{}), tea.WithAltScreen())
-	if !altScreenStartup(t, p) {
-		t.Fatal("a program built with tea.WithAltScreen() did not report the alt-screen startup option: altScreenStartup no longer detects it")
-	}
-}
-
 // TestNewProgramDoesNotUseAltScreen pins REQ: inline-rendering — the chat draws
 // in the terminal's normal buffer, so the transcript survives exit as ordinary
 // scrollback. Taking over the screen would discard it.
+//
+// Bubble Tea v2 moved the alternate screen off the program and onto the frame:
+// there is no tea.WithAltScreen option any more, and a model opts in per render
+// by returning a tea.View with AltScreen set. So the guarantee is now read
+// straight off what View() produces.
+//
+// That also retires the previous helper and its control test. Those reflected
+// into tea.Program's unexported startupOptions field and restated its bit
+// layout, which needed a companion test proving the reflection still saw
+// anything at all. Reading an exported field of the returned view needs no such
+// scaffolding — it cannot silently degrade into an assertion that always passes.
 func TestNewProgramDoesNotUseAltScreen(t *testing.T) {
-	p := newProgram(fakeProcessor{})
-	if altScreenStartup(t, p) {
-		t.Error("the chat program was constructed with the alternate screen; it must render inline so the transcript stays in terminal scrollback (chat-tui#req:inline-rendering)")
+	if New(fakeProcessor{}).View().AltScreen {
+		t.Error("the chat model asked for the alternate screen; it must render inline so the transcript stays in terminal scrollback (chat-tui#req:inline-rendering)")
 	}
 }
 
@@ -316,7 +290,7 @@ func pump(t *testing.T, m Model, cmd tea.Cmd) (Model, []tea.Msg) {
 func turnMsgs(t *testing.T, m Model, text string) (Model, []tea.Msg) {
 	t.Helper()
 	m.input.SetValue(text)
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	return pump(t, next.(Model), cmd)
 }
 
@@ -392,7 +366,7 @@ func TestSubmitCommitsTheUserLineAndSendsOffTheUIThread(t *testing.T) {
 	})
 	m.input.SetValue("/spaces")
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(Model)
 
 	if len(sent) != 0 {
@@ -428,7 +402,7 @@ func TestSubmitCommitsTheUserLineAndSendsOffTheUIThread(t *testing.T) {
 func TestSubmitSequencesTheCommitAheadOfTheSend(t *testing.T) {
 	m := New(fakeProcessor{replies: []chat.Reply{{Text: "Hi!"}}})
 	m.input.SetValue("hello")
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("a submit returned no command")
 	}
@@ -452,7 +426,7 @@ func TestSubmitIgnoresAnEmptyLine(t *testing.T) {
 	m := New(fakeProcessor{sent: &sent})
 	m.input.SetValue("   ")
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(Model)
 
 	if got := scrollbackOf(drain(t, cmd)); len(got) != 0 {
@@ -485,7 +459,7 @@ func TestButtonedReplyBecomesLiveAndRendersInTheLiveRegion(t *testing.T) {
 			t.Errorf("a reply carrying a keyboard was committed to scrollback (%q); it is not complete until its buttons stop being focusable (chat-tui#req:scrollback-commit)", block)
 		}
 	}
-	view := m.View()
+	view := m.View().Content
 	for _, want := range []string{"Your spaces:", "Family", "Work"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("View() = %q, missing %q: the live region draws the focusable reply and its buttons (chat-tui#req:inline-rendering)", view, want)
@@ -507,7 +481,7 @@ func TestSubmittingAgainCommitsTheLiveReplyWithInertButtons(t *testing.T) {
 	m.proc = fakeProcessor{replies: []chat.Reply{{Text: "Hi!"}}}
 
 	m.input.SetValue("hello")
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(Model)
 
 	msgs := drain(t, cmd)
@@ -561,7 +535,7 @@ func TestCommitLiveRendersInertButtonsAndReturnsFocus(t *testing.T) {
 
 	// The live region marks the focused button: that is what the commit below
 	// must not carry into scrollback.
-	if live := m.View(); !strings.Contains(live, focusedMarkLeft+"Work") {
+	if live := m.View().Content; !strings.Contains(live, focusedMarkLeft+"Work") {
 		t.Fatalf("View() = %q, want the focused button %q marked with %q; without the mark, the assertion below cannot fail", live, "Work", focusedMarkLeft)
 	}
 
@@ -595,7 +569,7 @@ func TestLiveRegionMarksTheFocusedButton(t *testing.T) {
 	m, _ := submitTurn(t, New(proc), "/spaces")
 	m.focus, m.row, m.col = focusButtons, 1, 0
 
-	if view := m.View(); !strings.Contains(view, focusedMarkLeft+"Work") {
+	if view := m.View().Content; !strings.Contains(view, focusedMarkLeft+"Work") {
 		t.Fatalf("View() = %q, want the focused button %q marked with %q", view, "Work", focusedMarkLeft)
 	}
 }
@@ -619,7 +593,7 @@ func TestReplyWithNoKeyboardCommitsImmediately(t *testing.T) {
 	if !strings.Contains(sb[1], help) {
 		t.Errorf("the turn committed %q second, want the reply %q", sb[1], help)
 	}
-	if view := m.View(); strings.Contains(view, help) {
+	if view := m.View().Content; strings.Contains(view, help) {
 		t.Errorf("View() = %q still draws a committed reply; the live region draws only what can still change (chat-tui#req:inline-rendering)", view)
 	}
 }
@@ -787,7 +761,7 @@ func TestPressCommitsTheLiveReplyThenEchoesTheLabel(t *testing.T) {
 	if !reflect.DeepEqual(pressed, []string{"space?id=work1"}) {
 		t.Errorf("PressButton received %q, want exactly one call, carrying [%q]", pressed, "space?id=work1")
 	}
-	if view := m.View(); strings.Contains(view, "Your spaces:") {
+	if view := m.View().Content; strings.Contains(view, "Your spaces:") {
 		t.Errorf("View() = %q still draws the reply whose button was pressed; no live reply from before the press remains focusable (chat-tui#req:scrollback-commit)", view)
 	}
 }
@@ -869,7 +843,7 @@ func TestAPressLeavesNothingFocusableFromBeforeIt(t *testing.T) {
 			if m.focus != focusInput {
 				t.Errorf("focus = %v after a press, want focusInput: the button block it pressed from no longer exists (chat-tui#req:focus-and-keys)", m.focus)
 			}
-			if view := m.View(); strings.Contains(view, "Your spaces:") {
+			if view := m.View().Content; strings.Contains(view, "Your spaces:") {
 				t.Errorf("View() = %q still draws the reply whose button was pressed; a press always ends the previous reply's focusability (chat-tui#req:scrollback-commit)", view)
 			}
 			if tt.wantLive == "" {
@@ -894,7 +868,7 @@ func TestAPressLeavesNothingFocusableFromBeforeIt(t *testing.T) {
 // change. With no live reply that is the input line and the footer hint — never
 // a transcript, which would fight the terminal for text it already owns.
 func TestViewIsOnlyTheLiveRegion(t *testing.T) {
-	view := New(fakeProcessor{}).View()
+	view := New(fakeProcessor{}).View().Content
 	if lines := strings.Split(view, "\n"); len(lines) != 2 {
 		t.Errorf("View() = %q (%d lines), want 2: the input line and the footer hint", view, len(lines))
 	}
@@ -922,7 +896,7 @@ func TestViewIsOnlyTheLiveRegion(t *testing.T) {
 // "working" from "hung".
 func TestPendingIsVisible(t *testing.T) {
 	m := New(fakeProcessor{})
-	if got := m.View(); strings.Contains(got, pendingLabel) {
+	if got := m.View().Content; strings.Contains(got, pendingLabel) {
 		t.Errorf("idle View() shows the typing indicator %q; it belongs to an in-flight turn only\n%s", pendingLabel, got)
 	}
 
@@ -933,7 +907,7 @@ func TestPendingIsVisible(t *testing.T) {
 	if !m.pending {
 		t.Fatal("setup: a submitted turn is not pending")
 	}
-	frame := m.View()
+	frame := m.View().Content
 	if !strings.Contains(frame, pendingLabel) {
 		t.Errorf("View() while a reply is in flight does not show the typing indicator %q\n%s", pendingLabel, frame)
 	}
@@ -942,19 +916,19 @@ func TestPendingIsVisible(t *testing.T) {
 	}
 
 	// Animation: the spinner's own tick must change the rendered frame.
-	before := m.View()
+	before := m.View().Content
 	spun, _ := m.Update(m.spin.Tick())
-	if after := spun.(Model).View(); after == before {
+	if after := spun.(Model).View().Content; after == before {
 		t.Error("a spinner tick left the frame identical; the indicator must animate, not sit frozen — a frozen line is indistinguishable from a hung program")
 	}
 
 	// It clears when the turn resolves, whichever way it resolves.
 	done, _ := m.Update(repliesMsg{replies: []chat.Reply{{Text: "ok"}}})
-	if got := done.(Model).View(); strings.Contains(got, pendingLabel) {
+	if got := done.(Model).View().Content; strings.Contains(got, pendingLabel) {
 		t.Errorf("the typing indicator survived the replies arriving\n%s", got)
 	}
 	failed, _ := m.Update(errMsg{err: errProcessorFailure})
-	if got := failed.(Model).View(); strings.Contains(got, pendingLabel) {
+	if got := failed.(Model).View().Content; strings.Contains(got, pendingLabel) {
 		t.Errorf("the typing indicator survived the turn failing\n%s", got)
 	}
 	_, _ = cmd, frame
@@ -985,7 +959,12 @@ func TestTheRuleAppearsOnlyWithButtons(t *testing.T) {
 	// The rule meets the frame. A rule rendered as content would float inside
 	// it — reading as another line of the message, which is the opposite of
 	// what it is for.
-	for _, line := range strings.Split(withButtons, "\n") {
+	//
+	// Compared on ANSI-stripped lines: the right edge is a styled glyph, so the
+	// raw line ends with the style reset that follows "┤" rather than with the
+	// glyph itself. Stripping asserts on the geometry, which is what this test
+	// is about, instead of on where lipgloss puts its escape sequences.
+	for _, line := range strings.Split(ansi.Strip(withButtons), "\n") {
 		if strings.Contains(line, ruleEdge) && !strings.HasSuffix(line, b.MiddleRight) {
 			t.Errorf("the rule does not meet the right edge of the frame: %q", line)
 		}
@@ -1032,7 +1011,7 @@ func TestFooterNamesTheKeysThatWorkRightNow(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			view := tt.model(t).View()
+			view := tt.model(t).View().Content
 			if !strings.Contains(view, tt.want) {
 				t.Errorf("View() = %q, want the footer hint %q", view, tt.want)
 			}
@@ -1060,16 +1039,22 @@ func TestFooterNamesTheKeysThatWorkRightNow(t *testing.T) {
 // placeholder to its first character. The session rendered "> T" for every
 // frame until a real terminal showed it. The whole placeholder must survive,
 // at the initial width and after a resize.
+// The comparison strips ANSI first because textinput v2 draws the cursor over
+// the placeholder's first character, styling it separately: the frame contains
+// "T" in reverse video followed by "ype a message". The placeholder is fully
+// present, but no longer as one contiguous literal. Stripping styles keeps the
+// original guarantee — a truncated placeholder still fails — without asserting
+// on where the cursor happens to sit.
 func TestPlaceholderRendersInFull(t *testing.T) {
 	const want = "Type a message"
 
 	m := New(fakeProcessor{})
-	if got := m.View(); !strings.Contains(got, want) {
+	if got := ansi.Strip(m.View().Content); !strings.Contains(got, want) {
 		t.Errorf("initial View() does not render the whole placeholder\n got: %q\nwant it to contain: %q", got, want)
 	}
 
 	rm, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
-	if got := rm.(Model).View(); !strings.Contains(got, want) {
+	if got := ansi.Strip(rm.(Model).View().Content); !strings.Contains(got, want) {
 		t.Errorf("View() after resize does not render the whole placeholder\n got: %q\nwant it to contain: %q", got, want)
 	}
 }
@@ -1107,17 +1092,17 @@ func TestModelHandlesWindowSize(t *testing.T) {
 // Driving Update with the message the event loop itself would deliver is what
 // makes the tests below exercise the real key table rather than a paraphrase of
 // it.
-var keyMsgs = map[string]tea.KeyMsg{
-	"ctrl+c": {Type: tea.KeyCtrlC},
-	"enter":  {Type: tea.KeyEnter},
-	"esc":    {Type: tea.KeyEsc},
-	"up":     {Type: tea.KeyUp},
-	"down":   {Type: tea.KeyDown},
-	"left":   {Type: tea.KeyLeft},
-	"right":  {Type: tea.KeyRight},
-	"tab":    {Type: tea.KeyTab},
-	"x":      {Type: tea.KeyRunes, Runes: []rune("x")},
-	"a":      {Type: tea.KeyRunes, Runes: []rune("a")},
+var keyMsgs = map[string]tea.KeyPressMsg{
+	"ctrl+c": {Code: 'c', Mod: tea.ModCtrl},
+	"enter":  {Code: tea.KeyEnter},
+	"esc":    {Code: tea.KeyEsc},
+	"up":     {Code: tea.KeyUp},
+	"down":   {Code: tea.KeyDown},
+	"left":   {Code: tea.KeyLeft},
+	"right":  {Code: tea.KeyRight},
+	"tab":    {Code: tea.KeyTab},
+	"x":      {Text: "x"},
+	"a":      {Text: "a"},
 }
 
 // key returns the KeyMsg for the key the requirement calls name.
@@ -1202,7 +1187,7 @@ func TestQuitIsDetectedAndNotImagined(t *testing.T) {
 // cursor that moves without the region following it — or one left pointing at no
 // button at all — is not mistaken for focus having moved.
 func focusedLabel(m Model) string {
-	view := m.View()
+	view := m.View().Content
 	i := strings.Index(view, focusedMarkLeft)
 	if i < 0 {
 		return ""
@@ -1885,7 +1870,7 @@ func TestFailureIsCommittedNotDrawnInTheLiveRegion(t *testing.T) {
 	if got := scrollbackOf(drain(t, cmd)); len(got) != 1 || !strings.Contains(got[0], errProcessorFailure.Error()) {
 		t.Fatalf("a failure committed %q to scrollback, want exactly one block naming it (chat-tui#req:errors-render-in-transcript)", got)
 	}
-	if view := m.View(); strings.Contains(view, errProcessorFailure.Error()) {
+	if view := m.View().Content; strings.Contains(view, errProcessorFailure.Error()) {
 		t.Errorf("View() = %q draws the failure; it is a completed turn, and the live region draws only what can still change (chat-tui#req:inline-rendering)", view)
 	}
 }
@@ -1942,7 +1927,7 @@ func openPalette(t *testing.T, sent *[]string, query string) Model {
 
 func TestPaletteOpensAndListsMatchingCommands(t *testing.T) {
 	m := openPalette(t, nil, "/")
-	view := m.View()
+	view := m.View().Content
 	for _, want := range []string{"/spaces", "/space", "/contacts", "/help"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("palette on %q does not list %q\n%s", "/", want, view)
@@ -2120,7 +2105,7 @@ func TestCardEditReplacesTheLiveCardInPlace(t *testing.T) {
 	if m.live == nil || m.live.Text != "Space: Family" {
 		t.Fatalf("live = %+v after a card edit, want the new card %q replacing the old one in place", m.live, "Space: Family")
 	}
-	if view := m.View(); strings.Contains(view, "Your spaces:") {
+	if view := m.View().Content; strings.Contains(view, "Your spaces:") {
 		t.Errorf("View() = %q still draws the old card; a card edit replaces it (chat-tui#req:card-edit-in-place)", view)
 	}
 }
@@ -2231,7 +2216,7 @@ func TestSendButtonSubmitsItsTextLikeATypedLine(t *testing.T) {
 // monochrome terminal and a copied transcript both lose (chat-tui#req:button-kinds).
 func TestButtonKindsAreMarkedDistinctlyInTheUI(t *testing.T) {
 	m := liveModel(fakeProcessor{}, cardKeyboard())
-	view := m.View()
+	view := m.View().Content
 
 	// The URL button is marked as leaving for the browser, the send button as
 	// putting its text into the conversation, and the callback carries no mark —

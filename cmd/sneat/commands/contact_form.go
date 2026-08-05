@@ -1,6 +1,6 @@
 package commands
 
-import "github.com/charmbracelet/huh"
+import "charm.land/huh/v2"
 
 // RunContactForm collects contact fields interactively via a huh form.
 // It is wired as Env.RunContactForm in production; tests inject a fake.

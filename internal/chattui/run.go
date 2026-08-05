@@ -1,7 +1,7 @@
 package chattui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/sneat-co/sneat-cli/internal/chat"
 )
 
