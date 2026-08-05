@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/sneat-co/contactus/backend/dbo4contactus"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 )
@@ -146,7 +146,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.stack[len(m.stack)-1].Init(&m)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
@@ -160,12 +160,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// View renders the top screen.
-func (m Model) View() string {
-	if len(m.stack) == 0 {
-		return ""
+// View renders the top screen. The interactive UI always takes over the
+// alternate screen (moved here from tea.WithAltScreen(), which bubbletea v2
+// replaced with this declarative field), leaving the terminal's normal
+// scrollback untouched while it runs.
+func (m Model) View() tea.View {
+	body := ""
+	if len(m.stack) > 0 {
+		body = m.stack[len(m.stack)-1].View(&m)
 	}
-	return m.stack[len(m.stack)-1].View(&m)
+	v := tea.NewView(body)
+	v.AltScreen = true
+	return v
 }
 
 // top returns the current screen (nil when the stack is empty). Test helper.

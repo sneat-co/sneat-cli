@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -119,7 +119,9 @@ func writeCSV(w io.Writer, headers []string, rows [][]string) error {
 }
 
 // writeTable renders a styled, bordered table via lipgloss. Rendering is
-// pipe-safe: lipgloss emits plain text (no ANSI) when stdout is not a terminal.
+// pipe-safe: lipgloss v2's Style.Render always emits full-fidelity ANSI, so
+// the downsampling that strips it when w is not a terminal happens at the
+// print layer instead, via lipgloss.Fprintln (in place of fmt.Fprintln).
 func writeTable(w io.Writer, headers []string, rows [][]string) error {
 	header := lipgloss.NewStyle().Padding(0, 1).Bold(true).Foreground(lipgloss.Color("6")) // cyan
 	cell := lipgloss.NewStyle().Padding(0, 1)
@@ -134,7 +136,7 @@ func writeTable(w io.Writer, headers []string, rows [][]string) error {
 		}).
 		Headers(headers...).
 		Rows(rows...)
-	_, err := fmt.Fprintln(w, t.Render())
+	_, err := lipgloss.Fprintln(w, t.Render())
 	return err
 }
 

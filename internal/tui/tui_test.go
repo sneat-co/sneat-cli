@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 	"github.com/sneat-co/contactus/backend/dbo4contactus"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/strongo/strongoapp/person"
@@ -99,19 +99,19 @@ func step(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 func key(s string) tea.KeyMsg {
 	switch s {
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
 	case "left":
-		return tea.KeyMsg{Type: tea.KeyLeft}
+		return tea.KeyPressMsg{Code: tea.KeyLeft}
 	case "right":
-		return tea.KeyMsg{Type: tea.KeyRight}
+		return tea.KeyPressMsg{Code: tea.KeyRight}
 	case "delete":
-		return tea.KeyMsg{Type: tea.KeyDelete}
+		return tea.KeyPressMsg{Code: tea.KeyDelete}
 	case "backspace":
-		return tea.KeyMsg{Type: tea.KeyBackspace}
+		return tea.KeyPressMsg{Code: tea.KeyBackspace}
 	default:
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+		return tea.KeyPressMsg{Text: s}
 	}
 }
 
@@ -326,7 +326,7 @@ func TestSpacesScreen_LoadError(t *testing.T) {
 	m := New(fakeSpaces{err: errors.New("boom")}, &fakeContacts{}, nil, "uid")
 	loadCmd := m.Init()
 	m, _ = step(t, m, runCmd(loadCmd)) // errMsg
-	view := m.View()
+	view := m.View().Content
 	if view == "" || !contains(view, "boom") {
 		t.Errorf("error view should mention the error, got %q", view)
 	}
@@ -339,7 +339,7 @@ func TestViews_RenderAcrossScreens(t *testing.T) {
 	m := newLoadedSpaces(t, twoSpaces(), fc)
 
 	// Spaces view lists a space and shows the footer help.
-	if v := m.View(); !contains(v, "Family") || !contains(v, "quit") {
+	if v := m.View().Content; !contains(v, "Family") || !contains(v, "quit") {
 		t.Errorf("spaces view = %q", v)
 	}
 
@@ -347,21 +347,21 @@ func TestViews_RenderAcrossScreens(t *testing.T) {
 	m, cmd := step(t, m, key("enter"))
 	m, initCmd := step(t, m, runCmd(cmd))
 	m, _ = step(t, m, runCmd(initCmd))
-	if v := m.View(); !contains(v, "id:") || !contains(v, "Members") || !contains(v, "fam") {
+	if v := m.View().Content; !contains(v, "id:") || !contains(v, "Members") || !contains(v, "fam") {
 		t.Errorf("space view = %q", v)
 	}
 
 	// Members list.
 	m, cmd = step(t, m, key("enter"))
 	m, _ = step(t, m, runCmd(cmd))
-	if v := m.View(); !contains(v, "Alice") {
+	if v := m.View().Content; !contains(v, "Alice") {
 		t.Errorf("members view = %q", v)
 	}
 
 	// Contact card shows fields.
 	m, cmd = step(t, m, key("enter"))
 	m, _ = step(t, m, runCmd(cmd))
-	v := m.View()
+	v := m.View().Content
 	if !contains(v, "Alice") || !contains(v, "roles") || !contains(v, "parent") {
 		t.Errorf("card view = %q", v)
 	}
@@ -451,7 +451,7 @@ func TestContactCard_FooterAtBottom(t *testing.T) {
 	m, cmd = step(t, m, key("enter")) // card
 	m, _ = step(t, m, runCmd(cmd))
 
-	view := m.View()
+	view := m.View().Content
 	lines := len(splitLines(view))
 	if lines < 22 { // height is 24; footer should be pushed near the bottom
 		t.Errorf("card view has %d lines, expected it to fill the height (~24)", lines)
@@ -482,7 +482,7 @@ func TestQuitKeyAndResize(t *testing.T) {
 		t.Error("q must not quit (reserved for filtering)")
 	}
 	// ctrl+c quits globally.
-	if _, cmd := step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC}); func() bool { _, ok := runCmd(cmd).(tea.QuitMsg); return !ok }() {
+	if _, cmd := step(t, m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}); func() bool { _, ok := runCmd(cmd).(tea.QuitMsg); return !ok }() {
 		t.Error("ctrl+c should quit")
 	}
 	// Resize does not crash and keeps us on the spaces screen.
@@ -498,7 +498,7 @@ func TestContactsScreen_LoadErrorView(t *testing.T) {
 	m, cmd := step(t, m, key("enter"))    // open space
 	m, initCmd := step(t, m, runCmd(cmd)) // push space screen
 	m, _ = step(t, m, runCmd(initCmd))    // errMsg from loadContacts
-	if v := m.View(); !contains(v, "net down") {
+	if v := m.View().Content; !contains(v, "net down") {
 		t.Errorf("space error view = %q", v)
 	}
 }
@@ -557,7 +557,7 @@ func TestDelete_SelfIsRefused(t *testing.T) {
 	if len(del.calls) != 0 {
 		t.Errorf("deleter must not be called for self, got %v", del.calls)
 	}
-	if v := m.View(); !contains(v, "Cannot delete yourself") {
+	if v := m.View().Content; !contains(v, "Cannot delete yourself") {
 		t.Errorf("flash should render, view = %q", v)
 	}
 }
@@ -622,7 +622,7 @@ func TestDelete_ErrorShownInline(t *testing.T) {
 	if confirm.err == nil {
 		t.Error("confirm screen should record the delete error")
 	}
-	if v := m.View(); !contains(v, "api down") {
+	if v := m.View().Content; !contains(v, "api down") {
 		t.Errorf("error should render, view = %q", v)
 	}
 }

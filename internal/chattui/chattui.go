@@ -19,11 +19,11 @@ import (
 	"slices"
 	"strings"
 
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/bots-go-framework/bots-go-core/botkb"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/sneat-co/sneat-cli/internal/chat"
 )
 
@@ -104,7 +104,7 @@ func New(proc chat.Processor) Model {
 	in := textinput.New()
 	in.Placeholder = "Type a message"
 	in.Prompt = inputPrompt
-	in.Width = inputWidth(defaultWidth)
+	in.SetWidth(inputWidth(defaultWidth))
 	in.Focus()
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -225,7 +225,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.input.Width = inputWidth(msg.Width)
+		m.input.SetWidth(inputWidth(msg.Width))
 	case spinner.TickMsg:
 		// Only keep the animation going while a turn is in flight. Once it
 		// resolves the tick stops rescheduling itself and the loop goes quiet.
@@ -829,7 +829,7 @@ func commitGroups(groups ...[]string) tea.Cmd {
 // input line, and the footer hint (REQ: inline-rendering). It is deliberately not
 // the transcript: redrawing past turns here would fight the terminal for text it
 // already owns.
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	var b strings.Builder
 	if m.live != nil {
 		b.WriteString(renderLiveReply(*m.live, m.focus == focusButtons, m.row, m.col))
@@ -847,7 +847,7 @@ func (m Model) View() string {
 	b.WriteString(m.input.View())
 	b.WriteByte('\n')
 	b.WriteString(footerStyle.Render(m.footerHelp()))
-	return b.String()
+	return tea.NewView(b.String())
 }
 
 // footerHelp is the live region's hint line: the keys that work right now, each
