@@ -9,13 +9,13 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	cloud.google.com/go/firestore v1.24.0
 	github.com/bots-go-framework/bots-go-core v0.3.0
-	github.com/dal-go/dalgo v0.64.4
-	github.com/dal-go/dalgo2firestore v0.10.3
+	github.com/dal-go/dalgo v0.64.5
+	github.com/dal-go/dalgo2firestore v0.10.4
 	github.com/dal-go/record v0.1.2
 	github.com/sneat-co/contactus/backend v0.1.10
 	github.com/sneat-co/ext-contactus/backend v0.1.7
-	github.com/sneat-co/sneat-bots v0.30.0
-	github.com/sneat-co/sneat-core-modules v0.59.2
+	github.com/sneat-co/sneat-bots v0.30.1
+	github.com/sneat-co/sneat-core-modules v0.59.3
 	github.com/sneat-co/sneat-go-core v0.62.2
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/strongoapp v0.31.50
