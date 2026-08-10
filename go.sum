@@ -16,6 +16,8 @@ cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdB
 cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
 cloud.google.com/go/firestore v1.24.0 h1:x0Z3hrgjYgo2wI9whuBRQcNc2hYwzZDQy/7pkUXbXcs=
 cloud.google.com/go/firestore v1.24.0/go.mod h1:5aojyjN4olKUnBZDCRWwM+NsdrrCX3t1qfyERZGOonM=
+cloud.google.com/go/firestore v1.25.0 h1:yY3rQKyQXNhnhETdseNayF6W1p4x0bdg9ZYS4hKJfOw=
+cloud.google.com/go/firestore v1.25.0/go.mod h1:0PU6hj+r/QlhB6BLsRX+Kt/SYefTXrpYrBeHbYaSis8=
 cloud.google.com/go/longrunning v1.2.0 h1:WjYH3YHBGCxGJP9M4dWGHBfXr/cFIjMkNgWcJj7/iMM=
 cloud.google.com/go/longrunning v1.2.0/go.mod h1:5KMQALFGOCtFoi2xSOA1u3H7WKlhmckgiyFw7+LGQp0=
 github.com/MakeNowJust/heredoc v1.0.0 h1:cXCdzVdstXyiTqTvfqk9SDHpKNjxuom+DOlyEeQ4pzQ=
@@ -83,8 +85,12 @@ github.com/crediterra/money v0.3.5 h1:H59COTzKEtRbl8Wlr2tNYWnBkoMOdOrEPVhGYez+VG
 github.com/crediterra/money v0.3.5/go.mod h1:0BT7dzPk4Wv+Wi8J6sxlFbCknYioLWVVQM4ciMJh6TI=
 github.com/dal-go/dalgo v0.64.5 h1:V+KYie1GiaACnMOgBC/fkqWJ2+aU/bvEzZ2U1uDugKk=
 github.com/dal-go/dalgo v0.64.5/go.mod h1:q3jCRh1hNvH6SA6YESJDcKAnoGN3/6fec9Gebn4IVEk=
+github.com/dal-go/dalgo v0.64.6 h1:GyNPqop7kous/5otQhVbenpIgLxeEUSuc2eY4iVFMR4=
+github.com/dal-go/dalgo v0.64.6/go.mod h1:BrRPUGCBp+0mOR9+3nSxCVtkxwxmfYzCnlUPAHAAdtY=
 github.com/dal-go/dalgo2firestore v0.10.4 h1:uF/Ckr+mw+/C5zQM6lpnhcC4V7Ve9bfjg9sUQegt5JU=
 github.com/dal-go/dalgo2firestore v0.10.4/go.mod h1:Svyjq+JnaEpZnOkMtBA5sRgIKjNo9zkD9/phKyUdW0Y=
+github.com/dal-go/dalgo2firestore v0.10.6 h1:ssusSILoW6Z3waXabjq/M/0B06yse+ZrXMt3U7g5fyk=
+github.com/dal-go/dalgo2firestore v0.10.6/go.mod h1:wc2v9MpV9ulyPaPGE6J08PU6ntEYDsvALIDGYZ1iib4=
 github.com/dal-go/dalgo2openvaultdb v0.3.0 h1:dWMj5uYzMMaKnpprQbac3WVAnrxFvNvuAC+E7labmOM=
 github.com/dal-go/dalgo2openvaultdb v0.3.0/go.mod h1:jIMFpjR0t/T4AJ1YOPUJhWj6XMC2Nho2URLVjRQWUjQ=
 github.com/dal-go/record v0.1.2 h1:cDy296wwG3r2T+vy0yVJBouJ936oISiqiNB7G3ef5Og=

@@ -7,10 +7,10 @@ require (
 	charm.land/bubbletea/v2 v2.0.8
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.5
-	cloud.google.com/go/firestore v1.24.0
+	cloud.google.com/go/firestore v1.25.0
 	github.com/bots-go-framework/bots-go-core v0.3.0
-	github.com/dal-go/dalgo v0.64.5
-	github.com/dal-go/dalgo2firestore v0.10.4
+	github.com/dal-go/dalgo v0.64.6
+	github.com/dal-go/dalgo2firestore v0.10.6
 	github.com/dal-go/record v0.1.2
 	github.com/sneat-co/contactus/backend v0.1.10
 	github.com/sneat-co/ext-contactus/backend v0.1.7
