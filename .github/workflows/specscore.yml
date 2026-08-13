@@ -1,0 +1,34 @@
+name: SpecScore lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'spec/**'
+      - 'specscore.yaml'
+      - '.github/workflows/specscore.yml'
+  pull_request:
+    paths:
+      - 'spec/**'
+      - 'specscore.yaml'
+      - '.github/workflows/specscore.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: specscore-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install specscore CLI
+        run: |
+          curl -fsSL https://specscore.md/install/get-cli | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Lint spec tree
+        run: specscore spec lint
