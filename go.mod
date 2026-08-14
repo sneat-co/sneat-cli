@@ -16,7 +16,7 @@ require (
 	github.com/sneat-co/ext-contactus/backend v0.1.7
 	github.com/sneat-co/sneat-bots v0.30.1
 	github.com/sneat-co/sneat-core-modules v0.59.3
-	github.com/sneat-co/sneat-go-core v0.62.2
+	github.com/sneat-co/sneat-go-core v0.63.1
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/strongoapp v0.31.50
 	golang.org/x/oauth2 v0.36.0
@@ -84,7 +84,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
 	github.com/sneat-co/assetus/backend v0.5.0 // indirect
-	github.com/sneat-co/calendarius/backend v0.4.16
+	github.com/sneat-co/calendarius/backend v0.4.17
 	github.com/sneat-co/ext-listus/backend v0.0.8 // indirect
 	github.com/sneat-co/ext-trackus/backend v0.0.2 // indirect
 	github.com/sneat-co/listus/backend v0.1.13 // indirect
