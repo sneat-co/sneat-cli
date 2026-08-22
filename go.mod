@@ -9,16 +9,16 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	cloud.google.com/go/firestore v1.25.0
 	github.com/bots-go-framework/bots-go-core v0.3.0
-	github.com/dal-go/dalgo v0.64.6
+	github.com/dal-go/dalgo v0.64.7
 	github.com/dal-go/dalgo2firestore v0.10.6
 	github.com/dal-go/record v0.1.2
 	github.com/sneat-co/contactus/backend v0.1.10
-	github.com/sneat-co/ext-contactus/backend v0.1.7
-	github.com/sneat-co/sneat-bots v0.30.1
-	github.com/sneat-co/sneat-core-modules v0.59.3
-	github.com/sneat-co/sneat-go-core v0.63.1
+	github.com/sneat-co/ext-contactus/backend v0.1.8
+	github.com/sneat-co/sneat-bots v0.30.6
+	github.com/sneat-co/sneat-core-modules v0.63.1
+	github.com/sneat-co/sneat-go-core v0.64.0
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/strongoapp v0.31.50
+	github.com/strongo/strongoapp v0.31.52
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
 	google.golang.org/api v0.292.0
@@ -38,8 +38,8 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
-	github.com/sneat-co/commitius/backend v0.4.0 // indirect
-	github.com/sneat-co/ext-calendarius/backend v0.0.4 // indirect
+	github.com/sneat-co/commitius/backend v0.8.0 // indirect
+	github.com/sneat-co/ext-calendarius/backend v0.0.5 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/strongo/delaying v0.2.3 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
@@ -55,7 +55,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
-	github.com/RoaringBitmap/roaring/v2 v2.24.0 // indirect
+	github.com/RoaringBitmap/roaring/v2 v2.25.0 // indirect
 	github.com/alexsergivan/transliterator v1.0.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
@@ -84,7 +84,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
 	github.com/sneat-co/assetus/backend v0.5.0 // indirect
-	github.com/sneat-co/calendarius/backend v0.4.17
+	github.com/sneat-co/calendarius/backend v0.5.1
 	github.com/sneat-co/ext-listus/backend v0.0.8 // indirect
 	github.com/sneat-co/ext-trackus/backend v0.0.2 // indirect
 	github.com/sneat-co/listus/backend v0.1.13 // indirect
@@ -95,7 +95,7 @@ require (
 	github.com/strongo/decimal v0.1.2 // indirect
 	github.com/strongo/logus v0.4.1 // indirect
 	github.com/strongo/random v0.0.1 // indirect
-	github.com/strongo/slice v0.3.5 // indirect
+	github.com/strongo/slice v0.3.6 // indirect
 	github.com/strongo/validation v0.0.10 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -104,11 +104,11 @@ require (
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
