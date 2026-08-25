@@ -1,6 +1,6 @@
 module github.com/sneat-co/sneat-cli
 
-go 1.26.1
+go 1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.1.1
