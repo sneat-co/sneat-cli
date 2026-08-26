@@ -1,6 +1,8 @@
 module github.com/sneat-co/sneat-cli
 
-go 1.27.0
+go 1.26.1
+
+toolchain go1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.1.1
@@ -10,7 +12,7 @@ require (
 	cloud.google.com/go/firestore v1.25.0
 	github.com/bots-go-framework/bots-go-core v0.3.0
 	github.com/charmbracelet/x/ansi v0.11.7
-	github.com/dal-go/dalgo v0.74.0
+	github.com/dal-go/dalgo v0.74.1
 	github.com/dal-go/dalgo2firestore v0.10.6
 	github.com/dal-go/dalgo2openvaultdb v0.3.0
 	github.com/dal-go/record v0.1.3
@@ -19,7 +21,7 @@ require (
 	github.com/sneat-co/ext-contactus/backend v0.1.8
 	github.com/sneat-co/sneat-bots v0.30.6
 	github.com/sneat-co/sneat-core-modules v0.63.1
-	github.com/sneat-co/sneat-go-core v0.66.6
+	github.com/sneat-co/sneat-go-core v0.66.7
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/strongoapp v0.31.52
