@@ -23,10 +23,18 @@ const (
 // on SNEAT_STORAGE. Default is the in-memory DB (fresh per invocation);
 // "openvaultdb" targets a running `ovdb serve` instance and persists between
 // runs.
+//
+// This builds the in-memory DB via dalgo2memory.New(FirestoreProfile())
+// directly rather than sneat-go-core's sneatcoretesting.NewInMemoryTestDB:
+// this is a live CLI command path (the convo sandbox), not a test, and
+// sneatcoretesting is documented as test-only infrastructure — its own
+// package doc scopes it to that use. The chosen profile still emulates the
+// fleet's production backend (Firestore), matching sneatcoretesting's
+// default.
 func resolveSandboxDB() (dal.DB, error) {
 	switch storage := os.Getenv(envSneatStorage); storage {
 	case "", "memory":
-		return dalgo2memory.NewDB(), nil
+		return dalgo2memory.New(dalgo2memory.FirestoreProfile()), nil
 	case "openvaultdb":
 		url := os.Getenv(envOpenvaultdbURL)
 		if url == "" {
