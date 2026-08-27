@@ -7,10 +7,10 @@ import (
 
 	"github.com/sneat-co/calendarius/backend/convoservice4calendarius"
 	"github.com/sneat-co/contactus/backend/botservice4contactus"
-	"github.com/sneat-co/ext-contactus/backend/contract4contactus"
 	"github.com/sneat-co/sneat-bots/extensions/anybot/convo/convobindings"
 	"github.com/sneat-co/sneat-bots/extensions/anybot/convo/convosetup"
 	"github.com/sneat-co/sneat-bots/extensions/contactus/convoactions"
+	"github.com/sneat-co/sneat-ext-contracts/contactus/contract4contactus"
 	"github.com/sneat-co/sneat-go-core/facade"
 )
 
