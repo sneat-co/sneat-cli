@@ -1,8 +1,6 @@
 module github.com/sneat-co/sneat-cli
 
-go 1.26.1
-
-toolchain go1.27.0
+go 1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.1.1
@@ -13,27 +11,27 @@ require (
 	github.com/bots-go-framework/bots-go-core v0.3.0
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/dal-go/dalgo v0.74.1
-	github.com/dal-go/dalgo2firestore v0.10.6
+	github.com/dal-go/dalgo2firestore v0.10.13
 	github.com/dal-go/dalgo2openvaultdb v0.3.0
 	github.com/dal-go/record v0.1.3
-	github.com/sneat-co/calendarius/backend v0.5.1
-	github.com/sneat-co/contactus/backend v0.1.10
-	github.com/sneat-co/ext-contactus/backend v0.1.8
-	github.com/sneat-co/sneat-bots v0.30.6
-	github.com/sneat-co/sneat-core-modules v0.63.1
+	github.com/sneat-co/calendarius/backend v0.6.5
+	github.com/sneat-co/contactus/backend v0.1.14
+	github.com/sneat-co/sneat-bots v0.30.10
+	github.com/sneat-co/sneat-core-modules v0.65.13
+	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.4
 	github.com/sneat-co/sneat-go-core v0.66.7
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/strongoapp v0.31.52
+	github.com/strongo/strongoapp v0.31.53
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
-	google.golang.org/api v0.292.0
+	google.golang.org/api v0.293.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/auth v0.22.0 // indirect
+	cloud.google.com/go/auth v0.23.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
@@ -56,7 +54,7 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/crediterra/money v0.3.5 // indirect
+	github.com/crediterra/money v0.3.6 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -75,13 +73,13 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
-	github.com/sneat-co/assetus/backend v0.5.0 // indirect
+	github.com/sneat-co/assetus/backend v0.8.2 // indirect
 	github.com/sneat-co/commitius/backend v0.8.0 // indirect
-	github.com/sneat-co/ext-calendarius/backend v0.0.5 // indirect
-	github.com/sneat-co/ext-listus/backend v0.0.8 // indirect
-	github.com/sneat-co/ext-trackus/backend v0.0.2 // indirect
-	github.com/sneat-co/listus/backend v0.1.13 // indirect
-	github.com/sneat-co/trackus/backend v0.1.6 // indirect
+	github.com/sneat-co/listus/backend v0.1.14 // indirect
+	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.3 // indirect
+	github.com/sneat-co/sneat-ext-contracts/listus v0.0.6 // indirect
+	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.1 // indirect
+	github.com/sneat-co/trackus/backend v0.1.7 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/strongo/analytics v0.2.5 // indirect
@@ -89,7 +87,7 @@ require (
 	github.com/strongo/delaying v0.2.3 // indirect
 	github.com/strongo/logus v0.4.1 // indirect
 	github.com/strongo/random v0.0.1 // indirect
-	github.com/strongo/slice v0.3.6 // indirect
+	github.com/strongo/slice v0.3.7 // indirect
 	github.com/strongo/validation v0.0.10 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
@@ -111,7 +109,7 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
-	google.golang.org/grpc v1.83.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260807164820-c8921c73eeea // indirect
+	google.golang.org/grpc v1.83.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )

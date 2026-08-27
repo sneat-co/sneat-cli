@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/sneat-co/contactus/backend/dto4contactus"
-	"github.com/sneat-co/ext-contactus/backend/contactusmodels/briefs4contactus"
 	"github.com/sneat-co/sneat-core-modules/spaceus/dto4spaceus"
+	"github.com/sneat-co/sneat-ext-contracts/contactus/contactusmodels/briefs4contactus"
 	"github.com/sneat-co/sneat-go-core/coretypes"
 	"github.com/sneat-co/sneat-go-core/models/dbmodels"
 	"github.com/spf13/cobra"
