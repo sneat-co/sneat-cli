@@ -19,6 +19,7 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/tokensrc"
 	"github.com/sneat-co/sneat-cli/internal/tui"
 	"github.com/strongo/buildinfo"
+	"github.com/strongo/buildinfo/cobracmd"
 	"golang.org/x/term"
 )
 
@@ -86,16 +87,12 @@ func main() {
 		},
 	}
 	root := commands.Root(env)
-	// Cobra's own --version/-v flag: fed the same Info as the `version`
-	// subcommand below (buildinfo's Wire contract, adapted by hand since
-	// this CLI drives cobra directly rather than through charm.land/fang).
-	// SetVersionTemplate trims cobra's default "sneat version " prefix so
-	// --version prints exactly info.Short() — the bare semver the release
-	// gate's smoke test expects.
-	root.Version = info.Short()
-	root.SetVersionTemplate("{{.Version}}\n")
+	// WireCobra registers the `version` subcommand and wires cobra's own
+	// --version/-v flag from the same Info, so `sneat --version` and
+	// `sneat version` can never disagree
+	// (github.com/strongo/buildinfo/cobracmd.WireCobra).
+	cobracmd.WireCobra(root, info)
 	root.AddCommand(
-		commands.Version(info),
 		commands.Auth(env),
 		commands.Whoami(env),
 		commands.Space(env),
