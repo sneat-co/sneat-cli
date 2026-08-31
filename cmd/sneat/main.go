@@ -18,17 +18,18 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/sneat-co/sneat-cli/internal/tokensrc"
 	"github.com/sneat-co/sneat-cli/internal/tui"
+	"github.com/strongo/buildinfo"
 	"golang.org/x/term"
 )
 
-// Build metadata, overridable via -ldflags.
-var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
-)
-
 func main() {
+	// info resolves this build's version/commit/date once, from the
+	// github.com/strongo/buildinfo link-time vars stamped by
+	// .goreleaser.yaml's ldflags (falling back to runtime/debug.BuildInfo
+	// for `go run`/`go test`/an unstamped build). Both `sneat --version`
+	// and `sneat version` are wired from this single value below so they
+	// can never disagree.
+	info := buildinfo.Get("sneat")
 	path, err := session.DefaultPath(os.UserConfigDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sneat:", err)
@@ -80,13 +81,21 @@ func main() {
 				Contacts: chatContacts{contacts},
 				UID:      uid,
 				Email:    email,
-				Version:  version,
+				Version:  info.Version,
 			}))
 		},
 	}
 	root := commands.Root(env)
+	// Cobra's own --version/-v flag: fed the same Info as the `version`
+	// subcommand below (buildinfo's Wire contract, adapted by hand since
+	// this CLI drives cobra directly rather than through charm.land/fang).
+	// SetVersionTemplate trims cobra's default "sneat version " prefix so
+	// --version prints exactly info.Short() — the bare semver the release
+	// gate's smoke test expects.
+	root.Version = info.Short()
+	root.SetVersionTemplate("{{.Version}}\n")
 	root.AddCommand(
-		commands.Version(version, commit, date),
+		commands.Version(info),
 		commands.Auth(env),
 		commands.Whoami(env),
 		commands.Space(env),
