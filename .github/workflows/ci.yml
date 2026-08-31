@@ -24,7 +24,7 @@ jobs:
     # Pinned to an exact tag, not @main and not the moving @v1: unpinned CI
     # silently takes whatever landed upstream, and @v1 lagged 14 patch
     # releases behind while still accepting newer inputs.
-    uses: strongo/cicd/.github/workflows/workflow.yml@v1.14.14
+    uses: strongo/cicd/.github/workflows/workflow.yml@v1.14.17
     permissions:
       contents: write
     secrets:
