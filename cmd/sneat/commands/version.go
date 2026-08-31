@@ -1,16 +1,16 @@
 package commands
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+	"github.com/strongo/buildinfo"
+	buildinfocmd "github.com/strongo/buildinfo/cobracmd"
+)
 
-// Version prints build metadata as JSON. Values are injected via -ldflags.
-func Version(ver, commit, date string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print build version, commit hash, and build date",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return writeJSON(cmd.OutOrStdout(), map[string]string{
-				"version": ver, "commit": commit, "date": date,
-			})
-		},
-	}
+// Version returns the `version` subcommand. It delegates to
+// github.com/strongo/buildinfo/cobracmd.VersionCommand, which prints
+// info.Long() ("<name> <version> (<commit>) <date>") — the exact Info the
+// root command's --version/-v flag is also fed (see main.go), so the two
+// surfaces can never report different versions.
+func Version(info buildinfo.Info) *cobra.Command {
+	return buildinfocmd.VersionCommand(info)
 }
