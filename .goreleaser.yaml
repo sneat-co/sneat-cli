@@ -1,0 +1,96 @@
+# GoReleaser config for sneat-cli, driven by strongo/cicd's reusable release.yml
+# (see .github/workflows/release.yml). Scope: GitHub release + Homebrew cask
+# only — sneat-co has no AUR/Scoop/WinGet/Chocolatey/Snapcraft repos or tokens,
+# unlike the ingitdb-cli reference this config mirrors.
+version: 2
+
+project_name: sneat
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: sneat
+    main: ./cmd/sneat
+    binary: sneat
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      # Windows on arm64 is not published.
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: archive
+    ids: [sneat]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # Stable, OS/arch-templated name so the Homebrew cask url_template
+    # resolves every platform the same way.
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: checksums.txt
+
+# macOS signing + notarization. ACTIVE from this repo's first release (unlike
+# ingitdb-cli, where this block was a dormant pilot before its Apple
+# credentials were verified) — sneat-cli's release.yml sets
+# require_notarized_macos: true from day one, so a stale/missing credential
+# HARD FAILS the release rather than silently shipping an unsigned,
+# Gatekeeper-blocked darwin binary via the Homebrew cask below.
+#
+# `enabled` is gated on the MACOS_SIGN_P12 env var (forwarded by
+# .github/workflows/release.yml from the org-level secret). GoReleaser's
+# notarize step is pure Go (quill) and runs on the existing release job — no
+# macOS runner needed. See ingitdb/ingitdb-cli's .goreleaser.yaml, the
+# reference implementation this block is copied from.
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids: [sneat]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        wait: true
+        issuer_id: "{{ .Env.NOTARIZE_ISSUER_ID }}"
+        key_id: "{{ .Env.NOTARIZE_KEY_ID }}"
+        key: "{{ .Env.NOTARIZE_KEY }}"
+        timeout: 20m
+
+release:
+  github:
+    owner: sneat-co
+    name: sneat-cli
+
+# Homebrew cask (never a formula — standing rule). Cask publishing is a plain
+# git push to sneat-co/homebrew-tap, which runs fine on Linux. Token forwarded
+# by release.yml as $GORELEASER_GITHUB_TOKEN (the default GITHUB_TOKEN can't
+# push to a different repo). Install path: `brew install --cask sneat-co/tap/sneat`
+# (Homebrew strips the `homebrew-` prefix from the tap repo name).
+homebrew_casks:
+  - name: sneat
+    ids: [archive]
+    description: "sneat - Text-based User Interface for Sneat.app"
+    homepage: https://sneat.app
+    license: MIT
+    repository:
+      owner: sneat-co
+      name: homebrew-tap
+      token: "{{ .Env.GORELEASER_GITHUB_TOKEN }}"

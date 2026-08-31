@@ -2,6 +2,20 @@
 
 Text-based User Interface for [Sneat.app](https://sneat.app)
 
+## Install
+
+macOS or Linux, via Homebrew:
+
+```shell
+brew install --cask sneat-co/tap/sneat
+```
+
+Or build from source with Go:
+
+```shell
+go install github.com/sneat-co/sneat-cli/cmd/sneat@latest
+```
+
 <!-- dev-approach:v1 -->
 ## Our approach to development
 
