@@ -11,7 +11,7 @@ require (
 	github.com/bots-go-framework/bots-go-core v0.3.2
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/dal-go/dalgo v0.74.2
-	github.com/dal-go/dalgo2firestore v0.10.14
+	github.com/dal-go/dalgo2firestore v0.10.15
 	github.com/dal-go/dalgo2openvaultdb v0.3.1
 	github.com/dal-go/record v0.1.3
 	github.com/sneat-co/calendarius/backend v0.6.5
@@ -22,11 +22,11 @@ require (
 	github.com/sneat-co/sneat-go-core v0.66.7
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/buildinfo v0.2.0
+	github.com/strongo/buildinfo v0.2.1
 	github.com/strongo/strongoapp v0.31.56
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
-	google.golang.org/api v0.295.0
+	google.golang.org/api v0.296.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
