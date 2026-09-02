@@ -27,6 +27,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install specscore CLI
+        # Pinned: an unpinned `latest` install let specscore v0.38.3 (fixed
+        # parseFeatureIndexSummary to join whole wrapped paragraphs instead of
+        # first-line-only) silently change what feature-index-row-sync expects,
+        # reddening main's required lint gate with no repo-side change (same
+        # unpinned-toolchain failure class as the Go fleet's golangci coupling,
+        # strongo/cicd#52). Bump this deliberately, in the same commit that
+        # updates spec/features/README.md rows to match.
+        env:
+          SPECSCORE_VERSION: v0.38.3
         run: |
           curl -fsSL https://specscore.md/install/get-cli | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
