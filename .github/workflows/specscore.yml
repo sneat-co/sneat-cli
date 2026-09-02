@@ -35,7 +35,7 @@ jobs:
         # strongo/cicd#52). Bump this deliberately, in the same commit that
         # updates spec/features/README.md rows to match.
         env:
-          SPECSCORE_VERSION: v0.38.3
+          SPECSCORE_VERSION: v0.38.4
         run: |
           curl -fsSL https://specscore.md/install/get-cli | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
