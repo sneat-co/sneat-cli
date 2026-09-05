@@ -10,20 +10,20 @@ require (
 	cloud.google.com/go/firestore v1.25.0
 	github.com/bots-go-framework/bots-go-core v0.3.2
 	github.com/charmbracelet/x/ansi v0.11.8
-	github.com/dal-go/dalgo v0.74.2
-	github.com/dal-go/dalgo2firestore v0.10.14
+	github.com/dal-go/dalgo v0.79.3
+	github.com/dal-go/dalgo2firestore v0.10.15
 	github.com/dal-go/dalgo2openvaultdb v0.3.1
 	github.com/dal-go/record v0.1.3
-	github.com/sneat-co/calendarius/backend v0.6.5
-	github.com/sneat-co/contactus/backend v0.1.14
-	github.com/sneat-co/sneat-bots v0.30.10
-	github.com/sneat-co/sneat-core-modules v0.65.13
-	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.4
-	github.com/sneat-co/sneat-go-core v0.66.7
+	github.com/sneat-co/calendarius/backend v0.9.1
+	github.com/sneat-co/contactus/backend v0.3.6
+	github.com/sneat-co/sneat-bots v0.30.23
+	github.com/sneat-co/sneat-core-modules v0.72.1
+	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.8
+	github.com/sneat-co/sneat-go-core v0.67.8
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/buildinfo v0.2.0
-	github.com/strongo/strongoapp v0.31.56
+	github.com/strongo/strongoapp v0.31.57
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
 	google.golang.org/api v0.295.0
@@ -55,7 +55,7 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/crediterra/money v0.3.6 // indirect
+	github.com/crediterra/money v0.4.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -77,19 +77,21 @@ require (
 	github.com/sneat-co/assetus/backend v0.8.2 // indirect
 	github.com/sneat-co/commitius/backend v0.8.0 // indirect
 	github.com/sneat-co/listus/backend v0.1.14 // indirect
-	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.3 // indirect
+	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.4 // indirect
 	github.com/sneat-co/sneat-ext-contracts/listus v0.0.6 // indirect
 	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.1 // indirect
+	github.com/sneat-co/sneat-translations v0.10.5 // indirect
 	github.com/sneat-co/trackus/backend v0.1.7 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
-	github.com/strongo/analytics v0.2.5 // indirect
+	github.com/strongo/analytics v0.2.8 // indirect
 	github.com/strongo/decimal v0.1.2 // indirect
-	github.com/strongo/delaying v0.2.3 // indirect
-	github.com/strongo/logus v0.4.1 // indirect
+	github.com/strongo/delaying v0.2.6 // indirect
+	github.com/strongo/i18n v0.8.20 // indirect
+	github.com/strongo/logus v0.4.3 // indirect
 	github.com/strongo/random v0.0.1 // indirect
-	github.com/strongo/slice v0.3.9 // indirect
-	github.com/strongo/validation v0.0.12 // indirect
+	github.com/strongo/slice v0.3.10 // indirect
+	github.com/strongo/validation v0.0.13 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
@@ -102,7 +104,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
