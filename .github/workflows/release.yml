@@ -40,7 +40,7 @@ jobs:
     # macos_signing_preflight job, gated exactly on this input. Bump this
     # pin deliberately, and re-verify the preflight job is still wired,
     # rather than tracking `@v1`.
-    uses: strongo/cicd/.github/workflows/release.yml@v1.18.0
+    uses: strongo/cicd/.github/workflows/release.yml@v1.20.1
     permissions:
       contents: write
       # Lets the require_workflow_success guard read the quality
