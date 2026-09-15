@@ -19,8 +19,8 @@ require (
 	github.com/sneat-co/sneat-ai-backend v0.0.6
 	github.com/sneat-co/sneat-bots v0.30.26
 	github.com/sneat-co/sneat-core-modules v0.73.0
-	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.9
-	github.com/sneat-co/sneat-go-core v0.69.0
+	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.10
+	github.com/sneat-co/sneat-go-core v0.70.5
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/buildinfo v0.2.1
