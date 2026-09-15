@@ -10,8 +10,8 @@ require (
 	cloud.google.com/go/firestore v1.25.0
 	github.com/bots-go-framework/bots-go-core v0.3.3
 	github.com/charmbracelet/x/ansi v0.11.8
-	github.com/dal-go/dalgo v0.79.4
-	github.com/dal-go/dalgo2firestore v0.10.17
+	github.com/dal-go/dalgo v0.80.4
+	github.com/dal-go/dalgo2firestore v0.10.21
 	github.com/dal-go/dalgo2openvaultdb v0.3.1
 	github.com/dal-go/record v0.1.3
 	github.com/sneat-co/calendarius/backend v0.10.1
@@ -24,10 +24,10 @@ require (
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/buildinfo v0.2.1
-	github.com/strongo/strongoapp v0.31.58
-	golang.org/x/oauth2 v0.36.0
-	golang.org/x/term v0.45.0
-	google.golang.org/api v0.297.0
+	github.com/strongo/strongoapp v0.31.59
+	golang.org/x/oauth2 v0.37.0
+	golang.org/x/term v0.46.0
+	google.golang.org/api v0.298.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -108,7 +108,7 @@ require (
 	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260803160001-6ac0973c030d // indirect
