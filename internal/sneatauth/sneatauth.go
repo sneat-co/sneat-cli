@@ -76,6 +76,29 @@ func (c *Client) SignInWithPassword(ctx context.Context, email, password string)
 	}, nil
 }
 
+// SignInWithCustomToken exchanges a short-lived Firebase custom token for the
+// normal ID and refresh tokens used by the CLI. The custom token is supplied by
+// auth.sneat.co after a browser-approved device authorization and is never
+// persisted locally.
+func (c *Client) SignInWithCustomToken(ctx context.Context, token string) (Result, error) {
+	body, _ := json.Marshal(map[string]any{"token": token, "returnSecureToken": true})
+	u := c.identityBase + "/accounts:signInWithCustomToken?key=" + url.QueryEscape(c.apiKey)
+	var out struct {
+		IDToken      string `json:"idToken"`
+		RefreshToken string `json:"refreshToken"`
+		LocalID      string `json:"localId"`
+		Email        string `json:"email"`
+		ExpiresIn    string `json:"expiresIn"`
+	}
+	if err := c.doJSON(ctx, u, "application/json", bytes.NewReader(body), &out); err != nil {
+		return Result{}, err
+	}
+	return Result{
+		IDToken: out.IDToken, RefreshToken: out.RefreshToken, UID: out.LocalID,
+		Email: out.Email, ExpiresIn: parseSeconds(out.ExpiresIn),
+	}, nil
+}
+
 // Refresh exchanges a refresh token for a fresh ID token.
 func (c *Client) Refresh(ctx context.Context, refreshToken string) (Result, error) {
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}}

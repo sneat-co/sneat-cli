@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,12 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/session"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 )
+
+type fakeDeviceFlow struct{ res sneatauth.Result }
+
+func (f fakeDeviceFlow) Run(context.Context, io.Writer, io.Writer) (sneatauth.Result, error) {
+	return f.res, nil
+}
 
 type fakeBrowserFlow struct{ res browserauth.Result }
 
@@ -51,6 +59,11 @@ func testEnv(store SessionStore, res sneatauth.Result) Env {
 			return fakeBrowserFlow{res: browserauth.Result{
 				IDToken: "bidt", RefreshToken: "brft", UID: "bu1", Email: "b@b.c", ExpiresIn: time.Hour,
 			}}
+		},
+		NewDeviceFlow: func(config.Config, string) (DeviceFlow, error) {
+			return fakeDeviceFlow{res: sneatauth.Result{
+				IDToken: "bidt", RefreshToken: "brft", UID: "bu1", Email: "b@b.c", ExpiresIn: time.Hour,
+			}}, nil
 		},
 	}
 }
@@ -117,5 +130,21 @@ func TestAuthLogout_ClearsSession(t *testing.T) {
 	}
 	if !store.cleared {
 		t.Fatalf("store.Clear not called")
+	}
+}
+
+func TestAuthStatus_PrintsNoSecret(t *testing.T) {
+	store := &fakeStore{load: &session.Session{UID: "u1", Email: "a@b.c", Project: "sneat-eur3-1", IDToken: "never-print", RefreshToken: "also-never-print", ExpiresAt: time.Unix(1000, 0)}}
+	env := testEnv(store, sneatauth.Result{})
+	root := Root(env)
+	root.AddCommand(Auth(env))
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetArgs([]string{"auth", "status"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if strings.Contains(output.String(), "never-print") || strings.Contains(output.String(), "also-never-print") {
+		t.Fatalf("status exposed a credential: %q", output.String())
 	}
 }

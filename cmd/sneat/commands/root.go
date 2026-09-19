@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/sneat-co/sneat-ai-backend/actionspec"
@@ -31,13 +32,21 @@ type BrowserFlow interface {
 	Run(ctx context.Context) (browserauth.Result, error)
 }
 
+// DeviceFlow runs the shared browser-approved device authorization and returns
+// a normal Firebase session for the existing CLI clients.
+type DeviceFlow interface {
+	Run(ctx context.Context, output, errorOutput io.Writer) (sneatauth.Result, error)
+}
+
 // Env holds injected process dependencies so commands stay unit-testable.
 type Env struct {
 	Getenv            func(string) string
 	Now               func() time.Time
 	Store             SessionStore
+	NewInsecureStore  func() SessionStore
 	NewAuthClient     func(cfg config.Config) AuthClient
 	NewBrowserFlow    func(cfg config.Config) BrowserFlow
+	NewDeviceFlow     func(cfg config.Config, issuer string) (DeviceFlow, error)
 	NewSpacesReader   func(cfg config.Config) (SpacesReader, error)
 	NewContactsReader func(cfg config.Config) (ContactsReader, error)
 	NewContactWriter  func(cfg config.Config) (ContactWriter, error)
@@ -88,6 +97,7 @@ func Root(env Env) *cobra.Command {
 	cmd.PersistentFlags().String("project", "", "Firebase project id (default sneat-eur3-1)")
 	cmd.PersistentFlags().String("api-key", "", "Firebase web API key")
 	cmd.PersistentFlags().String("auth-domain", "", "Firebase auth domain for browser sign-in (default sneat.app)")
+	cmd.PersistentFlags().String("auth-host", "", "shared authorization server URL (default https://auth.sneat.co; HTTP loopback only for development)")
 	cmd.PersistentFlags().String("api-base-url", "", "sneat-go API base URL")
 	cmd.PersistentFlags().String("auth-emulator", "", "Firebase Auth emulator host, e.g. localhost:9099")
 	cmd.PersistentFlags().String("firestore-emulator", "", "Firestore emulator host, e.g. localhost:8080")

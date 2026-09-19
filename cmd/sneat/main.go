@@ -13,6 +13,7 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/chat"
 	"github.com/sneat-co/sneat-cli/internal/chattui"
 	"github.com/sneat-co/sneat-cli/internal/config"
+	"github.com/sneat-co/sneat-cli/internal/deviceflow"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/sneat-co/sneat-cli/internal/session"
 	"github.com/sneat-co/sneat-cli/internal/sneatapi"
@@ -21,6 +22,7 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/tui"
 	"github.com/strongo/buildinfo"
 	"github.com/strongo/buildinfo/cobracmd"
+	"github.com/strongo/deviceauth"
 	"golang.org/x/term"
 )
 
@@ -37,11 +39,24 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sneat:", err)
 		os.Exit(1)
 	}
-	store := session.NewStore(path)
+	metadataPath, err := session.DefaultMetadataPath(os.UserConfigDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sneat:", err)
+		os.Exit(1)
+	}
+	credentialStore, err := deviceauth.NewKeyringStore("sneat-cli", "https://auth.sneat.co|sneat-cli")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sneat:", err)
+		os.Exit(1)
+	}
+	store := session.NewSecureStore(credentialStore, path, metadataPath)
 	env := commands.Env{
 		Getenv: os.Getenv,
 		Now:    time.Now,
 		Store:  store,
+		NewInsecureStore: func() commands.SessionStore {
+			return session.NewStore(path)
+		},
 		NewAuthClient: func(cfg config.Config) commands.AuthClient {
 			return sneatauth.New(sneatauth.Options{APIKey: cfg.APIKey, AuthEmulatorHost: cfg.AuthEmulatorHost})
 		},
@@ -53,6 +68,17 @@ func main() {
 				AuthEmulatorHost: cfg.AuthEmulatorHost,
 				OpenBrowser:      browserauth.OpenBrowser,
 			}
+		},
+		NewDeviceFlow: func(cfg config.Config, issuer string) (commands.DeviceFlow, error) {
+			return deviceflow.New(deviceflow.Options{
+				Issuer:      issuer,
+				OpenBrowser: deviceauth.OpenBrowser,
+				Exchange: sneatauth.New(sneatauth.Options{
+					APIKey:           cfg.APIKey,
+					AuthEmulatorHost: cfg.AuthEmulatorHost,
+				}),
+				DeviceInfo: deviceflow.DeviceInfo(info.Version),
+			})
 		},
 		NewSpacesReader: func(cfg config.Config) (commands.SpacesReader, error) {
 			auth := sneatauth.New(sneatauth.Options{APIKey: cfg.APIKey, AuthEmulatorHost: cfg.AuthEmulatorHost})
