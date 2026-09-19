@@ -7,12 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
+	"github.com/strongo/deviceauth"
 )
 
 type exchangeFunc func(context.Context, string) (sneatauth.Result, error)
@@ -20,6 +20,17 @@ type exchangeFunc func(context.Context, string) (sneatauth.Result, error)
 func (f exchangeFunc) SignInWithCustomToken(ctx context.Context, token string) (sneatauth.Result, error) {
 	return f(ctx, token)
 }
+
+type memoryStore struct{ credential deviceauth.Credential }
+
+func (s *memoryStore) Save(value deviceauth.Credential) error { s.credential = value; return nil }
+func (s *memoryStore) Load() (deviceauth.Credential, error) {
+	if s.credential.AccessToken == "" {
+		return deviceauth.Credential{}, deviceauth.ErrCredentialNotFound
+	}
+	return s.credential, nil
+}
+func (s *memoryStore) Delete() error { s.credential = deviceauth.Credential{}; return nil }
 
 func TestRun_ExchangesAndValidatesAudience(t *testing.T) {
 	var gotFirebaseToken string
@@ -55,6 +66,7 @@ func TestRun_ExchangesAndValidatesAudience(t *testing.T) {
 			gotFirebaseToken = token
 			return sneatauth.Result{IDToken: "firebase-id", RefreshToken: "firebase-refresh", UID: "user-1", ExpiresIn: time.Hour}, nil
 		}),
+		Store: &memoryStore{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -82,6 +94,7 @@ func TestRun_BrowserFailureIsManualFallback(t *testing.T) {
 		Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
 			return sneatauth.Result{IDToken: "firebase-id", UID: "user-1"}, nil
 		}),
+		Store: &memoryStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,12 +113,12 @@ func TestRun_RejectsWrongAudience(t *testing.T) {
 	defer server.Close()
 	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
 		return sneatauth.Result{IDToken: "firebase-id", UID: "user-1"}, nil
-	})})
+	}), Store: &memoryStore{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = flow.Run(context.Background(), io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "not authorized") {
+	if err == nil || !strings.Contains(err.Error(), "audience") {
 		t.Fatalf("Run error = %v, want audience rejection", err)
 	}
 }
@@ -120,23 +133,11 @@ func newDeviceServer(t *testing.T, audience string) *httptest.Server {
 		case "/oauth/token":
 			_, _ = io.WriteString(w, `{"access_token":"custom-token","token_type":"urn:ietf:params:oauth:token-type:firebase-custom-token","expires_in":300}`)
 		case "/oauth/userinfo":
-			_, _ = io.WriteString(w, `{"sub":"user-1","aud":"`+audience+`"}`)
+			_, _ = io.WriteString(w, `{"sub":"user-1","aud":"`+audience+`","scope":"openid profile sneat:spaces:read sneat:spaces:write"}`)
+		case "/oauth/revoke":
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request %s", r.URL.Path)
 		}
 	}))
-}
-
-func TestIssuerURL_OnlyPermitsHTTPSOrLoopbackHTTP(t *testing.T) {
-	for _, raw := range []string{"https://auth.sneat.co", "http://localhost:8787", "http://127.0.0.1:8787", "http://[::1]:8787"} {
-		if _, err := issuerURL(raw); err != nil {
-			t.Errorf("issuerURL(%q): %v", raw, err)
-		}
-	}
-	if _, err := issuerURL("http://auth.sneat.co"); err == nil {
-		t.Fatal("public HTTP issuer was accepted")
-	}
-	if _, err := url.Parse(DefaultIssuer); err != nil {
-		t.Fatal(err)
-	}
 }

@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -29,7 +30,13 @@ func (f *fakeCredentialStore) Load() (deviceauth.Credential, error) {
 	}
 	return f.credential, nil
 }
-func (f *fakeCredentialStore) Delete() error { return f.deleteErr }
+func (f *fakeCredentialStore) Delete() error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.credential = deviceauth.Credential{}
+	return nil
+}
 
 func TestSecureStore_SaveLoadUsesCredentialStore(t *testing.T) {
 	credentials := &fakeCredentialStore{}
@@ -73,5 +80,41 @@ func TestSecureStore_ClearRetainsLocalDataWhenKeyringDeleteFails(t *testing.T) {
 	store := NewSecureStore(credentials, filepath.Join(t.TempDir(), "legacy.json"), filepath.Join(t.TempDir(), "metadata.json"))
 	if err := store.Clear(); err == nil {
 		t.Fatal("Clear succeeded despite keyring failure")
+	}
+}
+
+func TestSecureStore_RollsBackKeyringWhenMetadataWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	blockedParent := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blockedParent, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous := deviceauth.Credential{AccessToken: "old", RefreshToken: "old-refresh"}
+	credentials := &fakeCredentialStore{credential: previous}
+	store := NewSecureStore(credentials, filepath.Join(dir, "legacy.json"), filepath.Join(blockedParent, "metadata.json"))
+	if err := store.Save(Session{IDToken: "new", RefreshToken: "new-refresh"}); err == nil {
+		t.Fatal("Save succeeded despite metadata failure")
+	}
+	if credentials.credential.AccessToken != previous.AccessToken {
+		t.Fatalf("keyring credential was not rolled back: %+v", credentials.credential)
+	}
+}
+
+func TestInsecureSelectionIsVisibleToSecureStore(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, "legacy.json")
+	metadataPath := filepath.Join(dir, "metadata.json")
+	insecure := NewInsecureStore(legacyPath, metadataPath)
+	want := Session{UID: "u1", IDToken: "id-token", RefreshToken: "refresh-token"}
+	if err := insecure.Save(want); err != nil {
+		t.Fatal(err)
+	}
+	secure := NewSecureStore(&fakeCredentialStore{}, legacyPath, metadataPath)
+	got, err := secure.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IDToken != want.IDToken {
+		t.Fatalf("secure store ignored explicit insecure selection: %+v", got)
 	}
 }

@@ -55,7 +55,7 @@ func main() {
 		Now:    time.Now,
 		Store:  store,
 		NewInsecureStore: func() commands.SessionStore {
-			return session.NewStore(path)
+			return session.NewInsecureStore(path, metadataPath)
 		},
 		NewAuthClient: func(cfg config.Config) commands.AuthClient {
 			return sneatauth.New(sneatauth.Options{APIKey: cfg.APIKey, AuthEmulatorHost: cfg.AuthEmulatorHost})
@@ -78,6 +78,7 @@ func main() {
 					AuthEmulatorHost: cfg.AuthEmulatorHost,
 				}),
 				DeviceInfo: deviceflow.DeviceInfo(info.Version),
+				Store:      store.CredentialStore(),
 			})
 		},
 		NewSpacesReader: func(cfg config.Config) (commands.SpacesReader, error) {

@@ -55,14 +55,11 @@ func DefaultMetadataPath(userConfigDir func() (string, error)) (string, error) {
 
 // Save writes the session as 0600 JSON, creating the parent dir (0700).
 func (s *Store) Save(sess Session) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(sess, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0o600)
+	return atomicWriteFile(s.path, data, 0o600)
 }
 
 // Load reads the session, returning ErrNoSession if the file is absent.
@@ -112,9 +109,15 @@ func NewSecureStore(credentials deviceauth.Store, legacyPath, metadataPath strin
 	}
 }
 
+// CredentialStore exposes the underlying secure store to the shared device
+// client. Callers must use its issuer/client scoped wrapper before loading or
+// saving credentials.
+func (s *SecureStore) CredentialStore() deviceauth.Store { return s.credentials }
+
 type metadata struct {
 	Project      string `json:"project"`
 	CurrentSpace string `json:"currentSpace,omitempty"`
+	Insecure     bool   `json:"insecureStorage,omitempty"`
 }
 
 // Save writes tokens to the keyring before updating non-secret metadata.
@@ -122,16 +125,29 @@ func (s *SecureStore) Save(sess Session) error {
 	if s.credentials == nil {
 		return errors.New("secure session store has no credential store")
 	}
-	if err := s.credentials.Save(deviceauth.Credential{
+	previous, previousErr := s.credentials.Load()
+	if previousErr != nil && !errors.Is(previousErr, deviceauth.ErrCredentialNotFound) {
+		return previousErr
+	}
+	credential := deviceauth.Credential{
 		AccessToken:  sess.IDToken,
 		RefreshToken: sess.RefreshToken,
 		Expiry:       sess.ExpiresAt,
 		AccountID:    sess.UID,
 		AccountName:  sess.Email,
-	}); err != nil {
+	}
+	if err := s.credentials.Save(credential); err != nil {
 		return err
 	}
-	return s.saveMetadata(metadata{Project: sess.Project, CurrentSpace: sess.CurrentSpace})
+	if err := s.saveMetadata(metadata{Project: sess.Project, CurrentSpace: sess.CurrentSpace}); err != nil {
+		if previousErr == nil {
+			_ = s.credentials.Save(previous)
+		} else {
+			_ = s.credentials.Delete()
+		}
+		return err
+	}
+	return nil
 }
 
 // Load returns the keyring session, migrating a legacy 0600 session only after
@@ -140,6 +156,13 @@ func (s *SecureStore) Save(sess Session) error {
 func (s *SecureStore) Load() (Session, error) {
 	if s.credentials == nil {
 		return Session{}, errors.New("secure session store has no credential store")
+	}
+	meta, err := s.loadMetadata()
+	if err != nil {
+		return Session{}, err
+	}
+	if meta.Insecure {
+		return s.legacy.Load()
 	}
 	credential, err := s.credentials.Load()
 	if errors.Is(err, deviceauth.ErrCredentialNotFound) {
@@ -150,12 +173,11 @@ func (s *SecureStore) Load() (Session, error) {
 		if err := s.Save(legacy); err != nil {
 			return Session{}, fmt.Errorf("migrate legacy session to keyring: %w", err)
 		}
+		if err := s.legacy.Clear(); err != nil {
+			return Session{}, fmt.Errorf("remove migrated legacy session: %w", err)
+		}
 		return legacy, nil
 	}
-	if err != nil {
-		return Session{}, err
-	}
-	meta, err := s.loadMetadata()
 	if err != nil {
 		return Session{}, err
 	}
@@ -168,6 +190,42 @@ func (s *SecureStore) Load() (Session, error) {
 		ExpiresAt:    credential.Expiry,
 		CurrentSpace: meta.CurrentSpace,
 	}, nil
+}
+
+// InsecureStore is an explicit headless fallback. It records the selection in
+// non-secret metadata so subsequent token sources consistently use the same
+// 0600 store until a normal secure login replaces it.
+type InsecureStore struct {
+	legacy       *Store
+	metadataPath string
+}
+
+func NewInsecureStore(legacyPath, metadataPath string) *InsecureStore {
+	return &InsecureStore{legacy: NewStore(legacyPath), metadataPath: metadataPath}
+}
+
+func (s *InsecureStore) Save(value Session) error {
+	if err := s.legacy.Save(value); err != nil {
+		return err
+	}
+	data, err := json.Marshal(metadata{Project: value.Project, CurrentSpace: value.CurrentSpace, Insecure: true})
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(s.metadataPath, data, 0o600)
+}
+
+func (s *InsecureStore) Load() (Session, error) { return s.legacy.Load() }
+
+func (s *InsecureStore) Clear() error {
+	if err := s.legacy.Clear(); err != nil {
+		return err
+	}
+	err := os.Remove(s.metadataPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // Clear removes keyring, migration copy, and non-secret metadata. Local data
@@ -193,14 +251,51 @@ func (s *SecureStore) saveMetadata(meta metadata) error {
 	if s.metadataPath == "" {
 		return errors.New("secure session metadata path is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(s.metadataPath), 0o700); err != nil {
-		return err
-	}
 	data, err := json.Marshal(meta)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.metadataPath, data, 0o600)
+	return atomicWriteFile(s.metadataPath, data, 0o600)
+}
+
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(parent, ".session-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() { _ = os.Remove(tempPath) }()
+	if err := temp.Chmod(mode); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		return err
+	}
+	dir, err := os.Open(parent)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func (s *SecureStore) loadMetadata() (metadata, error) {
