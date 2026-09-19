@@ -419,8 +419,11 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
-	return dir.Sync()
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return err
+	}
+	return dir.Close()
 }
 
 func (s *SecureStore) loadMetadata() (metadata, error) {
