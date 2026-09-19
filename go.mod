@@ -24,6 +24,7 @@ require (
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/buildinfo v0.2.1
+	github.com/strongo/deviceauth v0.1.0
 	github.com/strongo/strongoapp v0.31.58
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
@@ -91,7 +92,6 @@ require (
 	github.com/strongo/analytics v0.2.8 // indirect
 	github.com/strongo/decimal v0.1.2 // indirect
 	github.com/strongo/delaying v0.2.6 // indirect
-	github.com/strongo/deviceauth v0.0.2 // indirect
 	github.com/strongo/i18n v0.8.20 // indirect
 	github.com/strongo/logus v0.4.3 // indirect
 	github.com/strongo/random v0.0.2 // indirect
