@@ -4,17 +4,40 @@ Text-based User Interface for [Sneat.app](https://sneat.app)
 
 ## Install
 
-macOS or Linux, via Homebrew:
+No Go installation is needed.
+
+### Ask an AI agent
+
+Send this prompt to your agent:
+
+```text
+Install and set up the Sneat.app CLI on this machine.
+
+Follow the official instructions:
+https://sneat.app/en/agent-instructions/install/
+```
+
+### Homebrew (macOS or Linux)
 
 ```shell
 brew install --cask sneat-co/tap/sneat
 ```
 
-Or build from source with Go:
+### Direct install (macOS or Linux)
 
 ```shell
-go install github.com/sneat-co/sneat-cli/cmd/sneat@latest
+(p=$(mktemp) && trap 'rm -f "$p"' EXIT && curl -fsSL https://sneat.app/install.sh -o "$p" && sh "$p")
 ```
+
+### Direct install (Windows PowerShell)
+
+```powershell
+$p=Join-Path $env:TEMP ("sneat-"+[guid]::NewGuid()+".ps1"); try { irm https://sneat.app/install.ps1 -OutFile $p -EA Stop; & $p } finally { Remove-Item $p -EA SilentlyContinue }
+```
+
+The direct installers select the current operating system and architecture,
+download the latest official GitHub release, and verify its SHA-256 checksum
+before replacing `sneat`. See all options at [sneat.app/en/install/](https://sneat.app/en/install/).
 
 ## Commands
 
