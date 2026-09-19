@@ -22,6 +22,12 @@ func (f exchangeFunc) SignInWithCustomToken(ctx context.Context, token string) (
 	return f(ctx, token)
 }
 
+type refreshFunc func(context.Context, string) (sneatauth.Result, error)
+
+func (f refreshFunc) Refresh(ctx context.Context, token string) (sneatauth.Result, error) {
+	return f(ctx, token)
+}
+
 type memoryStore struct {
 	value session.Session
 	has   bool
@@ -179,6 +185,71 @@ func TestLogout_RemoteFailureRetainsSelectedSession(t *testing.T) {
 	}
 	if !store.has {
 		t.Fatal("remote revoke failure deleted the local session")
+	}
+}
+
+func TestLogout_RefreshesExpiredSessionBeforeRevocation(t *testing.T) {
+	store := &memoryStore{}
+	var revoked string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth/device/code":
+			_, _ = io.WriteString(w, `{"device_code":"device","user_code":"ABCD-EFGH","verification_uri":"https://verify.example/device","expires_in":300,"interval":1}`)
+		case "/oauth/token":
+			_, _ = io.WriteString(w, `{"access_token":"custom-token","token_type":"urn:ietf:params:oauth:token-type:firebase-custom-token","expires_in":300}`)
+		case "/oauth/userinfo":
+			_, _ = io.WriteString(w, `{"sub":"user-1","aud":"sneat-cli","scope":"openid profile sneat:spaces:read sneat:spaces:write"}`)
+		case "/oauth/revoke":
+			revoked = r.FormValue("token")
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{IDToken: "old-id", RefreshToken: "old-refresh", UID: "user-1", ExpiresIn: time.Hour}, nil
+	}), Refresh: refreshFunc(func(_ context.Context, token string) (sneatauth.Result, error) {
+		if token != "old-refresh" {
+			t.Errorf("refresh token = %q", token)
+		}
+		return sneatauth.Result{IDToken: "refreshed-id", RefreshToken: "rotated-refresh", ExpiresIn: time.Hour}, nil
+	}), Store: store, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Run(context.Background(), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	store.value.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := flow.Logout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if revoked != "refreshed-id" || store.has {
+		t.Fatalf("revoked=%q local session retained=%v", revoked, store.has)
+	}
+}
+
+func TestLogout_RefreshFailureRetainsSelectedSession(t *testing.T) {
+	store := &memoryStore{}
+	server := newDeviceServer(t, ClientID)
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{IDToken: "old-id", RefreshToken: "old-refresh", UID: "user-1", ExpiresIn: time.Hour}, nil
+	}), Refresh: refreshFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{}, errors.New("refresh failed")
+	}), Store: store, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Run(context.Background(), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	store.value.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := flow.Logout(context.Background()); err == nil || !strings.Contains(err.Error(), "refresh failed") {
+		t.Fatalf("logout error=%v", err)
+	}
+	if !store.has {
+		t.Fatal("refresh failure deleted the local session")
 	}
 }
 

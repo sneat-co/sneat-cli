@@ -45,12 +45,19 @@ type CustomTokenExchanger interface {
 	SignInWithCustomToken(context.Context, string) (sneatauth.Result, error)
 }
 
+// SessionRefresher exchanges a durable Firebase refresh token for a current
+// ID token before remote grant revocation.
+type SessionRefresher interface {
+	Refresh(context.Context, string) (sneatauth.Result, error)
+}
+
 // Options supplies the process dependencies needed by the flow.
 type Options struct {
 	Issuer      string
 	HTTPClient  *http.Client
 	OpenBrowser func(string) error
 	Exchange    CustomTokenExchanger
+	Refresh     SessionRefresher
 	DeviceInfo  deviceauth.DeviceInfo
 	Store       session.SessionStore
 	Project     string
@@ -134,6 +141,28 @@ func (f *Flow) Run(ctx context.Context, output, errorOutput io.Writer) (sneataut
 func (f *Flow) Logout(ctx context.Context) error {
 	if f == nil || f.client == nil || f.store == nil {
 		return errors.New("device flow is not configured")
+	}
+	credential, err := f.client.ScopedStore(f.store).Load()
+	if err != nil {
+		return err
+	}
+	if !credential.Expiry.IsZero() && !time.Now().Before(credential.Expiry.Add(-time.Minute)) {
+		if f.options.Refresh == nil {
+			return errors.New("device flow: Firebase session refresher is required")
+		}
+		refreshed, err := f.options.Refresh.Refresh(ctx, credential.RefreshToken)
+		if err != nil {
+			return fmt.Errorf("refresh Firebase session before logout: %w", err)
+		}
+		credential.AccessToken = refreshed.IDToken
+		if refreshed.RefreshToken != "" {
+			credential.RefreshToken = refreshed.RefreshToken
+		}
+		credential.Expiry = time.Now().Add(refreshed.ExpiresIn)
+		credential.TokenType = "Bearer"
+		if err := f.client.ScopedStore(f.store).Save(credential); err != nil {
+			return fmt.Errorf("save refreshed Firebase session before logout: %w", err)
+		}
 	}
 	return f.client.Logout(ctx, f.store)
 }

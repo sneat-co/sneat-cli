@@ -278,6 +278,13 @@ func (s *InsecureStore) Clear() error {
 // Clear removes keyring, migration copy, and non-secret metadata. Local data
 // remains intact if the keyring delete itself fails.
 func (s *SecureStore) Clear() error {
+	meta, err := s.loadMetadata()
+	if err != nil {
+		return err
+	}
+	if meta.Insecure {
+		return s.clearPlaintextSession()
+	}
 	credentials, err := s.credentialStore()
 	if err != nil {
 		return err
@@ -285,10 +292,14 @@ func (s *SecureStore) Clear() error {
 	if err := credentials.Delete(); err != nil {
 		return err
 	}
+	return s.clearPlaintextSession()
+}
+
+func (s *SecureStore) clearPlaintextSession() error {
 	if err := s.legacy.Clear(); err != nil {
 		return err
 	}
-	err = os.Remove(s.metadataPath)
+	err := os.Remove(s.metadataPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

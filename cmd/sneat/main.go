@@ -67,16 +67,18 @@ func main() {
 			}
 		},
 		NewDeviceFlow: func(cfg config.Config, issuer string, selectedStore commands.SessionStore) (commands.DeviceFlow, error) {
+			firebaseAuth := sneatauth.New(sneatauth.Options{
+				APIKey:           cfg.APIKey,
+				AuthEmulatorHost: cfg.AuthEmulatorHost,
+			})
 			return deviceflow.New(deviceflow.Options{
 				Issuer:      issuer,
 				OpenBrowser: deviceauth.OpenBrowser,
-				Exchange: sneatauth.New(sneatauth.Options{
-					APIKey:           cfg.APIKey,
-					AuthEmulatorHost: cfg.AuthEmulatorHost,
-				}),
-				DeviceInfo: deviceflow.DeviceInfo(info.Version),
-				Store:      selectedStore,
-				Project:    cfg.Project,
+				Exchange:    firebaseAuth,
+				Refresh:     firebaseAuth,
+				DeviceInfo:  deviceflow.DeviceInfo(info.Version),
+				Store:       selectedStore,
+				Project:     cfg.Project,
 			})
 		},
 		NewSpacesReader: func(cfg config.Config) (commands.SpacesReader, error) {

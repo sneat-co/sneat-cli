@@ -118,3 +118,30 @@ func TestInsecureSelectionIsVisibleToSecureStore(t *testing.T) {
 		t.Fatalf("secure store ignored explicit insecure selection: %+v", got)
 	}
 }
+
+func TestSecureStore_ClearHonorsPersistedInsecureSelectionWithoutKeyring(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, "legacy.json")
+	metadataPath := filepath.Join(dir, "metadata.json")
+	insecure := NewInsecureStore(legacyPath, metadataPath)
+	if err := insecure.Save(Session{UID: "u1", IDToken: "id-token", RefreshToken: "refresh-token"}); err != nil {
+		t.Fatal(err)
+	}
+	keyringCalled := false
+	secure := NewLazySecureStore(func() (deviceauth.Store, error) {
+		keyringCalled = true
+		return nil, errors.New("keyring unavailable")
+	}, legacyPath, metadataPath)
+	if err := secure.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	if keyringCalled {
+		t.Fatal("Clear initialized keyring despite persisted insecure selection")
+	}
+	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy plaintext retained: %v", err)
+	}
+	if _, err := os.Stat(metadataPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("insecure metadata retained: %v", err)
+	}
+}
