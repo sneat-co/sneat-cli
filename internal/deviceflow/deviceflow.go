@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sneat-co/sneat-cli/internal/session"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/strongo/deviceauth"
 	"golang.org/x/oauth2"
@@ -51,13 +52,15 @@ type Options struct {
 	OpenBrowser func(string) error
 	Exchange    CustomTokenExchanger
 	DeviceInfo  deviceauth.DeviceInfo
-	Store       deviceauth.Store
+	Store       session.SessionStore
+	Project     string
 }
 
 // Flow runs browser-approved login for Sneat CLI.
 type Flow struct {
 	options Options
 	client  *deviceauth.Client
+	store   deviceauth.Store
 }
 
 // New validates and returns a device flow.
@@ -91,7 +94,11 @@ func New(options Options) (*Flow, error) {
 	if options.DeviceInfo.Arch == "" {
 		options.DeviceInfo.Arch = runtime.GOARCH
 	}
-	return &Flow{options: options, client: client}, nil
+	return &Flow{
+		options: options,
+		client:  client,
+		store:   session.NewDeviceAuthStore(options.Store, options.Project),
+	}, nil
 }
 
 // Run performs RFC 8628 authorization, exchanges its one-use custom token,
@@ -111,9 +118,22 @@ func (f *Flow) Run(ctx context.Context, output, errorOutput io.Writer) (sneataut
 			}
 			return &oauth2.Token{AccessToken: session.IDToken, TokenType: "Bearer", RefreshToken: session.RefreshToken, Expiry: time.Now().Add(session.ExpiresIn)}, nil
 		},
-	}, f.options.Store)
+	}, f.store)
 	if err != nil {
 		return sneatauth.Result{}, err
 	}
-	return sneatauth.Result{IDToken: auth.SessionToken.AccessToken, RefreshToken: auth.SessionToken.RefreshToken, UID: auth.Identity.Subject, Email: auth.Identity.Email, ExpiresIn: time.Until(auth.SessionToken.Expiry)}, nil
+	return sneatauth.Result{
+		IDToken: auth.SessionToken.AccessToken, RefreshToken: auth.SessionToken.RefreshToken,
+		UID: auth.Identity.Subject, Email: auth.Identity.Email,
+		ExpiresIn: time.Until(auth.SessionToken.Expiry), Warnings: auth.Warnings,
+	}, nil
+}
+
+// Logout revokes the remote OAuth grant before deleting the selected local
+// session. deviceauth deliberately preserves local credentials on failure.
+func (f *Flow) Logout(ctx context.Context) error {
+	if f == nil || f.client == nil || f.store == nil {
+		return errors.New("device flow is not configured")
+	}
+	return f.client.Logout(ctx, f.store)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/strongo/deviceauth"
@@ -25,6 +26,19 @@ type Session struct {
 	// CurrentSpace is the default space for commands when --space is omitted.
 	// It may be a real space id or a pseudo id ("family" / "private").
 	CurrentSpace string `json:"currentSpace,omitempty"`
+	// The following fields bind a device-auth session to its issuer/client.
+	// They are not secrets; the ID and refresh tokens remain the sensitive data.
+	Issuer    string   `json:"issuer,omitempty"`
+	ClientID  string   `json:"clientId,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
+	TokenType string   `json:"tokenType,omitempty"`
+}
+
+// SessionStore is the common storage contract used by commands and deviceauth.
+type SessionStore interface {
+	Save(Session) error
+	Load() (Session, error)
+	Clear() error
 }
 
 // Store reads/writes a Session as a 0600 JSON file.
@@ -94,9 +108,11 @@ var statFile = os.Stat
 // deviceauth. The legacy file is consulted only to migrate an existing local
 // session; it is not removed until a later explicit logout.
 type SecureStore struct {
-	credentials  deviceauth.Store
-	legacy       *Store
-	metadataPath string
+	credentials     deviceauth.Store
+	loadCredentials func() (deviceauth.Store, error)
+	credentialsMu   sync.Mutex
+	legacy          *Store
+	metadataPath    string
 }
 
 // NewSecureStore constructs a keyring-backed SessionStore. credentials must
@@ -109,10 +125,31 @@ func NewSecureStore(credentials deviceauth.Store, legacyPath, metadataPath strin
 	}
 }
 
-// CredentialStore exposes the underlying secure store to the shared device
-// client. Callers must use its issuer/client scoped wrapper before loading or
-// saving credentials.
-func (s *SecureStore) CredentialStore() deviceauth.Store { return s.credentials }
+// NewLazySecureStore delays keyring initialization. This lets an explicitly
+// requested insecure store work on headless machines where no keyring exists.
+func NewLazySecureStore(load func() (deviceauth.Store, error), legacyPath, metadataPath string) *SecureStore {
+	return &SecureStore{loadCredentials: load, legacy: NewStore(legacyPath), metadataPath: metadataPath}
+}
+
+func (s *SecureStore) credentialStore() (deviceauth.Store, error) {
+	s.credentialsMu.Lock()
+	defer s.credentialsMu.Unlock()
+	if s.credentials != nil {
+		return s.credentials, nil
+	}
+	if s.loadCredentials == nil {
+		return nil, errors.New("secure session store has no credential store")
+	}
+	credentials, err := s.loadCredentials()
+	if err != nil {
+		return nil, err
+	}
+	if credentials == nil {
+		return nil, errors.New("secure session store has no credential store")
+	}
+	s.credentials = credentials
+	return credentials, nil
+}
 
 type metadata struct {
 	Project      string `json:"project"`
@@ -122,10 +159,11 @@ type metadata struct {
 
 // Save writes tokens to the keyring before updating non-secret metadata.
 func (s *SecureStore) Save(sess Session) error {
-	if s.credentials == nil {
-		return errors.New("secure session store has no credential store")
+	credentials, err := s.credentialStore()
+	if err != nil {
+		return err
 	}
-	previous, previousErr := s.credentials.Load()
+	previous, previousErr := credentials.Load()
 	if previousErr != nil && !errors.Is(previousErr, deviceauth.ErrCredentialNotFound) {
 		return previousErr
 	}
@@ -135,15 +173,19 @@ func (s *SecureStore) Save(sess Session) error {
 		Expiry:       sess.ExpiresAt,
 		AccountID:    sess.UID,
 		AccountName:  sess.Email,
+		Issuer:       sess.Issuer,
+		ClientID:     sess.ClientID,
+		Scopes:       append([]string(nil), sess.Scopes...),
+		TokenType:    sess.TokenType,
 	}
-	if err := s.credentials.Save(credential); err != nil {
+	if err := credentials.Save(credential); err != nil {
 		return err
 	}
 	if err := s.saveMetadata(metadata{Project: sess.Project, CurrentSpace: sess.CurrentSpace}); err != nil {
 		if previousErr == nil {
-			_ = s.credentials.Save(previous)
+			_ = credentials.Save(previous)
 		} else {
-			_ = s.credentials.Delete()
+			_ = credentials.Delete()
 		}
 		return err
 	}
@@ -154,9 +196,6 @@ func (s *SecureStore) Save(sess Session) error {
 // the keyring save succeeds. The legacy file remains as a recovery copy until
 // a successful logout removes it.
 func (s *SecureStore) Load() (Session, error) {
-	if s.credentials == nil {
-		return Session{}, errors.New("secure session store has no credential store")
-	}
 	meta, err := s.loadMetadata()
 	if err != nil {
 		return Session{}, err
@@ -164,7 +203,11 @@ func (s *SecureStore) Load() (Session, error) {
 	if meta.Insecure {
 		return s.legacy.Load()
 	}
-	credential, err := s.credentials.Load()
+	credentials, err := s.credentialStore()
+	if err != nil {
+		return Session{}, err
+	}
+	credential, err := credentials.Load()
 	if errors.Is(err, deviceauth.ErrCredentialNotFound) {
 		legacy, legacyErr := s.legacy.Load()
 		if legacyErr != nil {
@@ -189,6 +232,10 @@ func (s *SecureStore) Load() (Session, error) {
 		RefreshToken: credential.RefreshToken,
 		ExpiresAt:    credential.Expiry,
 		CurrentSpace: meta.CurrentSpace,
+		Issuer:       credential.Issuer,
+		ClientID:     credential.ClientID,
+		Scopes:       append([]string(nil), credential.Scopes...),
+		TokenType:    credential.TokenType,
 	}, nil
 }
 
@@ -231,20 +278,87 @@ func (s *InsecureStore) Clear() error {
 // Clear removes keyring, migration copy, and non-secret metadata. Local data
 // remains intact if the keyring delete itself fails.
 func (s *SecureStore) Clear() error {
-	if s.credentials == nil {
-		return errors.New("secure session store has no credential store")
+	credentials, err := s.credentialStore()
+	if err != nil {
+		return err
 	}
-	if err := s.credentials.Delete(); err != nil {
+	if err := credentials.Delete(); err != nil {
 		return err
 	}
 	if err := s.legacy.Clear(); err != nil {
 		return err
 	}
-	err := os.Remove(s.metadataPath)
+	err = os.Remove(s.metadataPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return err
+}
+
+// DeviceAuthStore adapts the normal session location into deviceauth's
+// credential contract. A device login therefore persists its Firebase session
+// once, through the same secure or explicit insecure store used by every CLI
+// command.
+type DeviceAuthStore struct {
+	store   SessionStore
+	project string
+}
+
+func NewDeviceAuthStore(store SessionStore, project string) *DeviceAuthStore {
+	return &DeviceAuthStore{store: store, project: project}
+}
+
+func (s *DeviceAuthStore) Save(credential deviceauth.Credential) error {
+	if s == nil || s.store == nil {
+		return errors.New("device auth session store is required")
+	}
+	current, err := s.store.Load()
+	if err != nil && !errors.Is(err, ErrNoSession) {
+		return err
+	}
+	return s.store.Save(Session{
+		Project:      s.project,
+		UID:          credential.AccountID,
+		Email:        credential.AccountName,
+		IDToken:      credential.AccessToken,
+		RefreshToken: credential.RefreshToken,
+		ExpiresAt:    credential.Expiry,
+		CurrentSpace: current.CurrentSpace,
+		Issuer:       credential.Issuer,
+		ClientID:     credential.ClientID,
+		Scopes:       append([]string(nil), credential.Scopes...),
+		TokenType:    credential.TokenType,
+	})
+}
+
+func (s *DeviceAuthStore) Load() (deviceauth.Credential, error) {
+	if s == nil || s.store == nil {
+		return deviceauth.Credential{}, errors.New("device auth session store is required")
+	}
+	value, err := s.store.Load()
+	if errors.Is(err, ErrNoSession) {
+		return deviceauth.Credential{}, deviceauth.ErrCredentialNotFound
+	}
+	if err != nil {
+		return deviceauth.Credential{}, err
+	}
+	// A password/login migration has no OAuth issuer binding. Treat it as no
+	// device credential so it cannot block an interactive replacement.
+	if value.Issuer == "" || value.ClientID == "" {
+		return deviceauth.Credential{}, deviceauth.ErrCredentialNotFound
+	}
+	return deviceauth.Credential{
+		AccessToken: value.IDToken, RefreshToken: value.RefreshToken, Expiry: value.ExpiresAt,
+		AccountID: value.UID, AccountName: value.Email, Issuer: value.Issuer,
+		ClientID: value.ClientID, Scopes: append([]string(nil), value.Scopes...), TokenType: value.TokenType,
+	}, nil
+}
+
+func (s *DeviceAuthStore) Delete() error {
+	if s == nil || s.store == nil {
+		return errors.New("device auth session store is required")
+	}
+	return s.store.Clear()
 }
 
 func (s *SecureStore) saveMetadata(meta metadata) error {

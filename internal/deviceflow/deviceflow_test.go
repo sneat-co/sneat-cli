@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sneat-co/sneat-cli/internal/session"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
-	"github.com/strongo/deviceauth"
 )
 
 type exchangeFunc func(context.Context, string) (sneatauth.Result, error)
@@ -21,16 +22,19 @@ func (f exchangeFunc) SignInWithCustomToken(ctx context.Context, token string) (
 	return f(ctx, token)
 }
 
-type memoryStore struct{ credential deviceauth.Credential }
-
-func (s *memoryStore) Save(value deviceauth.Credential) error { s.credential = value; return nil }
-func (s *memoryStore) Load() (deviceauth.Credential, error) {
-	if s.credential.AccessToken == "" {
-		return deviceauth.Credential{}, deviceauth.ErrCredentialNotFound
-	}
-	return s.credential, nil
+type memoryStore struct {
+	value session.Session
+	has   bool
 }
-func (s *memoryStore) Delete() error { s.credential = deviceauth.Credential{}; return nil }
+
+func (s *memoryStore) Save(value session.Session) error { s.value, s.has = value, true; return nil }
+func (s *memoryStore) Load() (session.Session, error) {
+	if !s.has {
+		return session.Session{}, session.ErrNoSession
+	}
+	return s.value, nil
+}
+func (s *memoryStore) Clear() error { s.value, s.has = session.Session{}, false; return nil }
 
 func TestRun_ExchangesAndValidatesAudience(t *testing.T) {
 	var gotFirebaseToken string
@@ -66,7 +70,7 @@ func TestRun_ExchangesAndValidatesAudience(t *testing.T) {
 			gotFirebaseToken = token
 			return sneatauth.Result{IDToken: "firebase-id", RefreshToken: "firebase-refresh", UID: "user-1", ExpiresIn: time.Hour}, nil
 		}),
-		Store: &memoryStore{},
+		Store: &memoryStore{}, Project: "sneat-eur3-1",
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -94,7 +98,7 @@ func TestRun_BrowserFailureIsManualFallback(t *testing.T) {
 		Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
 			return sneatauth.Result{IDToken: "firebase-id", UID: "user-1"}, nil
 		}),
-		Store: &memoryStore{},
+		Store: &memoryStore{}, Project: "sneat-eur3-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -113,13 +117,101 @@ func TestRun_RejectsWrongAudience(t *testing.T) {
 	defer server.Close()
 	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
 		return sneatauth.Result{IDToken: "firebase-id", UID: "user-1"}, nil
-	}), Store: &memoryStore{}})
+	}), Store: &memoryStore{}, Project: "sneat-eur3-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = flow.Run(context.Background(), io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "audience") {
 		t.Fatalf("Run error = %v, want audience rejection", err)
+	}
+}
+
+func TestRun_SecondLoginRetainsScopedCredential(t *testing.T) {
+	store := &memoryStore{}
+	server := newDeviceServer(t, ClientID)
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{IDToken: "firebase-id", RefreshToken: "refresh", UID: "user-1", ExpiresIn: time.Hour}, nil
+	}), Store: store, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := flow.Run(context.Background(), io.Discard, io.Discard); err != nil {
+			t.Fatalf("login %d failed: %v", i+1, err)
+		}
+	}
+	if store.value.ClientID != ClientID || len(store.value.Scopes) != len(Scopes) {
+		t.Fatalf("stored binding lost: %+v", store.value)
+	}
+}
+
+func TestLogout_RemoteFailureRetainsSelectedSession(t *testing.T) {
+	store := &memoryStore{}
+	var revoke bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth/device/code":
+			_, _ = io.WriteString(w, `{"device_code":"device","user_code":"ABCD-EFGH","verification_uri":"https://verify.example/device","expires_in":300,"interval":1}`)
+		case "/oauth/token":
+			_, _ = io.WriteString(w, `{"access_token":"custom-token","token_type":"urn:ietf:params:oauth:token-type:firebase-custom-token","expires_in":300}`)
+		case "/oauth/userinfo":
+			_, _ = io.WriteString(w, `{"sub":"user-1","aud":"sneat-cli","scope":"openid profile sneat:spaces:read sneat:spaces:write"}`)
+		case "/oauth/revoke":
+			revoke = true
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{IDToken: "firebase-id", RefreshToken: "refresh", UID: "user-1", ExpiresIn: time.Hour}, nil
+	}), Store: store, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Run(context.Background(), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := flow.Logout(context.Background()); err == nil || !revoke {
+		t.Fatalf("Logout error=%v revoke=%v", err, revoke)
+	}
+	if !store.has {
+		t.Fatal("remote revoke failure deleted the local session")
+	}
+}
+
+func TestRun_ReplacementRevocationWarning(t *testing.T) {
+	store := &memoryStore{}
+	var logins int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth/device/code":
+			_, _ = io.WriteString(w, `{"device_code":"device","user_code":"ABCD-EFGH","verification_uri":"https://verify.example/device","expires_in":300,"interval":1}`)
+		case "/oauth/token":
+			logins++
+			_, _ = io.WriteString(w, `{"access_token":"custom-token","token_type":"urn:ietf:params:oauth:token-type:firebase-custom-token","expires_in":300}`)
+		case "/oauth/userinfo":
+			_, _ = io.WriteString(w, `{"sub":"user-1","aud":"sneat-cli","scope":"openid profile sneat:spaces:read sneat:spaces:write"}`)
+		case "/oauth/revoke":
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{IDToken: fmt.Sprintf("firebase-id-%d", logins), RefreshToken: "refresh", UID: "user-1", ExpiresIn: time.Hour}, nil
+	}), Store: store, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Run(context.Background(), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	result, err := flow.Run(context.Background(), io.Discard, io.Discard)
+	if err != nil || len(result.Warnings) != 1 {
+		t.Fatalf("replacement result=%+v err=%v", result, err)
 	}
 }
 

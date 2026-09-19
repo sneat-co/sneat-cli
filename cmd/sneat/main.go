@@ -44,12 +44,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sneat:", err)
 		os.Exit(1)
 	}
-	credentialStore, err := deviceauth.NewKeyringStore("sneat-cli", "https://auth.sneat.co|sneat-cli")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "sneat:", err)
-		os.Exit(1)
-	}
-	store := session.NewSecureStore(credentialStore, path, metadataPath)
+	store := session.NewLazySecureStore(func() (deviceauth.Store, error) {
+		return deviceauth.NewKeyringStore("sneat-cli", "https://auth.sneat.co|sneat-cli")
+	}, path, metadataPath)
 	env := commands.Env{
 		Getenv: os.Getenv,
 		Now:    time.Now,
@@ -69,7 +66,7 @@ func main() {
 				OpenBrowser:      browserauth.OpenBrowser,
 			}
 		},
-		NewDeviceFlow: func(cfg config.Config, issuer string) (commands.DeviceFlow, error) {
+		NewDeviceFlow: func(cfg config.Config, issuer string, selectedStore commands.SessionStore) (commands.DeviceFlow, error) {
 			return deviceflow.New(deviceflow.Options{
 				Issuer:      issuer,
 				OpenBrowser: deviceauth.OpenBrowser,
@@ -78,7 +75,8 @@ func main() {
 					AuthEmulatorHost: cfg.AuthEmulatorHost,
 				}),
 				DeviceInfo: deviceflow.DeviceInfo(info.Version),
-				Store:      store.CredentialStore(),
+				Store:      selectedStore,
+				Project:    cfg.Project,
 			})
 		},
 		NewSpacesReader: func(cfg config.Config) (commands.SpacesReader, error) {

@@ -36,6 +36,7 @@ type BrowserFlow interface {
 // a normal Firebase session for the existing CLI clients.
 type DeviceFlow interface {
 	Run(ctx context.Context, output, errorOutput io.Writer) (sneatauth.Result, error)
+	Logout(ctx context.Context) error
 }
 
 // Env holds injected process dependencies so commands stay unit-testable.
@@ -46,7 +47,7 @@ type Env struct {
 	NewInsecureStore  func() SessionStore
 	NewAuthClient     func(cfg config.Config) AuthClient
 	NewBrowserFlow    func(cfg config.Config) BrowserFlow
-	NewDeviceFlow     func(cfg config.Config, issuer string) (DeviceFlow, error)
+	NewDeviceFlow     func(cfg config.Config, issuer string, store SessionStore) (DeviceFlow, error)
 	NewSpacesReader   func(cfg config.Config) (SpacesReader, error)
 	NewContactsReader func(cfg config.Config) (ContactsReader, error)
 	NewContactWriter  func(cfg config.Config) (ContactWriter, error)

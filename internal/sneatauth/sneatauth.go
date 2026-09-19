@@ -54,6 +54,10 @@ type Result struct {
 	UID          string
 	Email        string
 	ExpiresIn    time.Duration
+	// Warnings are completed-login conditions that need attention but do not
+	// invalidate the Firebase session (for example a replaced OAuth grant that
+	// could not be revoked remotely).
+	Warnings []error
 }
 
 // SignInWithPassword signs a user in with email + password.

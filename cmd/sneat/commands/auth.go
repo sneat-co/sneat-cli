@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/sneat-co/sneat-cli/internal/config"
@@ -35,7 +37,12 @@ func authLogin(env Env, insecureStorage *bool) *cobra.Command {
 		Short: "Sign in through auth.sneat.co (or use email+password)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg := configFromCmd(cmd, env.Getenv)
+			store, err := authStore(env, *insecureStorage)
+			if err != nil {
+				return err
+			}
 			var tok authTokens
+			deviceLogin := email == ""
 			if email != "" {
 				res, err := env.NewAuthClient(cfg).SignInWithPassword(cmd.Context(), email, password)
 				if err != nil {
@@ -53,7 +60,7 @@ func authLogin(env Env, insecureStorage *bool) *cobra.Command {
 				if issuer == "" {
 					issuer = deviceflow.DefaultIssuer
 				}
-				flow, err := env.NewDeviceFlow(cfg, issuer)
+				flow, err := env.NewDeviceFlow(cfg, issuer, store)
 				if err != nil {
 					return err
 				}
@@ -62,13 +69,15 @@ func authLogin(env Env, insecureStorage *bool) *cobra.Command {
 					return err
 				}
 				tok = authTokens{res.IDToken, res.RefreshToken, res.UID, res.Email, res.ExpiresIn}
-			}
-			store, err := authStore(env, *insecureStorage)
-			if err != nil {
-				return err
+				printWarnings(cmd.ErrOrStderr(), res.Warnings)
 			}
 			if *insecureStorage {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: --insecure-storage writes the Firebase session unencrypted to the local session file.")
+			}
+			if deviceLogin {
+				return writeJSON(cmd.OutOrStdout(), map[string]string{
+					"uid": tok.UID, "email": tok.Email, "project": cfg.Project,
+				})
 			}
 			return saveAndPrint(cmd, store, env, cfg, tok)
 		},
@@ -118,13 +127,38 @@ func authLogout(env Env, insecureStorage *bool) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Remove the stored Sneat CLI session",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, err := authStore(env, *insecureStorage)
 			if err != nil {
 				return err
 			}
-			return store.Clear()
+			sess, err := store.Load()
+			if errors.Is(err, session.ErrNoSession) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			// Password sessions have no device grant to revoke. Their ordinary
+			// Firebase session can be removed locally; device sessions always
+			// revoke remotely before Client.Logout deletes local storage.
+			if sess.Issuer == "" || sess.ClientID == "" {
+				return store.Clear()
+			}
+			flow, err := env.NewDeviceFlow(configFromCmd(cmd, env.Getenv), sess.Issuer, store)
+			if err != nil {
+				return err
+			}
+			return flow.Logout(cmd.Context())
 		},
+	}
+}
+
+func printWarnings(output io.Writer, warnings []error) {
+	for range warnings {
+		// Warning causes may contain transport detail. Keep command output useful
+		// without risking credential values or response bodies on stderr.
+		_, _ = fmt.Fprintln(output, "Warning: the previous device login could not be revoked; it may remain active until it expires.")
 	}
 }
 
