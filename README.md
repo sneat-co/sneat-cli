@@ -17,7 +17,7 @@ Follow the official instructions:
 https://sneat.app/en/agent-instructions/install/
 ```
 
-### Homebrew (macOS or Linux)
+### Homebrew (macOS)
 
 ```shell
 brew install --cask sneat-co/tap/sneat
@@ -29,7 +29,7 @@ brew install --cask sneat-co/tap/sneat
 (p=$(mktemp) && trap 'rm -f "$p"' EXIT && curl -fsSL https://sneat.app/install.sh -o "$p" && sh "$p")
 ```
 
-### Direct install (Windows PowerShell)
+### Direct install (Windows PowerShell, amd64)
 
 ```powershell
 $p=Join-Path $env:TEMP ("sneat-"+[guid]::NewGuid()+".ps1"); try { irm https://sneat.app/install.ps1 -OutFile $p -EA Stop; & $p } finally { Remove-Item $p -EA SilentlyContinue }
