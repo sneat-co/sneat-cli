@@ -12,6 +12,7 @@ Canonical index of all plans in this repository. Each plan is a single Markdown 
 |---|---|---|---|---|
 | [chat-messenger](chat-messenger.md) | Implemented | chat-messenger | 2026-07-15 | alex |
 | [chat-tui](chat-tui.md) | Implemented | chat-tui | 2026-07-15 | alex |
+| [extension-api-command-parity](extension-api-command-parity/README.md) | In Review | extension-api-command-parity | 2026-09-20 | alex |
 
 ## Recently Closed
 
