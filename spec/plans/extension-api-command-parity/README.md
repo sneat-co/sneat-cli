@@ -76,7 +76,7 @@ excluded from both projections.
 **Id:** task-2
 **Verifies:** extension-api-command-parity#ac:generated-projections-are-reproducible-and-discoverable
 **Depends-On:** 1
-**Status:** planning
+**Status:** complete
 
 Implement the pinned projection pipeline that emits OpenAPI and the
 machine-readable CLI capability manifest from the ledger, including stable

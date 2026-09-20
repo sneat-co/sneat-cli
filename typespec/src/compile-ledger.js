@@ -18,6 +18,14 @@ export class LedgerCompileError extends Error {
 // all syntax and type/reference validation before this code inspects the
 // semantic operation graph and its extension-owned @operation metadata.
 export async function compileLedger(mainFile) {
+  const operationModel = await compileOperationModel(mainFile);
+  return operationModel.ledger;
+}
+
+// compileOperationModel is the shared semantic compilation result for every
+// projection emitter. It deliberately keeps the TypeSpec operation available
+// to emitters while exposing the minimal public ledger to parity consumers.
+export async function compileOperationModel(mainFile) {
   const program = await compile(NodeHost, mainFile, { noEmit: true });
   const diagnostics = program.diagnostics.filter((diagnostic) => diagnostic.severity === "error");
   if (diagnostics.length > 0) {
@@ -30,9 +38,12 @@ export async function compileLedger(mainFile) {
   const metadata = operations.map(readOperationMetadata);
   validateUniqueIDs(metadata);
 
-  return metadata
-    .map(({ operationID, http, cli }) => ({ operationID, http, cli }))
-    .sort((left, right) => left.operationID.localeCompare(right.operationID));
+  const operationModel = metadata.sort((left, right) => left.operationID.localeCompare(right.operationID));
+  return {
+    program,
+    operations: operationModel,
+    ledger: operationModel.map(({ operationID, http, cli }) => ({ operationID, http, cli })),
+  };
 }
 
 function isProjectOperation(operation) {
@@ -84,7 +95,7 @@ function readOperationMetadata(operation) {
   if (!http.included && !cli.included) {
     throw new LedgerCompileError("operation excluded from all projections", operationID);
   }
-  return { operationID, http, cli };
+  return { operationID, http, cli, operation };
 }
 
 function projection(operationID, name, disposition, reason) {

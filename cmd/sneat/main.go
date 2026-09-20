@@ -111,6 +111,7 @@ func main() {
 		commands.Action(env),
 		commands.Context(env),
 		commands.Query(env),
+		commands.Capability(),
 	)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "sneat:", err)

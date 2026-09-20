@@ -2,11 +2,19 @@
   "name": "sneat-cli-operation-ledger-typespec",
   "private": true,
   "version": "0.0.0",
+  "packageManager": "pnpm@11.20.0",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "generate": "node src/generate-projections.js fixtures/projection-contract.tsp generated",
+    "check:generated": "node src/generate-projections.js --check fixtures/projection-contract.tsp generated",
+    "test:ci": "pnpm test && pnpm check:generated"
   },
   "dependencies": {
-    "@typespec/compiler": "1.13.0"
+    "@typespec/asset-emitter": "0.79.1",
+    "@typespec/compiler": "1.13.0",
+    "@typespec/http": "1.13.0",
+    "@typespec/openapi": "1.13.0",
+    "@typespec/openapi3": "1.13.0"
   }
 }

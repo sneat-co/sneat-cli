@@ -1,0 +1,51 @@
+{
+  "operations": [
+    {
+      "aliases": [
+        "contacts",
+        "ls"
+      ],
+      "collection": "collection",
+      "commandPath": "contact list",
+      "formats": [
+        "json",
+        "yaml"
+      ],
+      "http": {
+        "method": "GET",
+        "operationID": "contactus.contacts.list",
+        "path": "/contacts"
+      },
+      "idempotency": "safe",
+      "inputs": [
+        {
+          "name": "input",
+          "required": true,
+          "schema": "ContactListInput"
+        }
+      ],
+      "mutation": "read",
+      "operationID": "contactus.contacts.list",
+      "ordering": "unspecified",
+      "pagination": "unspecified",
+      "result": "ContactList"
+    },
+    {
+      "aliases": [],
+      "collection": "single",
+      "commandPath": "config clear-current-space",
+      "formats": [
+        "json",
+        "yaml"
+      ],
+      "idempotency": "idempotent",
+      "inputs": [],
+      "mutation": "mutation",
+      "operationID": "sneat.config.clear-current-space",
+      "ordering": "unspecified",
+      "pagination": "unspecified",
+      "result": "LocalConfig"
+    }
+  ],
+  "version": "1.0.0"
+}

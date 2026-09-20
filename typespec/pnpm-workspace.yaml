@@ -1,0 +1,2 @@
+overrides:
+  "@typespec/asset-emitter": "0.79.1"

@@ -12,6 +12,25 @@ on:
 
 jobs:
 
+  typespec-projections:
+    name: TypeSpec projection contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.1'
+          cache: pnpm
+          cache-dependency-path: typespec/pnpm-lock.yaml
+      - name: Verify generated projection contracts
+        working-directory: typespec
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test:ci
+
   strongo_workflow:
     # Pinned to an exact tag, not @main and not the moving @v1: unpinned CI
     # silently takes whatever landed upstream, and @v1 lagged 14 patch
