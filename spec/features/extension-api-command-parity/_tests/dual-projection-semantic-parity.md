@@ -9,14 +9,16 @@ format: https://specscore.md/scenario-specification
 
 ## Steps
 
-GIVEN a dual-projection operation, authenticated callers, shared fixtures, and one controlled persisted-data backend
-WHEN the fixture invokes the actual HTTP endpoint and actual CLI command for success and defined failure cases
-THEN normalized identities, values, pagination state, error classification, and persisted effects agree
+GIVEN a dual-projection operation, authenticated callers, and isolated backends initialized from equivalent fixture snapshots
+WHEN the fixture invokes the actual HTTP endpoint and actual CLI command separately for success and defined failure cases and verifies each mutation through its own public read
+THEN client-stable IDs compare exactly and server-generated IDs compare through fixture-local placeholders
+AND normalized values, pagination state, error classification, and persisted effects agree
 AND any mismatch is attributed to the owning extension or CLI projection
+AND shared-state replay occurs only in that projection's explicit idempotency scenario
 
 ## Automation
 
-Bind this scenario to the real CLI binary and Sneat-Go test host using emulator-backed persisted data; mock HTTP coverage alone does not satisfy it.
+Bind this scenario to the real CLI binary and Sneat-Go test host using resettable emulator-backed namespaces; mock HTTP coverage alone does not satisfy it.
 
 ---
 *This document follows the https://specscore.md/scenario-specification*

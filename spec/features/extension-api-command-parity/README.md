@@ -106,13 +106,27 @@ real command tree to verify command paths, aliases, required arguments, flag typ
 supported formats, exit categories, and result/error envelopes against the
 capability manifest. Help text alone is not implementation evidence.
 
+#### REQ: cli-uses-public-api-boundary
+
+An extension command whose operation has a required HTTP projection MUST invoke
+the generated or contract-bound public API client and MUST NOT import or call
+Firestore, extension persistence adapters, or extension storage models directly.
+CI MUST enforce the dependency boundary statically, and a persisted-data journey
+MUST verify each mutation through an independent public read. CLI-only local
+operations MAY access their declared local configuration store but MUST NOT use
+that exception to read or mutate extension data.
+
 #### REQ: cross-projection-behavioral-parity
 
 When an operation requires both projections, shared contract fixtures MUST invoke
-the actual HTTP endpoint and the actual CLI command against the same controlled
-backend and compare their normalized semantic results. Wire formatting may differ;
-identities, values, pagination state, error classification, and persisted effects
-MUST agree.
+the actual HTTP endpoint and the actual CLI command from equivalent, independently
+isolated backend snapshots and compare their normalized semantic results. Each
+projection's mutation MUST be verified by a follow-up public read against its own
+isolated state. Client-stable identities compare exactly; server-generated
+identities are mapped to fixture-local placeholders before comparison. Wire
+formatting may differ; values, pagination state, error classification, and
+persisted effects MUST agree. Shared-state replay is reserved for an operation's
+explicit idempotency scenario and MUST NOT be used as the ordinary parity setup.
 
 ### Ownership boundary
 
@@ -159,6 +173,7 @@ Scenario: the same source produces the same projection contracts
 Given pinned TypeSpec and emitter versions and unchanged extension sources
 When CI regenerates OpenAPI and the CLI capability manifest twice
 Then both runs are byte-identical, every required HTTP and CLI operation is discoverable by its stable ID, and no excluded projection leaks into its generated artifact.
+And injected duplicate operation IDs, duplicate command paths, unresolved references, and both-projections-excluded operations fail deterministically.
 
 ### AC: http-runtime-must-implement-the-http-projection
 
@@ -178,18 +193,28 @@ Given an operation whose CLI projection is required and the real Sneat command t
 When its command path, alias, input mapping, supported format, exit category, or result/error envelope differs from the capability manifest
 Then the CLI conformance suite fails with the operation ID and exact mismatch, while a correctly excluded HTTP projection requires no HTTP implementation result.
 
+### AC: extension-commands-use-the-public-api-boundary
+
+**Requirements:** extension-api-command-parity#req:cli-uses-public-api-boundary, extension-api-command-parity#req:extension-owned-contracts
+
+Scenario: an extension command cannot bypass its public API
+Given an extension command whose TypeSpec operation requires an HTTP projection
+When CI checks its dependency graph and runs a mutation followed by an independent public read
+Then the command uses the generated or contract-bound API client, no CLI package imports or invokes extension persistence, Firestore, or storage models, and the public read observes the persisted mutation.
+
 ### AC: dual-projection-operations-have-semantic-parity
 
 **Requirements:** extension-api-command-parity#req:cross-projection-behavioral-parity, extension-api-command-parity#req:extension-owned-contracts
 
 Scenario: HTTP and CLI agree through a persisted journey
-Given a dual-projection operation, shared contract fixtures, authenticated access, and one controlled persisted-data backend
-When the fixture invokes the actual HTTP endpoint and actual CLI command for success, invalid input, forbidden access, conflict, and retry cases
-Then their normalized identities, values, pagination state, error classifications, and persisted effects agree, and the report attributes failures to the owning extension or CLI projection.
+Given a dual-projection operation, authenticated access, and independently isolated backends initialized from equivalent fixture snapshots
+When the fixture invokes the actual HTTP endpoint and actual CLI command separately for success, invalid input, forbidden access, conflict, and retry cases and verifies each mutation through its own public read
+Then client-stable identities compare exactly, server-generated identities compare through fixture-local placeholders, normalized values, pagination state, error classifications, and persisted effects agree, and the report attributes failures to the owning extension or CLI projection.
+And any shared-state retry is evaluated only by that projection's explicit idempotency scenario.
 
 ## Rehearse Integration
 
-All five acceptance criteria have observable compiler, artifact, HTTP, CLI, or
+All six acceptance criteria have observable compiler, artifact, HTTP, CLI, or
 persisted-data surfaces. Pending Rehearse scenarios are provided under `_tests/`;
 implementation will bind them to the TypeSpec compiler, router, command tree, and
 controlled-backend harnesses.

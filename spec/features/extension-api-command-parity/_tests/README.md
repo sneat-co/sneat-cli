@@ -12,6 +12,7 @@ Pending executable scenarios for the [Extension API-Command Parity](../README.md
 | [generated-projections-are-reproducible](generated-projections-are-reproducible.md) | [deterministic projections](../README.md#ac-generated-projections-are-reproducible-and-discoverable) |
 | [http-runtime-conforms](http-runtime-conforms.md) | [HTTP runtime conformance](../README.md#ac-http-runtime-must-implement-the-http-projection) |
 | [cli-runtime-conforms](cli-runtime-conforms.md) | [CLI runtime conformance](../README.md#ac-cli-runtime-must-implement-the-cli-projection) |
+| [cli-uses-public-api-boundary](cli-uses-public-api-boundary.md) | [public API boundary](../README.md#ac-extension-commands-use-the-public-api-boundary) |
 | [dual-projection-semantic-parity](dual-projection-semantic-parity.md) | [cross-projection parity](../README.md#ac-dual-projection-operations-have-semantic-parity) |
 
 ## Open Questions

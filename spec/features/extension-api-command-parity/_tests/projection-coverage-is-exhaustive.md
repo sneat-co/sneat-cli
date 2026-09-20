@@ -9,10 +9,10 @@ format: https://specscore.md/scenario-specification
 
 ## Steps
 
-GIVEN TypeSpec fixtures containing dual-projection, HTTP-only, CLI-only, unclassified, and reasonless-exclusion operations
+GIVEN TypeSpec fixtures containing dual-projection, HTTP-only, CLI-only, unclassified, reasonless-exclusion, and both-projections-excluded operations
 WHEN the parity compiler builds the operation ledger
 THEN the first three fixtures produce complete HTTP and CLI dispositions
-AND the unclassified and reasonless-exclusion fixtures fail with their stable operation IDs
+AND the unclassified, reasonless-exclusion, and both-projections-excluded fixtures fail with their stable operation IDs
 
 ## Automation
 

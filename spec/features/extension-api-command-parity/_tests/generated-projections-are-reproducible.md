@@ -13,6 +13,7 @@ GIVEN pinned compiler and emitter versions and one unchanged extension TypeSpec 
 WHEN OpenAPI and CLI capability artifacts are generated twice in clean output directories
 THEN corresponding artifact bytes are identical
 AND required operations are discoverable by stable ID only in their included projections
+AND injected duplicate IDs, duplicate command paths, and unresolved references fail deterministically
 
 ## Automation
 
