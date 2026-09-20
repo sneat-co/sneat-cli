@@ -80,8 +80,26 @@ or contain references that cannot be resolved.
 The CLI projection MUST emit a versioned machine-readable manifest containing
 each command's operation ID, path, aliases, inputs, result schema, supported
 formats, pagination and ordering contract, mutation classification, idempotency
-requirements, and HTTP mapping when present. Sneat CLI help and schema discovery
-MUST consume this manifest rather than scrape prose or infer routes.
+requirements, error-envelope schemas, exit categories, and HTTP mapping when
+present. Sneat CLI help and schema discovery MUST consume this manifest rather
+than scrape prose or infer routes.
+
+#### REQ: conformance-ready-projection-bundle
+
+The generated implementation ledger, OpenAPI contract, and CLI capability
+manifest MUST be published together as one immutable, versioned projection
+bundle. The bundle MUST identify its source revision, schema and emitter
+versions, and content digest over the canonical ledger, OpenAPI, CLI manifest,
+and provenance fields other than the digest itself. Consumers MUST pin an exact
+released module version and checksum, verify both the module checksum and bundle
+digest, and MUST NOT use a copied fixture, a local filesystem path, or a
+dependency replace directive as conformance evidence.
+
+Every required HTTP operation in a publishable bundle MUST describe its success
+response schema, coded non-success responses, request constraints, pagination
+and ordering disposition, and retry or idempotency classification. Publication
+MUST fail when any required semantic element is absent rather than producing a
+contract that runtime conformance cannot test.
 
 ### Implementation conformance
 
@@ -144,10 +162,12 @@ NOT become the owner of extension domain schemas or CLI metadata.
 
 ```text
 extension-owned TypeSpec
-       |-- OpenAPI emitter ------> HTTP contract/client/conformance
-       `-- Sneat CLI emitter ----> capability manifest/command conformance
-                                         |
-                                         `--> YAML | JSON | Markdown | CSV*
+       `-- projection compiler --> immutable versioned bundle
+                                      |-- ledger
+                                      |-- OpenAPI --> HTTP client/conformance
+                                      `-- CLI manifest --> command conformance
+                                                               |
+                                                               `--> YAML | JSON | Markdown | CSV*
 
 * CSV is available only for collection results declared CSV-compatible.
 ```
@@ -155,6 +175,14 @@ extension-owned TypeSpec
 The OpenAPI and CLI emitters select their declared projection sets independently.
 The parity gate joins them by stable operation ID and evaluates the implementation
 ledger; it does not require every operation to appear in both projections.
+
+The MVP bundle is released through a contract-only module under
+`sneat-ext-contracts`, with generated artifacts embedded as data and accompanied
+by provenance metadata. Publishing is an atomic promotion from the canonical
+TypeSpec build: the contract module is a distribution boundary, not a second
+authoring surface. Sneat-Go and other cross-repository consumers depend on an
+exact released module version, while local generation remains the fast authoring
+loop in the TypeSpec-owning repository.
 
 ## Acceptance Criteria
 
@@ -177,6 +205,16 @@ When CI regenerates OpenAPI and the CLI capability manifest twice
 Then both runs are byte-identical, every required HTTP and CLI operation is discoverable by its stable ID, and no excluded projection leaks into its generated artifact.
 And injected duplicate operation IDs, duplicate command paths, unresolved references, and both-projections-excluded operations fail deterministically.
 
+### AC: projection-bundle-is-complete-versioned-and-consumable
+
+**Requirements:** extension-api-command-parity#req:http-projection, extension-api-command-parity#req:deterministic-projection-artifacts, extension-api-command-parity#req:conformance-ready-projection-bundle
+
+Scenario: a runtime consumes the exact conformance-ready contract release
+Given a controlled operation with a typed success result, coded errors, request constraints, pagination and ordering disposition, and retry or idempotency classification
+When the projection pipeline publishes its ledger, OpenAPI, and CLI manifest and a separate repository resolves the released contract-only module version
+Then the three artifacts are an atomic byte-reproducible bundle whose digest covers the artifacts and non-digest provenance fields, and the consumer verifies that digest plus the exact released module version and checksum without a copied fixture, local path, or dependency replacement.
+And publication fails when any required HTTP semantic element or provenance field is absent, while a corrupted or substituted artifact fails module-checksum or bundle-digest verification.
+
 ### AC: http-runtime-must-implement-the-http-projection
 
 **Requirements:** extension-api-command-parity#req:exhaustive-implementation-ledger, extension-api-command-parity#req:http-implementation-conformance
@@ -185,6 +223,7 @@ Scenario: an HTTP implementation drift blocks parity
 Given an operation whose HTTP projection is required and a composed Sneat-Go test router
 When its route, method, request, response, error, pagination, or retry behavior differs from the emitted contract
 Then the HTTP conformance suite fails with the operation ID and exact mismatched contract element, while a correctly excluded CLI projection requires no CLI implementation result.
+And reconciliation fails with an attributable diagnostic when a required HTTP operation has no conformance result or the composed router registers an extension route with no TypeSpec operation.
 
 ### AC: cli-runtime-must-implement-the-cli-projection
 
@@ -194,6 +233,7 @@ Scenario: a CLI implementation drift blocks parity
 Given an operation whose CLI projection is required and the real Sneat command tree
 When its command path, alias, input mapping, supported format, exit category, or result/error envelope differs from the capability manifest
 Then the CLI conformance suite fails with the operation ID and exact mismatch, while a correctly excluded HTTP projection requires no HTTP implementation result.
+And reconciliation fails with an attributable diagnostic when a required CLI operation has no conformance result or the command tree advertises an extension command with no TypeSpec operation.
 
 ### AC: extension-commands-use-the-public-api-boundary
 
@@ -216,7 +256,7 @@ And any shared-state retry is evaluated only by that projection's explicit idemp
 
 ## Rehearse Integration
 
-All six acceptance criteria have observable compiler, artifact, HTTP, CLI, or
+All seven acceptance criteria have observable compiler, artifact, HTTP, CLI, or
 persisted-data surfaces. Pending Rehearse scenarios are provided under `_tests/`;
 implementation will bind them to the TypeSpec compiler, router, command tree, and
 controlled-backend harnesses.
@@ -236,9 +276,10 @@ controlled-backend harnesses.
 ## Assumption Carryover
 
 The source Idea's Must-be-true assumptions are made observable by the operation
-ledger, the three-way projection pilot, required runtime conformance suites, and
-shared semantic fixtures. Whether TypeSpec reduces maintenance cost and agent
-prompt size remains a post-MVP measurement, not a prerequisite for correctness.
+ledger, the three-way projection pilot, immutable contract releases, required
+runtime conformance suites, and shared semantic fixtures. Whether TypeSpec
+reduces maintenance cost and agent prompt size remains a post-MVP measurement,
+not a prerequisite for correctness.
 
 ## Open Questions
 

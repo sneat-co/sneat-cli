@@ -1,10 +1,10 @@
 ---
 format: https://specscore.md/plan-specification
-status: Approved
+status: Executing
 ---
 # Plan: Extension API-Command Parity
 
-**Status:** Approved
+**Status:** Executing
 **Source Feature:** extension-api-command-parity
 **Date:** 2026-09-20
 **Owner:** alex
@@ -34,24 +34,31 @@ The end-to-end journey is extension-author first:
    **Observable good result:** pinned tooling emits byte-identical OpenAPI and
    CLI capability manifests on repeat runs, with the same operation identities
    and no excluded operations leaking into either artifact.
-3. HTTP and CLI implementers bind their runtimes to the generated contracts.
+3. The author promotes the generated ledger, OpenAPI, and CLI manifest as one
+   immutable contract-only module release, then does nothing to copy or patch it
+   in a consumer repository. **Observable good result:** the release carries its
+   source revision, tooling versions, module checksum, and bundle digest; a
+   separately checked-out consumer resolves the exact version and rejects
+   incomplete or altered bytes.
+4. HTTP and CLI implementers bind their runtimes to that released contract.
    **Observable good result:** each runtime conformance suite either passes or
    reports the operation identity and exact mismatched contract element; the CLI
    reaches extension data only through its contract-bound public API client.
-4. CI invokes a dual-projection mutation through independently isolated,
+5. CI invokes a dual-projection mutation through independently isolated,
    equivalently seeded backends and then does nothing outside the declared
    public follow-up reads. **Observable good result:** both persisted states and
    normalized results agree, while failures are attributed to the owning
    extension or projection.
 
 Implementation follows that dependency chain. The canonical model and ledger
-come first, deterministic emitters consume that ledger next, and the two runtime
-conformance adapters follow. The final task composes those pieces into the
-persisted parity journey. A controlled fixture extension supplies HTTP-and-CLI,
-HTTP-only, and CLI-only operations so this Feature can prove the framework
-without prematurely defining the five product command vocabularies.
+come first, deterministic emitters consume that ledger next, and an immutable
+release boundary makes the exact artifacts consumable across repositories before
+the two runtime conformance adapters follow. The final task composes those pieces
+into the persisted parity journey. A controlled fixture extension supplies
+HTTP-and-CLI, HTTP-only, and CLI-only operations so this Feature can prove the
+framework without prematurely defining the five product command vocabularies.
 
-All six acceptance criteria are covered; none are deferred. Each task includes
+All seven acceptance criteria are covered; none are deferred. Each task includes
 its compiler, artifact, runtime, or controlled-backend checks so testing is not
 postponed to a separate final phase.
 
@@ -84,13 +91,35 @@ ordering and duplicate command-path validation, and make the manifest the input
 for CLI capability discovery, schema inspection, and generated help metadata.
 Add checked generation and CI tests that run twice, compare bytes, resolve every
 required operation by stable ID, and prove that excluded projections never
-appear in their artifact.
+appear in their artifact. This completed task established deterministic emission
+and discovery for the then-approved manifest fields; the conformance-completeness
+fields added by the amended Feature are assigned to Task 3.
 
-### Task 3: Enforce the emitted HTTP contract in Sneat-Go
+### Task 3: Publish a complete versioned projection bundle
 
 **Id:** task-3
-**Verifies:** extension-api-command-parity#ac:http-runtime-must-implement-the-http-projection
+**Verifies:** extension-api-command-parity#ac:projection-bundle-is-complete-versioned-and-consumable
 **Depends-On:** 2
+**Status:** planning
+
+Extend the controlled TypeSpec operation so its emitted OpenAPI carries typed
+success and coded error responses, request constraints, explicit pagination and
+ordering disposition, and retry or idempotency metadata; extend the CLI manifest
+schema and generated Go representation with error-envelope schemas and exit
+categories, and fail publication when either projection omits any required
+semantic or provenance field. Atomically promote the ledger, OpenAPI, and CLI
+manifest—with source revision, pinned tooling versions, and content digest over
+the artifacts and non-digest provenance fields—into a contract-only module under
+`sneat-ext-contracts`. Release and consume an exact module version from a
+separate checkout, verifying its module checksum and bundle digest; prove that
+no copied fixture, local path, or dependency replacement is accepted and that
+byte substitution fails verification.
+
+### Task 4: Enforce the emitted HTTP contract in Sneat-Go
+
+**Id:** task-4
+**Verifies:** extension-api-command-parity#ac:http-runtime-must-implement-the-http-projection
+**Depends-On:** 3
 **Status:** planning
 
 Build the HTTP conformance adapter over the composed Sneat-Go test router and
@@ -99,13 +128,16 @@ response, coded error, pagination, and retry semantics with the controlled
 fixture extension, and make every mismatch identify the stable operation ID and
 contract element while honoring reasoned HTTP exclusions. Reconcile the runtime
 inventory in both directions so a missing required handler and an implemented
-but unspecified HTTP operation each fail with an attributable diagnostic.
+but unspecified HTTP operation each fail with an attributable diagnostic, and
+reconcile the result ledger so an implemented required operation with no
+conformance result fails independently of route presence or contract-shape
+mismatches.
 
-### Task 4: Enforce the CLI contract and public API boundary
+### Task 5: Enforce the CLI contract and public API boundary
 
-**Id:** task-4
+**Id:** task-5
 **Verifies:** extension-api-command-parity#ac:cli-runtime-must-implement-the-cli-projection, extension-api-command-parity#ac:extension-commands-use-the-public-api-boundary
-**Depends-On:** 3
+**Depends-On:** 4
 **Status:** planning
 
 Build the CLI conformance adapter against the real Sneat command tree, checking
@@ -115,13 +147,15 @@ reject extension persistence, Firestore, or storage-model access from CLI
 packages, plus a fixture mutation through the contract-bound API client that is
 verified by an independent public read. Reconcile the command inventory in both
 directions so missing required commands and implemented-but-unspecified commands
-fail independently of ordinary contract-shape mismatches.
+fail independently of ordinary contract-shape mismatches, and reconcile the
+result ledger so an implemented required command with no conformance result is a
+separate attributable failure.
 
-### Task 5: Prove persisted semantic parity across both projections
+### Task 6: Prove persisted semantic parity across both projections
 
-**Id:** task-5
+**Id:** task-6
 **Verifies:** extension-api-command-parity#ac:dual-projection-operations-have-semantic-parity
-**Depends-On:** 4
+**Depends-On:** 5
 **Status:** planning
 
 Create the controlled-backend journey that invokes the actual HTTP endpoint and

@@ -10,6 +10,7 @@ Pending executable scenarios for the [Extension API-Command Parity](../README.md
 |---|---|
 | [projection-coverage-is-exhaustive](projection-coverage-is-exhaustive.md) | [explicit projection disposition](../README.md#ac-every-operation-has-an-explicit-projection-disposition) |
 | [generated-projections-are-reproducible](generated-projections-are-reproducible.md) | [deterministic projections](../README.md#ac-generated-projections-are-reproducible-and-discoverable) |
+| [projection-bundle-is-versioned](projection-bundle-is-versioned.md) | [versioned projection bundle](../README.md#ac-projection-bundle-is-complete-versioned-and-consumable) |
 | [http-runtime-conforms](http-runtime-conforms.md) | [HTTP runtime conformance](../README.md#ac-http-runtime-must-implement-the-http-projection) |
 | [cli-runtime-conforms](cli-runtime-conforms.md) | [CLI runtime conformance](../README.md#ac-cli-runtime-must-implement-the-cli-projection) |
 | [cli-uses-public-api-boundary](cli-uses-public-api-boundary.md) | [public API boundary](../README.md#ac-extension-commands-use-the-public-api-boundary) |

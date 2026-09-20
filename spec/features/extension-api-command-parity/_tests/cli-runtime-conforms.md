@@ -13,6 +13,7 @@ GIVEN an emitted capability manifest and the actual Sneat command tree
 WHEN the conformance runner inspects and executes every required CLI operation and injected mismatch fixtures
 THEN conforming commands pass
 AND every command-path, alias, input, format, exit, or envelope mismatch fails with its operation ID and manifest field
+AND an undeclared advertised extension command and a required operation with no conformance result each fail inventory reconciliation
 
 ## Automation
 
