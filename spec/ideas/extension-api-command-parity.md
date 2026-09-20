@@ -1,14 +1,14 @@
 ---
 format: https://specscore.md/idea-specification
-status: Draft
+status: Specifying
 ---
 
 # Idea: Extension API-Command Parity
 
-**Status:** Draft
+**Status:** Specifying
 **Date:** 2026-09-19
 **Owner:** alex
-**Promotes To:** —
+**Promotes To:** extension-api-command-parity
 **Supersedes:** —
 **Related Ideas:** —
 
@@ -22,7 +22,16 @@ Sneat CLI is growing extension-specific command groups for Contactius, Calendari
 
 ## Recommended Direction
 
-Define a bidirectional parity contract between extension-owned public API operations and intentional CLI capabilities. Each extension owns versioned API schemas and a small capability mapping that declares command paths, arguments, safety semantics, and exclusions; generated typed clients and CI checks enforce the relationship, while Sneat CLI owns command composition, current-space resolution, machine-readable discovery, and deterministic rendering from one typed result model.
+Use TypeSpec as the canonical semantic model for extension operations and emit
+two independently selectable projections from it: an OpenAPI contract for HTTP
+and a Sneat capability manifest for CLI commands. Each operation has a stable
+identity and MUST be exposed through HTTP, CLI, both, or carry an explicit,
+linted exclusion reason for the omitted projection. Extension repositories own
+their TypeSpec operations and HTTP projection; Sneat CLI owns CLI projection
+metadata, command composition, current-space resolution, machine-readable
+discovery, and deterministic rendering from one typed result model. Generated
+clients, projection manifests, and conformance suites make the mapping
+bidirectionally testable instead of relying on documentation or route inference.
 
 ## Alternatives Considered
 
@@ -33,13 +42,25 @@ Define a bidirectional parity contract between extension-owned public API operat
 - **Maintain only a hand-written Sneat CLI manifest.** This expresses the desired
   command experience, but duplicates API facts without an authoritative link and
   therefore cannot prevent route, request, response, or enum drift.
+- **Use OpenAPI as the only source.** OpenAPI describes the HTTP projection well,
+  but cannot naturally model local-only commands such as current-space selection
+  or intentional CLI naming and safety metadata without turning vendor extensions
+  into a second, implicit schema language.
 - **Treat the existing CLI implementation as the contract.** This preserves
   direct Firestore reads and other storage knowledge, making API evolution and
   authorization parity impossible to verify.
 
 ## MVP Scope
 
-Cover Contactius/contact, Calendarius/calendar, Assetus/asset, Debtus/debt, and Splitus/bill. Specify their supported API-to-command mappings and explicit exclusions; add current-space semantics; define YAML as the fixed default plus JSON and Markdown for all results and CSV for list results; define stable errors, pagination, mutation identities, idempotency metadata, schema discovery, generated-client boundaries, and CI drift checks. Produce specifications and plans before implementation.
+Cover Contactius/contact, Calendarius/calendar, Assetus/asset, Debtus/debt, and
+Splitus/bill. Define the Sneat TypeSpec decorators and capability emitter; specify
+each operation's HTTP/CLI exposure or reasoned exclusion; emit OpenAPI and a
+versioned CLI manifest; and generate conformance tests that verify every included
+projection is implemented. Add current-space semantics; define YAML as the fixed
+default plus JSON and Markdown for all results and CSV for list results; define
+stable errors, pagination, mutation identities, idempotency metadata, and
+machine-readable discovery. Produce specifications and plans before
+implementation.
 
 ## Not Doing (and Why)
 
@@ -55,6 +76,7 @@ Cover Contactius/contact, Calendarius/calendar, Assetus/asset, Debtus/debt, and 
 | Must-be-true | Each public extension operation can expose a stable operation identity and machine-readable request, response, error, and safety metadata. | Prototype the manifest against the five MVP extensions and require every mapped operation to resolve to a versioned API contract. |
 | Must-be-true | Bidirectional parity permits explicit exclusions; it does not require every API route to become a CLI command. | Require each public operation to be mapped or carry a reviewed `cliExcluded` rationale, and require every advertised command to resolve back to an operation. |
 | Must-be-true | Extension commands can use public APIs without reading Firestore or extension storage directly. | Add dependency and end-to-end tests that run the CLI against Sneat-Go and verify persisted results through an independent public read. |
+| Must-be-true | TypeSpec can represent shared semantic operations while allowing HTTP-only, CLI-only, and dual-projection operations without accidental emission. | Compile a pilot containing all three exposure cases and assert the exact OpenAPI and CLI manifest operation sets. |
 | Should-be-true | Extension-owned schemas plus a small capability mapping are cheaper to maintain than duplicated Cobra and API metadata. | Measure manual metadata, generated output, and review effort for Contactius and Assetus before rolling through the remaining extensions. |
 | Should-be-true | One typed result model can render deterministic YAML, JSON, Markdown, and list-only CSV without semantic loss. | Golden-test each renderer from the same fixtures, including nulls, nested values, IDs, errors, and pagination metadata. |
 | Might-be-true | Agents will benefit from machine-readable command discovery enough to reduce extension-specific skill prompt size. | Compare agent task completion and prompt size with prose help versus capability-schema discovery after the MVP exists. |
@@ -62,9 +84,10 @@ Cover Contactius/contact, Calendarius/calendar, Assetus/asset, Debtus/debt, and 
 
 ## SpecScore Integration
 
-- **New Features this would create:** `extension-command-contract`,
-  `extension-command-output`, `current-space-context`, and one API-contract
-  Feature in each of Contactus, Calendarius, Assetus, Debtus, and Splitus.
+- **New Features this would create:** `extension-api-command-parity`,
+  `extension-command-output`, `current-space-context`, five extension command
+  Features in Sneat CLI, and one TypeSpec-backed API-contract Feature in each of
+  Contactus, Calendarius, Assetus, Debtus, and Splitus.
 - **Existing Features affected:** `action-protocol-cli`; its JSON-only output and
   exit behavior must either adopt the shared result/error contract or document a
   compatibility exception.

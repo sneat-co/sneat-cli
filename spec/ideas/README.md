@@ -10,7 +10,7 @@ Pre-spec one-pagers. Each Idea is a lint-clean problem-direction-MVP one-pager t
 
 | Idea | Status | Date | Owner | Promotes To |
 |------|--------|------|-------|-------------|
-| [extension-api-command-parity](extension-api-command-parity.md) | Draft | 2026-09-19 | alex | — |
+| [extension-api-command-parity](extension-api-command-parity.md) | Specifying | 2026-09-19 | alex | extension-api-command-parity |
 
 ## Open Questions
 
