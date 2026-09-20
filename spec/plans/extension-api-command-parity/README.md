@@ -1,10 +1,10 @@
 ---
 format: https://specscore.md/plan-specification
-status: In Review
+status: Approved
 ---
 # Plan: Extension API-Command Parity
 
-**Status:** In Review
+**Status:** Approved
 **Source Feature:** extension-api-command-parity
 **Date:** 2026-09-20
 **Owner:** alex
