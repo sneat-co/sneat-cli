@@ -62,7 +62,7 @@ postponed to a separate final phase.
 **Id:** task-1
 **Verifies:** extension-api-command-parity#ac:every-operation-has-an-explicit-projection-disposition
 **Depends-On:** —
-**Status:** planning
+**Status:** complete
 
 Define the extension-owned TypeSpec operation metadata for stable identities and
 independent HTTP/CLI inclusion or reasoned exclusion, then compile it into one
