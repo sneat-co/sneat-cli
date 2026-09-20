@@ -1,13 +1,15 @@
 ---
 format: https://specscore.md/feature-specification
-status: In Review
+status: Approved
 ---
 
 # Feature: Extension API-Command Parity
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/extension-api-command-parity?op=explore) | [Edit](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/extension-api-command-parity?op=edit) | [Ask question](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/extension-api-command-parity?op=ask) | [Request change](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/extension-api-command-parity?op=request-change) |
-**Status:** In Review
+**Status:** Approved
+**Supersedes:** —
 **Source Ideas:** extension-api-command-parity
+**Grade:** B
 
 ## Summary
 

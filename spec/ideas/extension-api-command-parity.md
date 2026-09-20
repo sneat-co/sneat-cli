@@ -1,11 +1,11 @@
 ---
 format: https://specscore.md/idea-specification
-status: Specifying
+status: Specified
 ---
 
 # Idea: Extension API-Command Parity
 
-**Status:** Specifying
+**Status:** Specified
 **Date:** 2026-09-19
 **Owner:** alex
 **Promotes To:** extension-api-command-parity
