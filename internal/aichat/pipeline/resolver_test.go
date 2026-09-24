@@ -173,6 +173,44 @@ func TestResolver_OrdinalPicksFromLastShown(t *testing.T) {
 	}
 }
 
+// TestResolver_ExpressionNarrowedByTemporalWord covers S4: "dentist
+// appointment tomorrow" strips the stopword ("my" style words) and the
+// temporal word ("tomorrow"), searches by the remaining significant words,
+// then narrows to happenings starting that day -- disambiguating the two
+// otherwise title-matching "dentist" happenings by date.
+func TestResolver_ExpressionNarrowedByTemporalWord(t *testing.T) {
+	now := time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC) // h1 (Sep 26) is "tomorrow"
+	r := Resolver{Readers: testReaders(), Now: func() time.Time { return now }}
+	res, err := r.Resolve(context.Background(),
+		decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "my dentist appointment tomorrow"},
+		session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeOne || res.Candidates[0].Keys["happeningID"] != "h1" {
+		t.Fatalf("res = %+v, want ONLY h1 (tomorrow), not h2 (next week) or h3 (no title match)", res)
+	}
+}
+
+// TestResolver_ExpressionTemporalWord_NoMatchInWindow reports OutcomeNone
+// (not a stale match from a different day) when the significant words match
+// a title but not within the named window.
+func TestResolver_ExpressionTemporalWord_NoMatchInWindow(t *testing.T) {
+	now := time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC)
+	r := Resolver{Readers: testReaders(), Now: func() time.Time { return now }}
+	// "today" -- neither dentist happening starts today (Sep 25); h3
+	// (standup) starts today but doesn't match "dentist" at all.
+	res, err := r.Resolve(context.Background(),
+		decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "dentist appointment today"},
+		session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeNone {
+		t.Fatalf("res = %+v, want OutcomeNone (title matches exist, but none today)", res)
+	}
+}
+
 // TestResolver_OrdinalOutOfRange_ReportsNone ensures a number beyond the
 // shown list's length is a clean "no such option", not a panic or a
 // fall-through to some unrelated candidate.

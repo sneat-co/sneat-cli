@@ -257,25 +257,37 @@ func weekdayCodeMatches(codes []dbo4calendarius.WeekdayCode, wd time.Weekday) bo
 // bespoke parser: temporal.ParseText resolves the date component,
 // temporal.NormalizeTime the time component. A "when" naming only a date
 // keeps current's time-of-day; one naming only a time keeps current's date.
+//
+// The resolved clock time is always read in current's OWN location (S5),
+// not now's: current is the happening's anchor time, already decoded in the
+// slot's own TimeZone (or the reader's user-zone fallback) by
+// internal/aichat/data -- "move it to 4" means 16:00 in THAT zone, not
+// whatever zone the caller's clock happens to be in (which, for a UTC
+// server clock and a happening in America/New_York, is a different zone
+// entirely and previously produced a silently wrong instant).
 func parseWhen(now, current time.Time, text string) (time.Time, bool) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return time.Time{}, false
+	}
+	loc := current.Location()
+	if loc == nil {
+		loc = now.Location()
 	}
 	fields := strings.Fields(text)
 	if len(fields) >= 2 {
 		timePart, datePart := fields[len(fields)-1], strings.Join(fields[:len(fields)-1], " ")
 		if tr, err := temporal.NormalizeTime(timePart); err == nil {
 			if d, ok := temporal.ParseText(now, datePart); ok {
-				return atTime(d, tr.Time, now.Location()), true
+				return atTime(d, tr.Time, loc), true
 			}
 		}
 	}
 	if d, ok := temporal.ParseText(now, text); ok {
-		return atTime(d, current.Format("15:04"), now.Location()), true
+		return atTime(d, current.Format("15:04"), loc), true
 	}
 	if tr, err := temporal.NormalizeTime(text); err == nil {
-		return atTime(current, tr.Time, now.Location()), true
+		return atTime(current, tr.Time, loc), true
 	}
 	return time.Time{}, false
 }

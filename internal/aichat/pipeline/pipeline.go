@@ -305,7 +305,13 @@ func (p Pipeline) resolveAndAct(ctx context.Context, kind string, ref decision.R
 	}
 
 	target := res.Candidates[0]
-	action := session.Action{Kind: kind, Target: &target, Args: slots, Summary: summaryFor(kind, target, slots)}
+	summary := summaryFor(kind, target, slots)
+	if kind == sneatdomain.ModuleCalendar+"."+sneatdomain.IntentRescheduleHappening {
+		if resolved, ok := p.rescheduleSummary(ctx, spaceID, target, slots["when"]); ok {
+			summary = resolved
+		}
+	}
+	action := session.Action{Kind: kind, Target: &target, Args: slots, Summary: summary}
 	if isDestructive(kind) {
 		st.Pending = &action
 		return Output{Text: action.Summary + " (yes/no)"}, nil
@@ -346,6 +352,47 @@ func (p Pipeline) pickFromLastShown(text string, st *session.State) (Output, boo
 		title = "that one"
 	}
 	return Output{Text: fmt.Sprintf("Got it: %q.", title)}, true
+}
+
+// rescheduleSummary builds the reschedule confirmation text with the FULLY
+// RESOLVED date/time/timezone/occurrence, computed BEFORE asking (S4/B2
+// ruling: "confirmation shows fully resolved date/time/TZ/occurrence
+// computed before asking") -- not the raw "when" slot text ("Friday
+// 16:00"), which would force the user to do the date math themselves just
+// to confirm. It re-reads the target's current slot -- the same data
+// rescheduleHappening itself reads at execution time -- so the confirmation
+// and the eventual mutation resolve the anchor date/timezone identically.
+// ok is false when the happening can't be read or "when" can't be parsed;
+// the caller falls back to the plain summaryFor text rather than a blank
+// confirmation.
+func (p Pipeline) rescheduleSummary(ctx context.Context, spaceID string, target session.EntityRef, when string) (string, bool) {
+	if p.Readers.Happenings == nil || when == "" {
+		return "", false
+	}
+	current, err := p.Readers.Happenings.Get(ctx, spaceID, target.Keys["happeningID"])
+	if err != nil || current.Slot == nil {
+		return "", false
+	}
+	anchor := recurringAnchor(p.now(), current)
+	newStart, ok := parseWhen(p.now(), anchor, when)
+	if !ok {
+		return "", false
+	}
+	loc := newStart.Location()
+	if current.Slot.TimeZone != "" {
+		if l, lerr := time.LoadLocation(current.Slot.TimeZone); lerr == nil {
+			loc = l
+		}
+	}
+	title := target.Title
+	if title == "" {
+		title = "it"
+	}
+	occurrence := ""
+	if current.Recurring {
+		occurrence = " (this occurrence only, not the whole series)"
+	}
+	return fmt.Sprintf("Move %q to %s%s?", title, newStart.In(loc).Format("Mon Jan 2 15:04 MST"), occurrence), true
 }
 
 func (p Pipeline) runAction(ctx context.Context, action session.Action, st *session.State) (Output, error) {

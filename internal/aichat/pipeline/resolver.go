@@ -6,7 +6,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/sneat-co/sneat-ai-backend/temporal"
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
 
@@ -21,6 +23,17 @@ import (
 // because none exists in a Reference to begin with.
 type Resolver struct {
 	Readers data.Readers
+	// Now returns the current time, used to resolve a temporal word
+	// ("tomorrow", "Friday") found in a happening reference's expression
+	// (S4). Nil means time.Now, matching Pipeline's own convention.
+	Now func() time.Time
+}
+
+func (r Resolver) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
 }
 
 // Outcome is the result of resolving one reference.
@@ -88,10 +101,12 @@ func (r Resolver) Resolve(ctx context.Context, ref decision.Reference, st sessio
 		if r.Readers.Happenings == nil {
 			return Result{Outcome: OutcomeNone}, fmt.Errorf("pipeline: no happenings reader configured")
 		}
-		hs, err := r.Readers.Happenings.FindByTitle(ctx, spaceID, ref.Expression)
+		terms, window := significantTerms(r.now(), ref.Expression)
+		hs, err := r.Readers.Happenings.FindByTitle(ctx, spaceID, strings.Join(terms, " "))
 		if err != nil {
 			return Result{}, err
 		}
+		hs = filterByWindow(hs, window)
 		return classify(toEntityRefs(hs, func(h data.Happening) session.EntityRef {
 			return session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title,
 				Keys: map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}}
@@ -211,6 +226,64 @@ func resolveByPosition(pos int, st session.State) (Result, bool) {
 		return Result{Outcome: OutcomeNone}, true
 	}
 	return Result{Outcome: OutcomeOne, Candidates: []session.EntityRef{st.LastShown[pos-1]}}, true
+}
+
+// referenceStopwords are dropped from a happening reference expression
+// before it becomes a title search -- articles/pronouns/prepositions that
+// carry no title-matching signal. Deliberately small and fixed, not a
+// general stopword list, per the no-giant-NLP-engine rule.
+var referenceStopwords = map[string]bool{
+	"my": true, "the": true, "a": true, "an": true, "that": true, "this": true,
+	"on": true, "at": true, "for": true, "to": true, "with": true, "of": true,
+}
+
+// dayWindow is a [from, to) calendar-day range a temporal word in a
+// reference expression narrows a happening search to.
+type dayWindow struct{ from, to time.Time }
+
+// significantTerms splits a happening reference expression ("my dentist
+// appointment tomorrow") into its significant search words (stopwords
+// removed) and, when one word names a temporal window ("tomorrow",
+// "Friday" -- resolved via sneat-ai-backend's temporal package, per the
+// reuse-existing-sneat-code rule), the day window it resolves to (S4). The
+// temporal word itself is excluded from the returned terms: it narrows
+// WHEN, it is not part of the title being searched for.
+func significantTerms(now time.Time, expr string) (terms []string, win *dayWindow) {
+	words := strings.Fields(expr)
+	kept := make([]string, 0, len(words))
+	for _, w := range words {
+		lw := strings.ToLower(w)
+		if referenceStopwords[lw] {
+			continue
+		}
+		if win == nil {
+			if d, ok := temporal.ParseText(now, lw); ok {
+				from := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, d.Location())
+				win = &dayWindow{from: from, to: from.AddDate(0, 0, 1)}
+				continue // the temporal word narrows WHEN, not the title
+			}
+		}
+		kept = append(kept, w)
+	}
+	return kept, win
+}
+
+// filterByWindow keeps only happenings whose Start falls in win, or that
+// are recurring (a recurring happening's Start is its stored template date,
+// not a resolved occurrence -- see HappeningsReader's documented
+// limitation -- so it is never excluded on that basis, matching Window's
+// own semantics). A nil window keeps everything.
+func filterByWindow(hs []data.Happening, win *dayWindow) []data.Happening {
+	if win == nil {
+		return hs
+	}
+	out := hs[:0]
+	for _, h := range hs {
+		if h.Recurring || (!h.Start.IsZero() && !h.Start.Before(win.from) && h.Start.Before(win.to)) {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func classify(refs []session.EntityRef) Result {

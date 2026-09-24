@@ -2,12 +2,15 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
 
+	"github.com/sneat-co/sneat-cli/internal/aichat/data"
 	"github.com/sneat-co/sneat-cli/internal/aichat/rules"
 	"github.com/sneat-co/sneat-cli/internal/aichat/sneatdomain"
 )
@@ -18,7 +21,7 @@ func newTestPipeline(exec Executor) (Pipeline, *session.State) {
 	readers := testReaders()
 	return Pipeline{
 		Chain:    decision.Chain{Providers: []decision.Provider{rules.New()}},
-		Resolver: Resolver{Readers: readers},
+		Resolver: Resolver{Readers: readers, Now: fixedNow},
 		Executor: exec,
 		Readers:  readers,
 		Now:      fixedNow,
@@ -128,6 +131,82 @@ func TestTurn_PendingConfirmCancelUndo(t *testing.T) {
 	}
 	if out.Text != "Undone." {
 		t.Fatalf("out.Text = %q", out.Text)
+	}
+}
+
+// TestResolveAndAct_Reschedule_ConfirmationShowsResolvedDateTimeTZ is
+// scenario 4 end to end with realistic data (S4/B2 ruling): resolving "my
+// dentist appointment tomorrow" and rescheduling it "to 4" must show the
+// CONFIRMATION with the fully resolved date, 16:00 (not "4"), and the
+// slot's own timezone -- computed BEFORE the user answers yes/no -- then
+// "yes" sends the exact resolved request and "undo" restores it exactly.
+func TestResolveAndAct_Reschedule_ConfirmationShowsResolvedDateTimeTZ(t *testing.T) {
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	slot := dbo4calendarius.HappeningSlot{
+		HappeningSlotTiming: dbo4calendarius.HappeningSlotTiming{
+			Timing: dbo4calendarius.Timing{
+				Start: dbo4calendarius.DateTime{Date: "2026-09-26", Time: "10:00"},
+				End:   dbo4calendarius.DateTime{Date: "2026-09-26", Time: "10:30"},
+				// TimeZone deliberately differs from fixedNow's UTC location, so
+				// the confirmation text is a real assertion, not a coincidence.
+				TimeZone: "America/New_York",
+			},
+			Repeats: dbo4calendarius.RepeatPeriodOnce,
+		},
+	}
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h1", SpaceID: "sp1", Title: "Dentist appointment", SlotID: "s1",
+			Start: time.Date(2026, 9, 26, 10, 0, 0, 0, nyc), End: time.Date(2026, 9, 26, 10, 30, 0, 0, nyc),
+			Slot: &slot},
+	}}}
+	undo := &session.Action{Kind: sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening}
+	exec := &FakeExecutor{Undo: map[string]*session.Action{
+		sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening: undo,
+	}}
+	// fixedNow is Friday 2026-09-25 12:00 UTC -- "tomorrow" is Sep 26.
+	p := Pipeline{
+		Chain:    decision.Chain{Providers: []decision.Provider{rules.New()}},
+		Resolver: Resolver{Readers: readers, Now: fixedNow},
+		Executor: exec,
+		Readers:  readers,
+		Now:      fixedNow,
+	}
+	st := &session.State{}
+
+	out, err := p.resolveAndAct(context.Background(),
+		sneatdomain.ModuleCalendar+"."+sneatdomain.IntentRescheduleHappening,
+		decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "my dentist appointment tomorrow"},
+		map[string]string{"when": "4"}, st, "sp1")
+	if err != nil {
+		t.Fatalf("resolveAndAct: %v", err)
+	}
+	if st.Pending == nil {
+		t.Fatal("expected a Pending confirmation")
+	}
+	wantSubstrs := []string{"Sep 26", "16:00", "EDT"}
+	for _, want := range wantSubstrs {
+		if !strings.Contains(out.Text, want) {
+			t.Errorf("confirmation text = %q, want it to contain %q (resolved date/time/TZ before asking)", out.Text, want)
+		}
+	}
+
+	out, err = p.Turn(context.Background(), "yes", st, "sp1")
+	if err != nil {
+		t.Fatalf("Turn(yes): %v", err)
+	}
+	if out.Text != "Done." || len(exec.Executed) != 1 {
+		t.Fatalf("out = %+v, executed = %+v", out, exec.Executed)
+	}
+
+	out, err = p.Turn(context.Background(), "undo", st, "sp1")
+	if err != nil {
+		t.Fatalf("Turn(undo): %v", err)
+	}
+	if out.Text != "Undone." || len(exec.Executed) != 2 {
+		t.Fatalf("out = %+v, executed = %+v", out, exec.Executed)
 	}
 }
 
