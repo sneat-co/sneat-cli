@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/strongo/aichat/ai/session"
 	"golang.org/x/oauth2"
 
@@ -44,7 +45,25 @@ func newTestSneatAPI(t *testing.T, respond func(w http.ResponseWriter, r *http.R
 	return sneatapi.New(srv.URL+"/v0/", staticTokenSource{}, srv.Client()), &calls
 }
 
-func TestSneatExecutor_RescheduleHappening_SendsUpdateSlot(t *testing.T) {
+// realisticSlot is a full calendarius slot (weekdays/timezone/locations),
+// per the brief's testing guidance -- not a bare timing struct -- so B2's
+// "preserve every non-time field" assertion actually exercises fields a
+// naive update_slot request would drop.
+func realisticSlot(startDate, startTime, endTime string) dbo4calendarius.HappeningSlot {
+	return dbo4calendarius.HappeningSlot{
+		HappeningSlotTiming: dbo4calendarius.HappeningSlotTiming{
+			Timing: dbo4calendarius.Timing{
+				Start:    dbo4calendarius.DateTime{Date: startDate, Time: startTime},
+				End:      dbo4calendarius.DateTime{Date: startDate, Time: endTime},
+				TimeZone: "America/New_York",
+			},
+			Repeats: dbo4calendarius.RepeatPeriodOnce,
+		},
+		Locations: []dbo4calendarius.Location{{Type: "physical", Title: "Downtown Dental"}},
+	}
+}
+
+func TestSneatExecutor_RescheduleHappening_PreservesFullSlot(t *testing.T) {
 	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
 		if r.URL.Path != "/v0/happenings/update_slot" {
 			t.Errorf("path = %s, want /v0/happenings/update_slot", r.URL.Path)
@@ -57,11 +76,21 @@ func TestSneatExecutor_RescheduleHappening_SendsUpdateSlot(t *testing.T) {
 		if start["date"] != "2026-09-25" || start["time"] != "16:00" {
 			t.Errorf("slot.start = %v, want 2026-09-25 16:00", start)
 		}
+		// B2: everything besides the time must survive untouched.
+		if slot["timeZone"] != "America/New_York" {
+			t.Errorf("slot.timeZone = %v, want preserved America/New_York", slot["timeZone"])
+		}
+		locations, _ := slot["locations"].([]any)
+		if len(locations) != 1 {
+			t.Errorf("slot.locations = %v, want the original location preserved", slot["locations"])
+		}
 		w.WriteHeader(http.StatusOK)
 	})
+	slot := realisticSlot("2026-09-24", "10:00", "10:30")
 	happenings := &data.FakeHappenings{Items: []data.Happening{
 		{ID: "h1", SpaceID: "sp1", Title: "Dentist", SlotID: "s1",
-			Start: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 24, 10, 30, 0, 0, time.UTC)},
+			Start: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 24, 10, 30, 0, 0, time.UTC),
+			Slot: &slot},
 	}}
 	exec := SneatExecutor{Calendar: api, Happenings: happenings, Now: func() time.Time { return time.Date(2026, 9, 24, 9, 0, 0, 0, time.UTC) }}
 	target := session.EntityRef{Type: "happening", Title: "Dentist", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
@@ -76,6 +105,76 @@ func TestSneatExecutor_RescheduleHappening_SendsUpdateSlot(t *testing.T) {
 	}
 	if undo == nil || undo.Args["when"] != "2026-09-24 10:00" {
 		t.Fatalf("undo = %+v, want the original start time", undo)
+	}
+}
+
+// TestSneatExecutor_RescheduleHappening_NoSlot_Errors: a happening with no
+// preserved slot data cannot be safely rescheduled (there is nothing to
+// round-trip) -- must error rather than silently building a bare slot that
+// would drop fields on write.
+func TestSneatExecutor_RescheduleHappening_NoSlot_Errors(t *testing.T) {
+	happenings := &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h1", SpaceID: "sp1", Title: "Dentist", SlotID: "s1",
+			Start: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)}, // Slot left nil
+	}}
+	exec := SneatExecutor{Calendar: &sneatapi.Client{}, Happenings: happenings, Now: func() time.Time { return time.Date(2026, 9, 24, 9, 0, 0, 0, time.UTC) }}
+	target := session.EntityRef{Type: "happening", Title: "Dentist", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
+	_, err := exec.Execute(context.Background(), session.Action{
+		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "tomorrow 16:00"},
+	})
+	if err == nil {
+		t.Fatal("expected an error when the happening has no preserved slot")
+	}
+}
+
+// TestSneatExecutor_RescheduleHappening_Recurring_UsesAdjustSlot covers the
+// B2 ruling's recurring branch: moving "this Friday's Yoga" (weekly) sends
+// adjust_slot (a per-date deviation) with the FULL slot -- weekdays included
+// -- not update_slot, which would rewrite the template every future
+// occurrence inherits.
+func TestSneatExecutor_RescheduleHappening_Recurring_UsesAdjustSlot(t *testing.T) {
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		if r.URL.Path != "/v0/happenings/adjust_slot" {
+			t.Errorf("path = %s, want /v0/happenings/adjust_slot", r.URL.Path)
+		}
+		if body["date"] != "2026-09-25" {
+			t.Errorf("date = %v, want 2026-09-25 (the adjusted occurrence, not the template date)", body["date"])
+		}
+		slot, _ := body["slot"].(map[string]any)
+		start, _ := slot["start"].(map[string]any)
+		if start["time"] != "16:00" {
+			t.Errorf("slot.start.time = %v, want 16:00", start["time"])
+		}
+		weekdays, _ := slot["weekdays"].([]any)
+		if len(weekdays) != 1 || weekdays[0] != "fr" {
+			t.Errorf("slot.weekdays = %v, want [\"fr\"] preserved from the template", slot["weekdays"])
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	slot := dbo4calendarius.HappeningSlot{
+		HappeningSlotTiming: dbo4calendarius.HappeningSlotTiming{
+			Timing:   dbo4calendarius.Timing{Start: dbo4calendarius.DateTime{Date: "2026-09-18", Time: "09:00"}, End: dbo4calendarius.DateTime{Date: "2026-09-18", Time: "09:30"}},
+			Repeats:  dbo4calendarius.RepeatPeriodWeekly,
+			Weekdays: []dbo4calendarius.WeekdayCode{dbo4calendarius.Friday2},
+		},
+	}
+	happenings := &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h2", SpaceID: "sp1", Title: "Yoga", SlotID: "s1", Recurring: true,
+			Start: time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 18, 9, 30, 0, 0, time.UTC),
+			Slot: &slot},
+	}}
+	// "now" is Friday 2026-09-25 09:00 so "tomorrow"/plain-time resolution
+	// below picks this Friday, not the template's stale 09-18 date.
+	exec := SneatExecutor{Calendar: api, Happenings: happenings, Now: func() time.Time { return time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC) }}
+	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h2"}}
+	_, err := exec.Execute(context.Background(), session.Action{
+		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "16:00"},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(*calls) != 1 || (*calls)[0] != "POST /v0/happenings/adjust_slot" {
+		t.Fatalf("calls = %v", *calls)
 	}
 }
 
