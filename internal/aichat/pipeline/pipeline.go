@@ -127,11 +127,11 @@ func (p Pipeline) Turn(ctx context.Context, text string, st *session.State, spac
 func (p Pipeline) turnFromDecision(ctx context.Context, d decision.Decision, st *session.State, spaceID string) (Output, error) {
 	switch d.Interaction {
 	case decision.InteractionConfirmation:
-		return p.confirmPending(ctx, st)
+		return p.confirmPending(ctx, spaceID, st)
 	case decision.InteractionRejection, decision.InteractionCancellation:
 		return p.cancelPending(st), nil
 	case decision.InteractionUndo:
-		return p.undoPrevious(ctx, st)
+		return p.undoPrevious(ctx, spaceID, st)
 	}
 
 	if !d.CanHandleDeterministically {
@@ -154,7 +154,7 @@ func (p Pipeline) HandleAction(ctx context.Context, a Action, st *session.State,
 		return p.findOrShowContact(ctx, ref, st, spaceID)
 	}
 	if a.Reference == "" && !a.Pronoun {
-		return p.runAction(ctx, session.Action{Kind: a.Kind, Args: spaceScopedArgs(a.Slots, spaceID)}, st)
+		return p.runAction(ctx, spaceID, session.Action{Kind: a.Kind, Args: spaceScopedArgs(a.Slots, spaceID)}, st)
 	}
 	kind := entityKindFor(a.Kind)
 	ref := decision.Reference{Kind: kind, Expression: a.Reference, Pronoun: a.Pronoun}
@@ -396,18 +396,67 @@ func (p Pipeline) resolveAndAct(ctx context.Context, kind string, ref decision.R
 	}
 
 	target := res.Candidates[0]
+	// B3: a resolved target (focused/selected/sidebar-pinned, or fetched
+	// fresh) whose OWN recorded space disagrees with the pipeline's current
+	// space is refused outright -- e.g. a happening focused before the user
+	// switched spaces must not let "cancel it" mutate the OLD space just
+	// because the reference still resolves locally. SneatExecutor repeats
+	// this check (defense in depth for a Pending action confirmed later, or
+	// any other Execute caller), but resolveAndAct is where a fresh
+	// resolution should be told "no" before ever building an action.
+	if targetSpace := target.Keys["spaceID"]; targetSpace != "" && targetSpace != spaceID {
+		return Output{Text: fmt.Sprintf("%q belongs to another space.", target.Title)}, nil
+	}
+	// B3: slots come from a decision/model (rules or the main LLM) -- strip
+	// any spaceID it supplied, same as HandleAction's no-reference branch.
+	args := spaceScopedArgs(slots, spaceID)
 	summary := summaryFor(kind, target, slots)
-	if kind == sneatdomain.ModuleCalendar+"."+sneatdomain.IntentRescheduleHappening {
+	switch kind {
+	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening:
 		if resolved, ok := p.rescheduleSummary(ctx, spaceID, target, slots["when"]); ok {
 			summary = resolved
 		}
+	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentCancelHappening:
+		// B1: the confirmation must show the RESOLVED occurrence, computed
+		// before asking, the same way rescheduleSummary does -- not a bare
+		// "Cancel it?" that never lets the user see which day they're about
+		// to cancel.
+		if resolved, ok := p.cancelSummary(ctx, spaceID, target, slots["when"]); ok {
+			summary = resolved
+		}
 	}
-	action := session.Action{Kind: kind, Target: &target, Args: slots, Summary: summary}
+	action := session.Action{Kind: kind, Target: &target, Args: args, Summary: summary}
 	if isDestructive(kind) {
 		st.Pending = &action
 		return Output{Text: action.Summary + " (yes/no)"}, nil
 	}
-	return p.runAction(ctx, action, st)
+	return p.runAction(ctx, spaceID, action, st)
+}
+
+// cancelSummary builds cancelHappening's confirmation text with the FULLY
+// RESOLVED occurrence, computed BEFORE asking (B1 ruling: "confirmation
+// computed BEFORE asking"), e.g. 'Cancel Fri Sep 25 "Yoga" (this occurrence
+// only)?' for a recurring happening -- a single (non-recurring) happening
+// has no occurrence distinct from itself, so it keeps the plain "Cancel
+// %q?" text. ok is false when the happening can't be read; the caller
+// falls back to summaryFor's plain text rather than a blank confirmation.
+func (p Pipeline) cancelSummary(ctx context.Context, spaceID string, target session.EntityRef, when string) (string, bool) {
+	if p.Readers.Happenings == nil {
+		return "", false
+	}
+	current, err := p.Readers.Happenings.Get(ctx, spaceID, target.Keys["happeningID"])
+	if err != nil {
+		return "", false
+	}
+	title := target.Title
+	if title == "" {
+		title = "it"
+	}
+	if !current.Recurring {
+		return fmt.Sprintf("Cancel %q?", title), true
+	}
+	occ := resolveOccurrenceDate(p.now(), current, when)
+	return fmt.Sprintf("Cancel %s %q (this occurrence only)?", occ.Format("Mon Jan 2"), title), true
 }
 
 // pickFromLastShown handles a bare number/ordinal ("2", "the second one")
@@ -486,11 +535,11 @@ func (p Pipeline) rescheduleSummary(ctx context.Context, spaceID string, target 
 	return fmt.Sprintf("Move %q to %s%s?", title, newStart.In(loc).Format("Mon Jan 2 15:04 MST"), occurrence), true
 }
 
-func (p Pipeline) runAction(ctx context.Context, action session.Action, st *session.State) (Output, error) {
+func (p Pipeline) runAction(ctx context.Context, spaceID string, action session.Action, st *session.State) (Output, error) {
 	if p.Executor == nil {
 		return Output{}, fmt.Errorf("pipeline: no executor configured")
 	}
-	undo, err := p.Executor.Execute(ctx, action)
+	undo, err := p.Executor.Execute(ctx, spaceID, action)
 	if err != nil {
 		return Output{}, err
 	}
@@ -510,13 +559,13 @@ func (p Pipeline) runAction(ctx context.Context, action session.Action, st *sess
 	return Output{Text: text}, nil
 }
 
-func (p Pipeline) confirmPending(ctx context.Context, st *session.State) (Output, error) {
+func (p Pipeline) confirmPending(ctx context.Context, spaceID string, st *session.State) (Output, error) {
 	if st.Pending == nil {
 		return Output{Text: "There's nothing pending to confirm."}, nil
 	}
 	action := *st.Pending
 	st.Pending = nil
-	return p.runAction(ctx, action, st)
+	return p.runAction(ctx, spaceID, action, st)
 }
 
 func (p Pipeline) cancelPending(st *session.State) Output {
@@ -527,7 +576,7 @@ func (p Pipeline) cancelPending(st *session.State) Output {
 	return Output{Text: "Cancelled."}
 }
 
-func (p Pipeline) undoPrevious(ctx context.Context, st *session.State) (Output, error) {
+func (p Pipeline) undoPrevious(ctx context.Context, spaceID string, st *session.State) (Output, error) {
 	if st.Previous == nil || st.Previous.Undo == nil {
 		return Output{Text: "There's nothing I can undo."}, nil
 	}
@@ -535,7 +584,7 @@ func (p Pipeline) undoPrevious(ctx context.Context, st *session.State) (Output, 
 	if p.Executor == nil {
 		return Output{}, fmt.Errorf("pipeline: no executor configured")
 	}
-	if _, err := p.Executor.Execute(ctx, undo); err != nil {
+	if _, err := p.Executor.Execute(ctx, spaceID, undo); err != nil {
 		return Output{}, err
 	}
 	st.Previous = nil

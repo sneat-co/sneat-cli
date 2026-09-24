@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,7 +95,7 @@ func TestSneatExecutor_RescheduleHappening_PreservesFullSlot(t *testing.T) {
 	}}
 	exec := SneatExecutor{Calendar: api, Happenings: happenings, Now: func() time.Time { return time.Date(2026, 9, 24, 9, 0, 0, 0, time.UTC) }}
 	target := session.EntityRef{Type: "happening", Title: "Dentist", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
-	undo, err := exec.Execute(context.Background(), session.Action{
+	undo, err := exec.Execute(context.Background(), "sp1", session.Action{
 		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "tomorrow 16:00"},
 	})
 	if err != nil {
@@ -119,7 +120,7 @@ func TestSneatExecutor_RescheduleHappening_NoSlot_Errors(t *testing.T) {
 	}}
 	exec := SneatExecutor{Calendar: &sneatapi.Client{}, Happenings: happenings, Now: func() time.Time { return time.Date(2026, 9, 24, 9, 0, 0, 0, time.UTC) }}
 	target := session.EntityRef{Type: "happening", Title: "Dentist", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
-	_, err := exec.Execute(context.Background(), session.Action{
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
 		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "tomorrow 16:00"},
 	})
 	if err == nil {
@@ -167,7 +168,7 @@ func TestSneatExecutor_RescheduleHappening_Recurring_UsesAdjustSlot(t *testing.T
 	// below picks this Friday, not the template's stale 09-18 date.
 	exec := SneatExecutor{Calendar: api, Happenings: happenings, Now: func() time.Time { return time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC) }}
 	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h2"}}
-	_, err := exec.Execute(context.Background(), session.Action{
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
 		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "16:00"},
 	})
 	if err != nil {
@@ -192,14 +193,14 @@ func TestSneatExecutor_CancelHappening_SendsCancelAndUndoRevokes(t *testing.T) {
 	}}
 	exec := SneatExecutor{Calendar: api, Happenings: happenings}
 	target := session.EntityRef{Type: "happening", Title: "Standup", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
-	undo, err := exec.Execute(context.Background(), session.Action{Kind: "calendar.cancel_happening", Target: &target})
+	undo, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: "calendar.cancel_happening", Target: &target})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if undo == nil || undo.Kind != calendarRevokeCancellationKind {
 		t.Fatalf("undo = %+v", undo)
 	}
-	if _, err := exec.Execute(context.Background(), *undo); err != nil {
+	if _, err := exec.Execute(context.Background(), "sp1", *undo); err != nil {
 		t.Fatalf("Execute(undo): %v", err)
 	}
 	want := []string{"POST /v0/happenings/cancel_happening", "POST /v0/happenings/revoke_happening_cancellation"}
@@ -242,14 +243,14 @@ func TestSneatExecutor_CancelHappening_Recurring_CancelsOnlyOneOccurrence(t *tes
 	// occurrence to that date, not the template's stale 09-18.
 	exec := SneatExecutor{Calendar: api, Happenings: happenings, Now: func() time.Time { return time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC) }}
 	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h2"}}
-	undo, err := exec.Execute(context.Background(), session.Action{Kind: "calendar.cancel_happening", Target: &target})
+	undo, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: "calendar.cancel_happening", Target: &target})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if lastCancelDate != "2026-09-25" {
 		t.Errorf("cancel date = %q, want 2026-09-25 (this occurrence)", lastCancelDate)
 	}
-	if _, err := exec.Execute(context.Background(), *undo); err != nil {
+	if _, err := exec.Execute(context.Background(), "sp1", *undo); err != nil {
 		t.Fatalf("Execute(undo): %v", err)
 	}
 	if lastRevokeDate != "2026-09-25" {
@@ -268,7 +269,7 @@ func TestSneatExecutor_CompleteTodo_SendsSetIsDoneAndUndoReopens(t *testing.T) {
 	})
 	exec := SneatExecutor{Todo: api}
 	target := session.EntityRef{Type: "todo", Title: "Buy milk", Keys: map[string]string{"spaceID": "sp1", "list": "do", "itemID": "t1"}}
-	undo, err := exec.Execute(context.Background(), session.Action{Kind: "todo.complete_todo", Target: &target})
+	undo, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: "todo.complete_todo", Target: &target})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -286,7 +287,7 @@ func TestSneatExecutor_AddTodo_UsesCreatedIDForUndo(t *testing.T) {
 		_, _ = w.Write([]byte(`{"items":[{"id":"new1","title":"Buy milk"}]}`))
 	})
 	exec := SneatExecutor{Todo: api}
-	undo, err := exec.Execute(context.Background(), session.Action{
+	undo, err := exec.Execute(context.Background(), "sp1", session.Action{
 		Kind: "todo.add_todo", Args: map[string]string{"spaceID": "sp1", "title": "Buy milk"},
 	})
 	if err != nil {
@@ -304,7 +305,7 @@ func TestSneatExecutor_DeleteTodo_NoUndo(t *testing.T) {
 	api, calls := newTestSneatAPI(t, nil)
 	exec := SneatExecutor{Todo: api}
 	target := session.EntityRef{Type: "todo", Keys: map[string]string{"spaceID": "sp1", "list": "do", "itemID": "t1"}}
-	undo, err := exec.Execute(context.Background(), session.Action{Kind: "todo.delete_todo", Target: &target})
+	undo, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: "todo.delete_todo", Target: &target})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -318,8 +319,264 @@ func TestSneatExecutor_DeleteTodo_NoUndo(t *testing.T) {
 
 func TestSneatExecutor_UnknownKindErrors(t *testing.T) {
 	exec := SneatExecutor{}
-	_, err := exec.Execute(context.Background(), session.Action{Kind: "contacts.teleport"})
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: "contacts.teleport"})
 	if err == nil {
 		t.Fatal("expected an error for an unknown action kind")
+	}
+}
+
+// monFriYoga is a weekly Mon/Fri recurring happening in Europe/London, used
+// by the fix-round-3 B1/B2/m4/m5 scenarios below (adapted from the
+// coordinator's probe: /private/tmp/.../sneat-cli-r2/.../zz_probe_test.go).
+func monFriYoga(t *testing.T) (data.Happening, *time.Location) {
+	t.Helper()
+	loc, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	slot := dbo4calendarius.HappeningSlot{HappeningSlotTiming: dbo4calendarius.HappeningSlotTiming{
+		Timing: dbo4calendarius.Timing{
+			Start:    dbo4calendarius.DateTime{Date: "2026-01-02", Time: "18:00"},
+			End:      dbo4calendarius.DateTime{Date: "2026-01-02", Time: "19:00"},
+			TimeZone: "Europe/London",
+		},
+		Repeats:  dbo4calendarius.RepeatPeriodWeekly,
+		Weekdays: []dbo4calendarius.WeekdayCode{dbo4calendarius.Monday2, dbo4calendarius.Friday2},
+	}}
+	return data.Happening{ID: "yoga", SpaceID: "sp1", Title: "Yoga", SlotID: "s1", Recurring: true, Slot: &slot,
+		Start: time.Date(2026, 1, 2, 18, 0, 0, 0, loc), End: time.Date(2026, 1, 2, 19, 0, 0, 0, loc)}, loc
+}
+
+// mondayNoon is 2026-09-21 10:00 Europe/London (a Monday); Friday of that
+// week is 2026-09-25.
+func mondayNoon(t *testing.T) time.Time {
+	_, loc := monFriYoga(t)
+	return time.Date(2026, 9, 21, 10, 0, 0, 0, loc)
+}
+
+// TestSneatExecutor_CancelHappening_HonoursExplicitWhen is B1: cancelling
+// "Friday's" yoga on a Monday must cancel FRIDAY's occurrence, not
+// recurringAnchor's default (today/next, which on a Monday would be
+// today), and the confirmation (via cancelSummary in pipeline.go) must
+// show that same resolved date.
+func TestSneatExecutor_CancelHappening_HonoursExplicitWhen(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		if d, _ := body["date"].(string); d != "2026-09-25" {
+			t.Errorf("date = %v, want 2026-09-25 (Friday, as the user asked) not today (Monday)", body["date"])
+		}
+	})
+	hs := &data.FakeHappenings{Items: []data.Happening{yoga}}
+	exec := SneatExecutor{Calendar: api, Happenings: hs, Now: func() time.Time { return now }}
+	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "yoga"}}
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.cancel_happening", Target: &target, Args: map[string]string{"when": "Friday's"},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %v", *calls)
+	}
+}
+
+// TestCancelSummary_ShowsResolvedOccurrenceBeforeAsking is B1's confirmation
+// half: the summary text must name the resolved Friday date, computed
+// before the user answers yes/no.
+func TestCancelSummary_ShowsResolvedOccurrenceBeforeAsking(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{yoga}}}
+	p := Pipeline{Readers: readers, Now: func() time.Time { return now }}
+	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "yoga"}}
+	summary, ok := p.cancelSummary(context.Background(), "sp1", target, "Friday's")
+	if !ok {
+		t.Fatal("cancelSummary: ok = false")
+	}
+	if !strings.Contains(summary, "Sep 25") || !strings.Contains(summary, "this occurrence only") {
+		t.Fatalf("summary = %q, want it to name the resolved Friday Sep 25 occurrence", summary)
+	}
+}
+
+// TestSneatExecutor_RecurringMoveToOtherDay_DateIsOriginalOccurrence is B2:
+// moving Monday's yoga to Wednesday sends adjust_slot with Date = the
+// ORIGINAL occurrence (Monday, today), not the new Wednesday date -- the
+// slot payload itself carries the new date/time.
+func TestSneatExecutor_RecurringMoveToOtherDay_DateIsOriginalOccurrence(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	var gotDate string
+	var gotStartDate string
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		gotDate, _ = body["date"].(string)
+		slot, _ := body["slot"].(map[string]any)
+		start, _ := slot["start"].(map[string]any)
+		gotStartDate, _ = start["date"].(string)
+	})
+	hs := &data.FakeHappenings{Items: []data.Happening{yoga}}
+	exec := SneatExecutor{Calendar: api, Happenings: hs, Now: func() time.Time { return now }}
+	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "yoga"}}
+	if _, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "Wednesday 16:00"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 || (*calls)[0] != "POST /v0/happenings/adjust_slot" {
+		t.Fatalf("calls = %v", *calls)
+	}
+	if gotDate != "2026-09-21" {
+		t.Errorf("adjust_slot date = %q, want 2026-09-21 (Monday, the ORIGINAL occurrence being moved)", gotDate)
+	}
+	if gotStartDate != "2026-09-23" {
+		t.Errorf("slot.start.date = %q, want 2026-09-23 (Wednesday, the NEW date)", gotStartDate)
+	}
+}
+
+// TestSneatExecutor_RecurringReschedule_UndoUsesCancelAdjustment is B2's
+// undo half: undo calls cancel_adjustment (not another adjust_slot) with
+// the SAME date+slotID the move used.
+func TestSneatExecutor_RecurringReschedule_UndoUsesCancelAdjustment(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	var paths []string
+	var dates []string
+	api, _ := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		paths = append(paths, r.URL.Path)
+		if d, ok := body["date"].(string); ok {
+			dates = append(dates, d)
+		}
+	})
+	hs := &data.FakeHappenings{Items: []data.Happening{yoga}}
+	exec := SneatExecutor{Calendar: api, Happenings: hs, Now: func() time.Time { return now }}
+	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "yoga"}}
+	undo, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "Friday 16:00"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if undo == nil || undo.Kind != calendarCancelAdjustmentKind {
+		t.Fatalf("undo = %+v, want kind %q", undo, calendarCancelAdjustmentKind)
+	}
+	if _, err := exec.Execute(context.Background(), "sp1", *undo); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[1] != "/v0/happenings/cancel_adjustment" {
+		t.Fatalf("paths = %v, want the second call to be cancel_adjustment", paths)
+	}
+	if len(dates) != 2 || dates[0] != dates[1] {
+		t.Errorf("dates = %v, want undo to cancel the adjustment for the SAME date the move used", dates)
+	}
+}
+
+// TestSneatExecutor_UTCOffsetRecomputedOnReschedule is m4: a slot recorded
+// with a UTCOffset (not just a TimeZone name) must get a FRESH offset for
+// the new time, not the stale one from the original instant.
+func TestSneatExecutor_UTCOffsetRecomputedOnReschedule(t *testing.T) {
+	slot := dbo4calendarius.HappeningSlot{
+		HappeningSlotTiming: dbo4calendarius.HappeningSlotTiming{
+			Timing: dbo4calendarius.Timing{
+				// January in London: GMT, +00:00. Moving to July would be BST
+				// (+01:00) if this were a real IANA zone, but a bare UTCOffset
+				// slot (no TimeZone name) doesn't know that -- it just needs its
+				// OWN new-instant offset recomputed, not left stale.
+				Start:     dbo4calendarius.DateTime{Date: "2026-01-02", Time: "10:00"},
+				End:       dbo4calendarius.DateTime{Date: "2026-01-02", Time: "11:00"},
+				UTCOffset: "+00:00", EndUTCOffset: "+00:00",
+			},
+			Repeats: dbo4calendarius.RepeatPeriodOnce,
+		},
+	}
+	var gotOffset, gotEndOffset string
+	api, _ := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		slotBody, _ := body["slot"].(map[string]any)
+		gotOffset, _ = slotBody["utcOffset"].(string)
+		gotEndOffset, _ = slotBody["endUTCOffset"].(string)
+	})
+	fixedZone := time.FixedZone("+00:00", 0)
+	hs := &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h1", SpaceID: "sp1", Title: "Call", SlotID: "s1",
+			Start: time.Date(2026, 1, 2, 10, 0, 0, 0, fixedZone), End: time.Date(2026, 1, 2, 11, 0, 0, 0, fixedZone),
+			Slot: &slot},
+	}}
+	exec := SneatExecutor{Calendar: api, Happenings: hs, Now: func() time.Time { return time.Date(2026, 1, 2, 9, 0, 0, 0, fixedZone) }}
+	target := session.EntityRef{Type: "happening", Title: "Call", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "14:00"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOffset != "+00:00" {
+		t.Errorf("utcOffset = %q, want +00:00 (recomputed for the new instant in the same fixed zone)", gotOffset)
+	}
+	if gotEndOffset != "+00:00" {
+		t.Errorf("endUTCOffset = %q, want +00:00", gotEndOffset)
+	}
+}
+
+// TestRecurringAnchor_SkipsPassedOccurrence is m5: an occurrence already
+// passed today is skipped in favour of the NEXT matching day, not returned
+// as if it were still upcoming.
+func TestRecurringAnchor_SkipsPassedOccurrence(t *testing.T) {
+	yoga, loc := monFriYoga(t)
+	// 20:00 Monday -- today's 18:00 class already ended.
+	now := time.Date(2026, 9, 21, 20, 0, 0, 0, loc)
+	got := recurringAnchor(now, yoga)
+	want := time.Date(2026, 9, 25, 18, 0, 0, 0, loc) // Friday, not today
+	if !got.Equal(want) {
+		t.Errorf("recurringAnchor = %v, want %v (Friday, today's class already passed)", got, want)
+	}
+}
+
+// TestRecurringAnchor_TodayNotYetPassed_ReturnsToday is the companion case:
+// before today's occurrence time, recurringAnchor still returns today.
+func TestRecurringAnchor_TodayNotYetPassed_ReturnsToday(t *testing.T) {
+	yoga, loc := monFriYoga(t)
+	now := time.Date(2026, 9, 21, 9, 0, 0, 0, loc) // Monday, before 18:00
+	got := recurringAnchor(now, yoga)
+	want := time.Date(2026, 9, 21, 18, 0, 0, 0, loc)
+	if !got.Equal(want) {
+		t.Errorf("recurringAnchor = %v, want %v (today, not yet passed)", got, want)
+	}
+}
+
+// TestSneatExecutor_Execute_RejectsCrossSpaceTarget is B3's executor-level
+// defense in depth: a resolved Target whose OWN spaceID disagrees with the
+// spaceID Execute was called with is refused, never dispatched.
+func TestSneatExecutor_Execute_RejectsCrossSpaceTarget(t *testing.T) {
+	api, calls := newTestSneatAPI(t, nil)
+	exec := SneatExecutor{Calendar: api, Happenings: &data.FakeHappenings{}}
+	target := session.EntityRef{Type: "happening", Title: "Old", Keys: map[string]string{"spaceID": "spOLD", "happeningID": "h1"}}
+	_, err := exec.Execute(context.Background(), "spNEW", session.Action{Kind: "calendar.cancel_happening", Target: &target})
+	if err == nil {
+		t.Fatal("expected an error for a cross-space target")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("calls = %v, want no HTTP call for a rejected cross-space target", *calls)
+	}
+}
+
+// TestSneatExecutor_AddListItem_IgnoresArgsSpaceID is B3: Args["spaceID"]
+// (model-controlled) is never read -- only the spaceID Execute was called
+// with is used to build the request.
+func TestSneatExecutor_AddListItem_IgnoresArgsSpaceID(t *testing.T) {
+	var gotSpaceID string
+	api, _ := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		spaceReq, _ := body["spaceID"].(string)
+		gotSpaceID = spaceReq
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"id":"new1","title":"Buy milk"}]}`))
+	})
+	exec := SneatExecutor{Todo: api}
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "todo.add_todo", Args: map[string]string{"spaceID": "evil", "title": "Buy milk"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotSpaceID != "sp1" {
+		t.Errorf("request spaceID = %q, want sp1 (Execute's own param, not Args[\"spaceID\"]=evil)", gotSpaceID)
 	}
 }

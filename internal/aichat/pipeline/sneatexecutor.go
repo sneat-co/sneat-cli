@@ -33,6 +33,12 @@ type CalendarAPI interface {
 	// every future occurrence inherits (B2 ruling; moving the whole series is
 	// out of MVP scope).
 	AdjustSlot(ctx context.Context, req dto4calendarius.HappeningSlotDateRequest) error
+	// CancelAdjustment removes a per-date deviation entirely (calendarius's
+	// cancel_adjustment), restoring that occurrence to whatever the
+	// recurring template says -- used as AdjustSlot's undo (B2 ruling)
+	// instead of re-running AdjustSlot with a reconstructed "old" slot,
+	// which could drift from fields this executor never read back.
+	CancelAdjustment(ctx context.Context, req dto4calendarius.HappeningDateSlotIDRequest) error
 	CancelHappening(ctx context.Context, req dto4calendarius.CancelHappeningRequest) error
 	// RevokeHappeningCancellation undoes CancelHappening. It takes the SAME
 	// CancelHappeningRequest shape (Date/SlotID included) as CancelHappening
@@ -83,25 +89,39 @@ func (e SneatExecutor) now() time.Time {
 	return time.Now()
 }
 
-// Execute implements Executor.
-func (e SneatExecutor) Execute(ctx context.Context, action session.Action) (*session.Action, error) {
+// Execute implements Executor. spaceID (the pipeline's own current space,
+// B3 ruling) is the ONLY source of truth for which space every request
+// below targets -- action.Args["spaceID"] is never read (a model-supplied
+// value there is meaningless to this executor), and a resolved
+// action.Target whose OWN Keys["spaceID"] disagrees with spaceID is refused
+// outright rather than executed against whichever space it names: a
+// lingering focused/pinned entity from a space the session has since left
+// must never let a mutation leak into it.
+func (e SneatExecutor) Execute(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+	if action.Target != nil {
+		if targetSpace := action.Target.Keys["spaceID"]; targetSpace != "" && targetSpace != spaceID {
+			return nil, fmt.Errorf("pipeline: %q belongs to another space", action.Target.Title)
+		}
+	}
 	switch action.Kind {
 	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening:
-		return e.rescheduleHappening(ctx, action)
+		return e.rescheduleHappening(ctx, spaceID, action)
 	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentCancelHappening:
-		return e.cancelHappening(ctx, action)
+		return e.cancelHappening(ctx, spaceID, action)
 	case calendarRevokeCancellationKind:
-		return nil, e.revokeCancellation(ctx, action)
+		return nil, e.revokeCancellation(ctx, spaceID, action)
+	case calendarCancelAdjustmentKind:
+		return nil, e.cancelAdjustment(ctx, spaceID, action)
 	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentCompleteTodo:
-		return e.setTodoDone(ctx, action, true)
+		return e.setTodoDone(ctx, spaceID, action, true)
 	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentReopenTodo:
-		return e.setTodoDone(ctx, action, false)
+		return e.setTodoDone(ctx, spaceID, action, false)
 	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentDeleteTodo:
-		return nil, e.deleteTodo(ctx, action)
+		return nil, e.deleteTodo(ctx, spaceID, action)
 	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddTodo:
-		return e.addListItem(ctx, action, data.ListKindDo)
+		return e.addListItem(ctx, spaceID, action, data.ListKindDo)
 	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddToBuy:
-		return e.addListItem(ctx, action, data.ListKindBuy)
+		return e.addListItem(ctx, spaceID, action, data.ListKindBuy)
 	default:
 		return nil, fmt.Errorf("pipeline: no executor case for action kind %q", action.Kind)
 	}
@@ -112,6 +132,12 @@ func (e SneatExecutor) Execute(ctx context.Context, action session.Action) (*ses
 // main LLM asks for directly), just the reverse of cancel_happening.
 const calendarRevokeCancellationKind = sneatdomain.ModuleCalendar + ".revoke_cancellation"
 
+// calendarCancelAdjustmentKind is the undo action kind a RECURRING
+// reschedule stages (B2 ruling): reversing an adjust_slot deviation means
+// removing it (calendarius's cancel_adjustment), not re-adjusting back to a
+// reconstructed "old" slot.
+const calendarCancelAdjustmentKind = sneatdomain.ModuleCalendar + ".cancel_adjustment"
+
 // rescheduleHappening moves ONE happening's slot to a new time. B2 ruling:
 //   - a single (non-recurring) happening reads its full current slot and
 //     changes ONLY the time fields, then sends the WHOLE slot back via
@@ -120,18 +146,32 @@ const calendarRevokeCancellationKind = sneatdomain.ModuleCalendar + ".revoke_can
 //     a bare HappeningSlotTiming would silently drop Weekdays/Locations/
 //     pricing/participants.
 //   - a recurring happening's single occurrence moves via adjust_slot (also a
-//     wholesale slot replacement, but scoped to one calendar date) instead of
-//     update_slot, which would rewrite the template every future occurrence
-//     inherits. Moving the whole series is out of MVP scope.
+//     wholesale slot replacement) instead of update_slot, which would
+//     rewrite the template every future occurrence inherits. adjust_slot's
+//     Date identifies the calendar day the ORIGINAL occurrence being
+//     deviated lives on (facade4calendarius/happening_slot_adjust.go stores
+//     the adjustment keyed by that date), NOT the new date the occurrence is
+//     moving to -- the Slot payload's own Start/End carries the new time,
+//     which MAY be on a different date entirely, and calendarius's
+//     adjustment mechanism is explicitly documented for exactly this ("time
+//     changed for a specific date, or first class has been canceled"), so a
+//     move-to-another-day is a single adjust_slot call with Date=original,
+//     Slot.Start=new. This executor does not implement calendarius's
+//     alternative (cancel the original occurrence + adjust a new one) --
+//     it is not needed for the mechanism to work and would double the
+//     mutations and undo surface for no benefit this MVP slice can verify.
+//     Moving the WHOLE series is out of MVP scope.
 //
-// Both paths re-read the happening's current state, so undo (which re-runs
-// this same action with the original "when") always starts from a fresh
-// slot rather than a stale snapshot.
-func (e SneatExecutor) rescheduleHappening(ctx context.Context, action session.Action) (*session.Action, error) {
+// Both paths re-read the happening's current state. Undo for a single
+// happening re-runs this same action with the original "when" (so it too
+// re-reads current state via UpdateSlot). Undo for a recurring happening
+// instead cancels the adjustment outright (cancelAdjustment) rather than
+// reconstructing the old slot, which could drift from fields this executor
+// never read back.
+func (e SneatExecutor) rescheduleHappening(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
 	if e.Calendar == nil || e.Happenings == nil || action.Target == nil {
 		return nil, fmt.Errorf("pipeline: reschedule_happening requires Calendar API, a happenings reader and a resolved target")
 	}
-	spaceID := action.Target.Keys["spaceID"]
 	happeningID := action.Target.Keys["happeningID"]
 	current, err := e.Happenings.Get(ctx, spaceID, happeningID)
 	if err != nil {
@@ -141,13 +181,14 @@ func (e SneatExecutor) rescheduleHappening(ctx context.Context, action session.A
 		return nil, fmt.Errorf("pipeline: happening %q has no slot to reschedule", happeningID)
 	}
 	when := action.Args["when"]
-	// anchor is the date a bare time-of-day ("4", "16:00") is applied to. For
-	// a single happening that is simply its stored date. For a recurring
-	// happening, current.Start is the stored TEMPLATE date (documented
-	// HappeningsReader limitation), which would silently reschedule the
-	// occurrence back to the template's original date instead of "this
-	// Friday" -- recurringAnchor resolves the next real occurrence date from
-	// the recurrence rule instead.
+	// anchor is the ORIGINAL occurrence being modified: for a single
+	// happening that is simply its stored date; for a recurring one,
+	// current.Start is the stored TEMPLATE date (documented HappeningsReader
+	// limitation), so recurringAnchor resolves the actual next/current real
+	// occurrence date from the recurrence rule instead. parseWhen resolves
+	// the NEW time relative to this same anchor (a bare "4" keeps anchor's
+	// date; an explicit "Wednesday 16:00" moves to a different day/time
+	// entirely, still anchored off the ORIGINAL occurrence being moved).
 	anchor := recurringAnchor(e.now(), current)
 	newStart, ok := parseWhen(e.now(), anchor, when)
 	if !ok {
@@ -159,28 +200,53 @@ func (e SneatExecutor) rescheduleHappening(ctx context.Context, action session.A
 	}
 	newEnd := newStart.Add(duration)
 
-	// Copy the FULL current slot and change only Start/End -- TimeZone/
-	// UTCOffset/DurationInMinutes/Repeats/Weekdays/Weeks/Locations/pricing/
-	// participants all ride along unchanged (B2). Replacing the whole Timing
-	// struct (rather than just its Start/End) would silently drop TimeZone/
-	// UTCOffset/DurationInMinutes too.
+	// Copy the FULL current slot and change only Start/End -- Repeats/
+	// Weekdays/Weeks/Locations/pricing/participants all ride along unchanged
+	// (B2). Replacing the whole Timing struct (rather than just its
+	// Start/End) would silently drop TimeZone/UTCOffset/DurationInMinutes.
 	slot := *current.Slot
 	newTiming := dateTimeOf(newStart, newEnd)
 	slot.Timing.Start = newTiming.Start
 	slot.Timing.End = newTiming.End
+	// m4: an UTCOffset (as opposed to a named TimeZone) is only valid for
+	// the specific instant it was recorded at -- moving the slot to a new
+	// time (a different day, possibly across a DST transition) makes a
+	// stale copied-over offset wrong. Recompute it for the NEW instant in
+	// the same zone parseWhen/newStart already resolved into (see its own
+	// doc comment: newStart's Location is the slot's own TZ or the reader's
+	// user-zone fallback), rather than leaving the old slot's offset
+	// untouched. A named TimeZone needs no such fix -- it is recomputed by
+	// the receiving system from the zone name plus the new date/time.
+	if slot.Timing.UTCOffset != "" {
+		slot.Timing.UTCOffset = utcOffsetString(newStart)
+	}
+	if slot.Timing.EndUTCOffset != "" || (slot.Timing.UTCOffset != "" && !newEnd.IsZero()) {
+		slot.Timing.EndUTCOffset = utcOffsetString(newEnd)
+	}
 
 	happeningReq := dto4calendarius.HappeningRequest{
 		SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
 		HappeningID:  happeningID,
 	}
+	var undo *session.Action
 	if current.Recurring {
 		req := dto4calendarius.HappeningSlotDateRequest{
 			HappeningRequest: happeningReq,
-			Date:             newStart.Format("2006-01-02"),
-			Slot:             dto4calendarius.HappeningSlotWithID{ID: current.SlotID, HappeningSlot: slot},
+			// B2: Date is the ORIGINAL occurrence's date (the calendar day the
+			// deviation attaches to), NOT newStart's date -- the slot payload's
+			// own Start/End (possibly a different date) carries the move.
+			Date: anchor.Format("2006-01-02"),
+			Slot: dto4calendarius.HappeningSlotWithID{ID: current.SlotID, HappeningSlot: slot},
 		}
 		if err := e.Calendar.AdjustSlot(ctx, req); err != nil {
 			return nil, err
+		}
+		undo = &session.Action{
+			Kind:   calendarCancelAdjustmentKind,
+			Target: action.Target,
+			Args:   map[string]string{"date": req.Date, "slotID": current.SlotID},
+			Summary: fmt.Sprintf("Move %q back to %s?", action.Target.Title,
+				anchor.Format("Mon 15:04")),
 		}
 	} else {
 		req := dto4calendarius.HappeningSlotRequest{
@@ -190,24 +256,41 @@ func (e SneatExecutor) rescheduleHappening(ctx context.Context, action session.A
 		if err := e.Calendar.UpdateSlot(ctx, req); err != nil {
 			return nil, err
 		}
-	}
-	// Undo restores the exact previous occurrence: anchor, not
-	// current.Start's stale recurring-template date (B2 ruling).
-	undo := &session.Action{
-		Kind:    action.Kind,
-		Target:  action.Target,
-		Args:    map[string]string{"when": anchor.Format("2006-01-02 15:04")},
-		Summary: fmt.Sprintf("Move %q back to %s?", action.Target.Title, anchor.Format("Mon 15:04")),
+		// Undo restores the exact previous time by re-running this same
+		// action with anchor's original "when" -- update_slot always
+		// re-reads current state, so this stays correct even if other
+		// fields changed since.
+		undo = &session.Action{
+			Kind:    action.Kind,
+			Target:  action.Target,
+			Args:    map[string]string{"when": anchor.Format("2006-01-02 15:04")},
+			Summary: fmt.Sprintf("Move %q back to %s?", action.Target.Title, anchor.Format("Mon 15:04")),
+		}
 	}
 	return undo, nil
 }
 
+// utcOffsetString formats t's zone offset as calendarius's "+01:00"-style
+// UTCOffset field.
+func utcOffsetString(t time.Time) string {
+	_, secs := t.Zone()
+	sign := "+"
+	if secs < 0 {
+		sign = "-"
+		secs = -secs
+	}
+	return fmt.Sprintf("%s%02d:%02d", sign, secs/3600, (secs%3600)/60)
+}
+
 // recurringAnchor resolves the date a recurring happening's bare
 // time-of-day reschedule ("4", "16:00") should apply to: the next real
-// occurrence date (today included) matching the slot's weekly Weekdays rule,
-// at the template's stored time-of-day. Non-recurring happenings, and
-// recurring ones whose repeat rule isn't a weekly/weekdays pattern this MVP
-// slice can expand (daily/monthly/yearly -- see HappeningsReader's
+// occurrence matching the slot's weekly Weekdays rule, at the template's
+// stored time-of-day -- today's occurrence counts ONLY when it hasn't
+// happened yet (m5: an occurrence already passed today is skipped, the same
+// way a user asking to move "today's" class after it already ended surely
+// means next week's, not a class that's over). Non-recurring happenings,
+// and recurring ones whose repeat rule isn't a weekly/weekdays pattern this
+// MVP slice can expand (daily/monthly/yearly -- see HappeningsReader's
 // documented limitation), fall back to the stored (possibly stale) Start.
 func recurringAnchor(now time.Time, current data.Happening) time.Time {
 	if !current.Recurring || current.Slot == nil || current.Slot.Repeats != dbo4calendarius.RepeatPeriodWeekly || len(current.Slot.Weekdays) == 0 {
@@ -221,11 +304,18 @@ func recurringAnchor(now time.Time, current data.Happening) time.Time {
 	if !current.Start.IsZero() {
 		hour, minute = current.Start.Hour(), current.Start.Minute()
 	}
-	for i := 0; i < 7; i++ {
+	// 8, not 7: day 0 (today) can be skipped for having already passed, and
+	// the search must still be able to reach the SAME weekday next week.
+	for i := 0; i < 8; i++ {
 		d := now.AddDate(0, 0, i)
-		if weekdayCodeMatches(current.Slot.Weekdays, d.Weekday()) {
-			return time.Date(d.Year(), d.Month(), d.Day(), hour, minute, 0, 0, loc)
+		if !weekdayCodeMatches(current.Slot.Weekdays, d.Weekday()) {
+			continue
 		}
+		candidate := time.Date(d.Year(), d.Month(), d.Day(), hour, minute, 0, 0, loc)
+		if i == 0 && !candidate.After(now) {
+			continue // today's occurrence already happened
+		}
+		return candidate
 	}
 	return current.Start
 }
@@ -314,6 +404,45 @@ func dateTimeOf(start, end time.Time) dbo4calendarius.Timing {
 	}
 }
 
+// resolveOccurrenceDate resolves WHICH occurrence of a recurring happening
+// an action names, for cancelHappening (and available to the confirmation
+// builder in pipeline.go, which must compute the identical date BEFORE
+// asking -- B1 ruling). An explicit date/weekday word in when ("Friday",
+// "Friday's yoga") wins over the default "next/current occurrence from now"
+// (recurringAnchor); a prior version ignored when entirely and always
+// cancelled recurringAnchor's occurrence, silently cancelling the wrong day
+// whenever the user named one explicitly.
+func resolveOccurrenceDate(now time.Time, current data.Happening, when string) time.Time {
+	anchor := recurringAnchor(now, current)
+	d, ok := parseTemporalPhrase(now, when)
+	if !ok {
+		return anchor
+	}
+	loc := anchor.Location()
+	if loc == nil {
+		loc = now.Location()
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(), anchor.Hour(), anchor.Minute(), 0, 0, loc)
+}
+
+// parseTemporalPhrase resolves a free-text date phrase via
+// sneat-ai-backend/temporal, retrying with a possessive weekday
+// ("Friday's") stripped (m1) when the phrase as given doesn't match --
+// temporal.ParseText's own vocabulary has no possessive form.
+func parseTemporalPhrase(now time.Time, text string) (time.Time, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return time.Time{}, false
+	}
+	if d, ok := temporal.ParseText(now, text); ok {
+		return d, true
+	}
+	if stripped := stripPossessive(strings.ToLower(text)); stripped != strings.ToLower(text) {
+		return temporal.ParseText(now, stripped)
+	}
+	return time.Time{}, false
+}
+
 // cancelHappening cancels ONE happening. For a recurring happening it
 // cancels just the current occurrence (Date+SlotID), never the whole
 // series -- calendarius's own CancelHappeningRequest distinguishes the two
@@ -322,12 +451,13 @@ func dateTimeOf(start, end time.Time) dbo4calendarius.Timing {
 // meaningful "occurrence" distinct from itself, so Date/SlotID stay empty.
 // It re-reads the happening (like rescheduleHappening) both to know
 // Recurring and, when recurring, to resolve which occurrence date and slot
-// are being cancelled.
-func (e SneatExecutor) cancelHappening(ctx context.Context, action session.Action) (*session.Action, error) {
+// are being cancelled via resolveOccurrenceDate (B1: honours an explicit
+// date the user named, e.g. "cancel Friday's yoga", rather than always
+// defaulting to "today's/next occurrence").
+func (e SneatExecutor) cancelHappening(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
 	if e.Calendar == nil || e.Happenings == nil || action.Target == nil {
 		return nil, fmt.Errorf("pipeline: cancel_happening requires Calendar API, a happenings reader and a resolved target")
 	}
-	spaceID := action.Target.Keys["spaceID"]
 	happeningID := action.Target.Keys["happeningID"]
 	current, err := e.Happenings.Get(ctx, spaceID, happeningID)
 	if err != nil {
@@ -341,8 +471,8 @@ func (e SneatExecutor) cancelHappening(ctx context.Context, action session.Actio
 	}
 	undoArgs := map[string]string{}
 	if current.Recurring {
-		anchor := recurringAnchor(e.now(), current)
-		req.Date = anchor.Format("2006-01-02")
+		occ := resolveOccurrenceDate(e.now(), current, action.Args["when"])
+		req.Date = occ.Format("2006-01-02")
 		req.SlotID = current.SlotID
 		undoArgs["date"] = req.Date
 		undoArgs["slotID"] = req.SlotID
@@ -358,11 +488,10 @@ func (e SneatExecutor) cancelHappening(ctx context.Context, action session.Actio
 	return undo, nil
 }
 
-func (e SneatExecutor) revokeCancellation(ctx context.Context, action session.Action) error {
+func (e SneatExecutor) revokeCancellation(ctx context.Context, spaceID string, action session.Action) error {
 	if e.Calendar == nil || action.Target == nil {
 		return fmt.Errorf("pipeline: revoke_cancellation requires Calendar API and a resolved target")
 	}
-	spaceID := action.Target.Keys["spaceID"]
 	happeningID := action.Target.Keys["happeningID"]
 	return e.Calendar.RevokeHappeningCancellation(ctx, dto4calendarius.CancelHappeningRequest{
 		HappeningRequest: dto4calendarius.HappeningRequest{
@@ -377,11 +506,29 @@ func (e SneatExecutor) revokeCancellation(ctx context.Context, action session.Ac
 	})
 }
 
-func (e SneatExecutor) setTodoDone(ctx context.Context, action session.Action, done bool) (*session.Action, error) {
+// cancelAdjustment undoes a RECURRING reschedule's adjust_slot (B2 ruling):
+// removes the per-date deviation outright (calendarius's cancel_adjustment)
+// instead of re-adjusting back to a reconstructed "old" slot, restoring the
+// occurrence to whatever the recurring template says.
+func (e SneatExecutor) cancelAdjustment(ctx context.Context, spaceID string, action session.Action) error {
+	if e.Calendar == nil || action.Target == nil {
+		return fmt.Errorf("pipeline: cancel_adjustment requires Calendar API and a resolved target")
+	}
+	happeningID := action.Target.Keys["happeningID"]
+	return e.Calendar.CancelAdjustment(ctx, dto4calendarius.HappeningDateSlotIDRequest{
+		HappeningRequest: dto4calendarius.HappeningRequest{
+			SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
+			HappeningID:  happeningID,
+		},
+		Date:   action.Args["date"],
+		SlotID: action.Args["slotID"],
+	})
+}
+
+func (e SneatExecutor) setTodoDone(ctx context.Context, spaceID string, action session.Action, done bool) (*session.Action, error) {
 	if e.Todo == nil || action.Target == nil {
 		return nil, fmt.Errorf("pipeline: complete/reopen todo requires Todo API and a resolved target")
 	}
-	spaceID := action.Target.Keys["spaceID"]
 	list := action.Target.Keys["list"]
 	itemID := action.Target.Keys["itemID"]
 	req := dto4listus.ListItemsSetIsDoneRequest{
@@ -405,11 +552,10 @@ func (e SneatExecutor) setTodoDone(ctx context.Context, action session.Action, d
 	return undo, nil
 }
 
-func (e SneatExecutor) deleteTodo(ctx context.Context, action session.Action) error {
+func (e SneatExecutor) deleteTodo(ctx context.Context, spaceID string, action session.Action) error {
 	if e.Todo == nil || action.Target == nil {
 		return fmt.Errorf("pipeline: delete_todo requires Todo API and a resolved target")
 	}
-	spaceID := action.Target.Keys["spaceID"]
 	list := action.Target.Keys["list"]
 	itemID := action.Target.Keys["itemID"]
 	return e.Todo.DeleteListItems(ctx, dto4listus.ListItemIDsRequest{
@@ -421,11 +567,15 @@ func (e SneatExecutor) deleteTodo(ctx context.Context, action session.Action) er
 	})
 }
 
-func (e SneatExecutor) addListItem(ctx context.Context, action session.Action, list string) (*session.Action, error) {
+// addListItem creates a todo/to-buy item in the PIPELINE's spaceID (B3
+// ruling: "ignore/strip Args[\"spaceID\"] everywhere") -- action.Args
+// ["spaceID"] is never read, however this action was built (a model has no
+// legitimate reason to name a space; even a genuine multi-space feature
+// would route through a fresh pipeline call, not a client-supplied field).
+func (e SneatExecutor) addListItem(ctx context.Context, spaceID string, action session.Action, list string) (*session.Action, error) {
 	if e.Todo == nil {
 		return nil, fmt.Errorf("pipeline: add todo/to-buy requires Todo API")
 	}
-	spaceID := action.Args["spaceID"]
 	title := action.Args["title"]
 	if title == "" {
 		return nil, fmt.Errorf("pipeline: add %s: a title is required", list)

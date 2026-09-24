@@ -402,3 +402,46 @@ func TestHandleAction_AddTodo_IgnoresModelSuppliedSpaceID(t *testing.T) {
 		t.Fatalf("spaceID = %q, want the pipeline's own space sp1 (model-supplied spaceID must be discarded)", got)
 	}
 }
+
+// TestHandleAction_AddTodo_ViaReference_IgnoresModelSuppliedSpaceID is B3's
+// other Args-stripping path: add_todo routed through resolveAndAct (a
+// Reference is set, so HandleAction resolves it instead of taking the
+// no-reference shortcut) must ALSO discard a model-supplied spaceID slot.
+func TestHandleAction_AddTodo_ViaReference_IgnoresModelSuppliedSpaceID(t *testing.T) {
+	exec := &FakeExecutor{}
+	p, st := newTestPipeline(exec)
+	kind := sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddTodo
+	_, err := p.HandleAction(context.Background(), Action{
+		Kind: kind, Reference: "milk", // forces the resolveAndAct path
+		Slots: map[string]string{"title": "eggs", "spaceID": "evil"},
+	}, st, "sp1")
+	if err != nil {
+		t.Fatalf("HandleAction: %v", err)
+	}
+	if len(exec.Executed) != 1 {
+		t.Fatalf("executed = %+v, want 1", exec.Executed)
+	}
+	if got := exec.Executed[0].Args["spaceID"]; got != "sp1" {
+		t.Fatalf("spaceID = %q, want sp1 (resolveAndAct must strip a model-supplied spaceID too)", got)
+	}
+}
+
+// TestHandleAction_Pronoun_RejectsFocusedEntityFromAnotherSpace is B3: a
+// focused entity left over from a space the session has since LEFT must
+// not let a bare pronoun reference execute against that old space.
+func TestHandleAction_Pronoun_RejectsFocusedEntityFromAnotherSpace(t *testing.T) {
+	exec := &FakeExecutor{}
+	p, st := newTestPipeline(exec)
+	st.Focus(&session.EntityRef{Type: sneatdomain.EntityTodo, Title: "old",
+		Keys: map[string]string{"spaceID": "spOLD", "list": "do", "itemID": "t9"}})
+	out, err := p.HandleAction(context.Background(), Action{Kind: sneatdomain.ModuleTodo + "." + sneatdomain.IntentCompleteTodo, Pronoun: true}, st, "spNEW")
+	if err != nil {
+		t.Fatalf("HandleAction: %v", err)
+	}
+	if len(exec.Executed) != 0 {
+		t.Fatalf("executed = %+v, want NOTHING run against a cross-space focused entity (pipeline space is spNEW, target is spOLD)", exec.Executed)
+	}
+	if out.Text == "" {
+		t.Fatal("expected an explanatory message, not a silent no-op")
+	}
+}

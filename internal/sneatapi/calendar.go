@@ -28,6 +28,13 @@ func (c *Client) AdjustSlot(ctx context.Context, req dto4calendarius.HappeningSl
 	return c.do(ctx, http.MethodPost, calendariusPath("/v0/happenings/adjust_slot"), req, nil)
 }
 
+// CancelAdjustment POSTs happenings/cancel_adjustment, removing a per-date
+// deviation adjust_slot staged -- the undo of AdjustSlot (B2 ruling),
+// restoring that occurrence to the recurring template.
+func (c *Client) CancelAdjustment(ctx context.Context, req dto4calendarius.HappeningDateSlotIDRequest) error {
+	return c.do(ctx, http.MethodPost, calendariusPath("/v0/happenings/cancel_adjustment"), req, nil)
+}
+
 // CancelHappening POSTs happenings/cancel_happening.
 func (c *Client) CancelHappening(ctx context.Context, req dto4calendarius.CancelHappeningRequest) error {
 	return c.do(ctx, http.MethodPost, calendariusPath("/v0/happenings/cancel_happening"), req, nil)
