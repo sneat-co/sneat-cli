@@ -17,6 +17,7 @@ import (
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
 
+	"github.com/sneat-co/sneat-cli/internal/aichat/controls"
 	"github.com/sneat-co/sneat-cli/internal/aichat/data"
 	"github.com/sneat-co/sneat-cli/internal/aichat/sneatdomain"
 )
@@ -44,6 +45,20 @@ type Output struct {
 	// Chain.Decide call site). The caller's diagnostics (chatapp's
 	// logTurn/aidiag.Turn.Decision) logs it; it is never shown to the user.
 	Trace decision.Trace
+	// HappeningRows/TodoRows carry the semantic control model behind a
+	// calendar/todo presentation (S9 follow-up, coordinator ruling): real
+	// Start/End/Recurring/Done data a bare session.EntityRef cannot hold, so
+	// chatapp's blockFor can call controls.NewDayCalendar/NewWeekCalendar/
+	// NewHappeningsList/NewTodoList/NewBuyList directly instead of rebuilding
+	// a generic, time-less ListBlock from Entities alone. Entities/LastShown
+	// are still populated alongside these (resolution/sidebar/"+"/choice-
+	// picking all key off EntityRef, not off these richer row types) --
+	// HappeningRows/TodoRows are presentation-only, additive detail.
+	HappeningRows []controls.HappeningRow
+	TodoRows      []controls.TodoRow
+	// WeekStart is the Monday a WeekCalendar presentation's week begins on,
+	// needed by controls.NewWeekCalendar to build its Mon..Sun day sections.
+	WeekStart time.Time
 }
 
 // Pipeline runs one chat turn end-to-end against real data in one space.
@@ -234,7 +249,9 @@ func (p Pipeline) showWeek(ctx context.Context, st *session.State, spaceID strin
 	}
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, offset)
 	to := from.AddDate(0, 0, 7)
-	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationWeekCalendar, "You have nothing scheduled this week.")
+	out, err := p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationWeekCalendar, "You have nothing scheduled this week.")
+	out.WeekStart = from // S9 follow-up: controls.NewWeekCalendar needs the Monday to build its day sections.
+	return out, err
 }
 
 func (p Pipeline) showUpcoming(ctx context.Context, st *session.State, spaceID string) (Output, error) {
@@ -261,12 +278,15 @@ func (p Pipeline) showWindow(ctx context.Context, st *session.State, spaceID str
 		return Output{Text: emptyText, Presentation: presentation}, nil
 	}
 	refs := make([]session.EntityRef, 0, len(hs))
+	rows := make([]controls.HappeningRow, 0, len(hs))
 	for _, h := range hs {
-		refs = append(refs, session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title,
-			Keys: map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}})
+		ref := session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title,
+			Keys: map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}}
+		refs = append(refs, ref)
+		rows = append(rows, controls.HappeningRow{Ref: ref, Title: h.Title, Start: h.Start, End: h.End, Recurring: h.Recurring})
 	}
 	st.LastShown = refs
-	return Output{Text: fmt.Sprintf("%d happening(s).", len(hs)), Presentation: presentation, Entities: refs}, nil
+	return Output{Text: fmt.Sprintf("%d happening(s).", len(hs)), Presentation: presentation, Entities: refs, HappeningRows: rows}, nil
 }
 
 // filterRecurringToWindow keeps a non-recurring happening as-is (Window
@@ -318,12 +338,15 @@ func (p Pipeline) listTodos(ctx context.Context, st *session.State, spaceID, lis
 		return Output{Text: "Nothing on that list.", Presentation: presentation}, nil
 	}
 	refs := make([]session.EntityRef, 0, len(items))
+	rows := make([]controls.TodoRow, 0, len(items))
 	for _, it := range items {
-		refs = append(refs, session.EntityRef{Type: sneatdomain.EntityTodo, Title: it.Title,
-			Keys: map[string]string{"spaceID": it.SpaceID, "list": it.List, "itemID": it.ID}})
+		ref := session.EntityRef{Type: sneatdomain.EntityTodo, Title: it.Title,
+			Keys: map[string]string{"spaceID": it.SpaceID, "list": it.List, "itemID": it.ID}}
+		refs = append(refs, ref)
+		rows = append(rows, controls.TodoRow{Ref: ref, Title: it.Title, Done: it.Done})
 	}
 	st.LastShown = refs
-	return Output{Text: fmt.Sprintf("%d item(s).", len(items)), Presentation: presentation, Entities: refs}, nil
+	return Output{Text: fmt.Sprintf("%d item(s).", len(items)), Presentation: presentation, Entities: refs, TodoRows: rows}, nil
 }
 
 func (p Pipeline) listContacts(ctx context.Context, st *session.State, spaceID string) (Output, error) {

@@ -68,7 +68,7 @@ const Product = "sneat"
 
 // Run builds the pipeline and launches the interactive chatshell. It blocks
 // until the user quits.
-func Run(deps Deps) error {
+func Run(deps Deps) (err error) {
 	ctx := context.Background()
 	httpClient := http.DefaultClient
 
@@ -83,6 +83,15 @@ func Run(deps Deps) error {
 		Todos:      data.NewFirestoreTodos(deps.Cfg, deps.TokenSource),
 		Contacts:   data.NewFirestoreContacts(deps.Cfg, deps.TokenSource),
 	}
+	// m4/Readers.Close's own doc comment: the session that wires a Readers
+	// (this Run call) owns closing it on shutdown, releasing the lazily-
+	// opened, reused Firestore client(s) behind it -- on every return path,
+	// including an early one from aiconfig.Build failing below.
+	defer func() {
+		if cerr := readers.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("aichat: closing readers: %w", cerr)
+		}
+	}()
 
 	api := sneatapi.New(deps.Cfg.APIBaseURL, deps.TokenSource, httpClient)
 	executor := pipeline.SneatExecutor{Calendar: api, Todo: api, Happenings: readers.Happenings, Now: time.Now}

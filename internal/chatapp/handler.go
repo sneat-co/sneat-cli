@@ -407,17 +407,24 @@ func (h *handler) render(out pipeline.Output, err error) {
 		return
 	}
 	if len(out.Entities) > 0 {
-		h.model.AppendBlock(blockFor(out.Presentation, out.Entities))
+		h.model.AppendBlock(blockFor(out))
 	}
 	if out.Text != "" {
 		h.model.AppendAssistant(out.Text)
 	}
 }
 
-// blockFor builds the transcript.Block for a presentation kind. ContactsGrid
-// reuses tui/grid directly; every other list-shaped presentation renders as
-// a controls.ListBlock (see internal/aichat/controls's doc comment).
-func blockFor(presentation string, entities []session.EntityRef) transcript.Block {
+// blockFor builds the transcript.Block for a pipeline.Output. ContactsGrid
+// reuses tui/grid directly; a calendar/todo presentation with rows (S9
+// follow-up: pipeline.Output.HappeningRows/TodoRows carry real Start/End/
+// Recurring/Done, which a bare session.EntityRef cannot) renders through the
+// matching controls constructor (NewDayCalendar/NewWeekCalendar/
+// NewHappeningsList/NewTodoList/NewBuyList) instead of a generic,
+// time-less ListBlock -- that generic fallback still covers presentations
+// that only ever carry Entities (an ambiguous-reference choice list, a
+// contacts.find_contact grid).
+func blockFor(out pipeline.Output) transcript.Block {
+	presentation, entities := out.Presentation, out.Entities
 	// A single contact renders as a card (brief §3/§18 scenario 7: "single
 	// contact -> contact card"), a real search result as the grid -- the
 	// same distinction a card/grid pair always makes.
@@ -430,6 +437,24 @@ func blockFor(presentation string, entities []session.EntityRef) transcript.Bloc
 			contacts = append(contacts, controls.Contact{Name: e.Title, Ref: e})
 		}
 		return controls.NewContactsGrid("Contacts", contacts)
+	}
+	if len(out.HappeningRows) > 0 {
+		switch presentation {
+		case sneatdomain.PresentationDayCalendar:
+			return controls.NewDayCalendar(headingFor(presentation), out.HappeningRows)
+		case sneatdomain.PresentationWeekCalendar:
+			return controls.NewWeekCalendar(headingFor(presentation), out.WeekStart, out.HappeningRows)
+		case sneatdomain.PresentationHappeningsList:
+			return controls.NewHappeningsList(headingFor(presentation), out.HappeningRows)
+		}
+	}
+	if len(out.TodoRows) > 0 {
+		switch presentation {
+		case sneatdomain.PresentationTodoList:
+			return controls.NewTodoList(headingFor(presentation), out.TodoRows)
+		case sneatdomain.PresentationBuyList:
+			return controls.NewBuyList(headingFor(presentation), out.TodoRows)
+		}
 	}
 	items := make([]controls.Item, 0, len(entities))
 	for _, e := range entities {

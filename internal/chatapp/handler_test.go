@@ -181,7 +181,10 @@ func drain(m tea.Model, cmd tea.Cmd, maxSteps int) tea.Model {
 // TestChatshell_ShowCalendarToday_NoMainLLM is the scenario-2 headless smoke
 // test: typing "show my calendar today" through the real chatshell.Model
 // renders the fake happening's title with no LLM configured (proving the
-// deterministic path never needs one).
+// deterministic path never needs one). It also covers the S9 follow-up:
+// pipeline.Output.HappeningRows carries the happening's real Start, so the
+// rendered DayCalendar block shows its actual time ("10:00"), not just the
+// title a bare session.EntityRef would have given it.
 func TestChatshell_ShowCalendarToday_NoMainLLM(t *testing.T) {
 	_, model := testHandler(t)
 	m := typeAndEnter(t, model, "show my calendar today")
@@ -191,6 +194,23 @@ func TestChatshell_ShowCalendarToday_NoMainLLM(t *testing.T) {
 	}
 	if !strings.Contains(view.Content, "Today") {
 		t.Fatalf("view does not contain the DayCalendar heading:\n%s", view.Content)
+	}
+	if !strings.Contains(view.Content, "10:00") {
+		t.Fatalf("view does not contain the happening's real start time (S9 rows wiring):\n%s", view.Content)
+	}
+}
+
+// TestChatshell_ShowCalendarThisWeek_ShowsRealTimes is the S9 follow-up's
+// week-view counterpart: WeekCalendar renders through
+// controls.NewWeekCalendar (pipeline.Output.HappeningRows + WeekStart), so
+// the happening's real time appears under its day section, not a bare
+// title-only row.
+func TestChatshell_ShowCalendarThisWeek_ShowsRealTimes(t *testing.T) {
+	_, model := testHandler(t)
+	m := typeAndEnter(t, model, "this week")
+	view := m.View().Content
+	if !strings.Contains(view, "Team standup") || !strings.Contains(view, "10:00") {
+		t.Fatalf("view does not contain the happening's title+time in the week view:\n%s", view)
 	}
 }
 
@@ -253,6 +273,26 @@ func TestChatshell_ExplainFreeForm_StreamsThroughLLM(t *testing.T) {
 func sseWriteHandler(w http.ResponseWriter, data string) {
 	_, _ = io.WriteString(w, "data: "+data+"\n\n")
 	w.(http.Flusher).Flush()
+}
+
+// TestChatshell_MyTodos_ShowsDoneState is the S9 follow-up's TodoList
+// counterpart: pipeline.Output.TodoRows carries each item's Done, so a
+// completed item renders with its "[x]" marker through controls.NewTodoList.
+func TestChatshell_MyTodos_ShowsDoneState(t *testing.T) {
+	h, model := testHandler(t)
+	h.pipeline.Readers.Todos = &data.FakeTodos{Items: []data.Todo{
+		{ID: "t1", SpaceID: "sp1", List: data.ListKindDo, Title: "Buy milk", Done: false},
+		{ID: "t2", SpaceID: "sp1", List: data.ListKindDo, Title: "Pay rent", Done: true},
+	}}
+
+	m := typeAndEnter(t, model, "my todos")
+	view := m.View().Content
+	if !strings.Contains(view, "[ ] Buy milk") {
+		t.Fatalf("view does not show the open todo's marker:\n%s", view)
+	}
+	if !strings.Contains(view, "[x] Pay rent") {
+		t.Fatalf("view does not show the done todo's marker:\n%s", view)
+	}
 }
 
 // TestFocusedScopes covers brief §4/§7: a focused happening pins the
