@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -332,7 +333,7 @@ func TestBeginLLMStream_DoesNotBlockOnRequestBuildingIO(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		h.beginLLMStream("show my calendar today", nil)
+		h.beginLLMStream("show my calendar today", nil, 1)
 		close(done)
 	}()
 	select {
@@ -573,5 +574,117 @@ func TestApplySpaceChange_ClearsWorkingContext_KeepsSidebar(t *testing.T) {
 	}
 	if len(h.state.Sidebar) != 1 || !h.state.Sidebar[0].Same(oldRef) {
 		t.Errorf("Sidebar pin was dropped on a space change, want it kept: %+v", h.state.Sidebar)
+	}
+}
+
+// slowExecutor delegates to an embedded FakeExecutor but blocks Execute
+// until release is closed, and signals (entered, closed once) the instant
+// it is called -- a stand-in for a real sneat-go HTTP mutation's latency,
+// giving TestS1_ActionRunsOnSnapshot_SidebarPinDuringItSurvives a
+// controlled window to interleave a sidebar pin WHILE OnStreamEvent's
+// EventCompleted background HandleAction closure is still running.
+type slowExecutor struct {
+	*pipeline.FakeExecutor
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *slowExecutor) Execute(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+	s.once.Do(func() { close(s.entered) })
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return s.FakeExecutor.Execute(ctx, spaceID, action)
+}
+
+// TestS1_ActionRunsOnSnapshot_SidebarPinDuringItSurvives is S1's
+// concurrency regression test: an LLM turn streams a <sneat-action> block,
+// whose OnStreamEvent(EventCompleted) branch runs HandleAction on a
+// background tea.Cmd (this test holds it open via slowExecutor). WHILE it
+// is still running, a sidebar pin is added the same way a real "+" press
+// would (OnSidebarChange, which -- like every chatshell key handler --
+// always runs on the UI loop, never concurrently with a tea.Cmd closure).
+// Before S1's fix, the eventual actionMsg applied its ENTIRE state
+// snapshot (`*h.state = m.state`) back onto live state, silently dropping
+// that pin because the snapshot was taken before it existed; after the
+// fix, applyStateDelta only ever touches the turn-owned fields, so the pin
+// -- added on a different "thread" of control entirely -- survives.
+func TestS1_ActionRunsOnSnapshot_SidebarPinDuringItSurvives(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		sseWriteHandler(w, `{"model":"gpt-5","choices":[{"delta":{"content":"Done. <sneat-action>{\"kind\":\"todo.complete_todo\",\"pronoun\":true}</sneat-action>"}}]}`)
+		sseWriteHandler(w, "[DONE]")
+	}))
+	defer srv.Close()
+
+	h, model := testHandler(t)
+	h.pipeline.LLM = openaicompat.New(openaicompat.Config{BaseURL: srv.URL, APIKey: "sk-test", Model: "gpt-5"})
+	slow := &slowExecutor{FakeExecutor: &pipeline.FakeExecutor{}, entered: make(chan struct{}), release: make(chan struct{})}
+	h.pipeline.Executor = slow
+	todoRef := session.EntityRef{Type: sneatdomain.EntityTodo, Title: "Buy milk", Keys: map[string]string{"spaceID": "sp1", "list": "do", "itemID": "t1"}}
+	h.state.Focus(&todoRef)
+
+	var m tea.Model = model
+	var cmd tea.Cmd
+	m, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = drain(m, cmd, 6)
+	for _, r := range "complete it" {
+		m, cmd = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	done := make(chan tea.Model, 1)
+	go func() { done <- drain(m, cmd, 40) }()
+
+	select {
+	case <-slow.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleAction never reached the (blocked) executor -- the stream/EventCompleted path did not run in time")
+	}
+
+	pinnedRef := session.EntityRef{Type: sneatdomain.EntityTodo, Title: "Call dentist", Keys: map[string]string{"spaceID": "sp1", "list": "do", "itemID": "t2"}}
+	h.OnSidebarChange([]session.EntityRef{pinnedRef})
+	close(slow.release)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("drain did not finish after releasing the executor")
+	}
+
+	if len(slow.Executed) != 1 || slow.Executed[0].Kind != "todo.complete_todo" {
+		t.Fatalf("Executed = %+v, want exactly 1 todo.complete_todo", slow.Executed)
+	}
+	if len(h.state.Sidebar) != 1 || !h.state.Sidebar[0].Same(pinnedRef) {
+		t.Fatalf("Sidebar = %+v, want the pin added WHILE the action was running to survive (S1: applyStateDelta must never touch Sidebar)", h.state.Sidebar)
+	}
+}
+
+// TestOnMsg_ActionMsg_StaleSeqDropped_NoRenderNoStateWrite is S1's other
+// half: an actionMsg tagged with an OLD turn seq (a newer turn already
+// started -- e.g. Esc cancelled the one that produced it) must be dropped
+// outright, never rendered and never allowed to write its state snapshot
+// onto live state.
+func TestOnMsg_ActionMsg_StaleSeqDropped_NoRenderNoStateWrite(t *testing.T) {
+	h, model := testHandler(t)
+	h.turnSeq = 5 // simulate a newer turn already in flight
+
+	liveFocused := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Live", Keys: map[string]string{"spaceID": "sp1", "happeningID": "live"}}
+	h.state.Focus(&liveFocused)
+
+	staleState := session.State{Focused: &session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Stale", Keys: map[string]string{"spaceID": "sp1", "happeningID": "stale"}}}
+	var m tea.Model = model
+	m, _ = m.Update(actionMsg{output: pipeline.Output{Text: "Done."}, state: staleState, seq: 4})
+	h.model = m.(*chatshell.Model)
+
+	if strings.Contains(h.model.View().Content, "Done.") {
+		t.Fatal("a stale actionMsg (seq 4, current turnSeq 5) must not render its Output")
+	}
+	if h.state.Focused == nil || !h.state.Focused.Same(liveFocused) {
+		t.Fatalf("Focused = %+v, want the live value untouched by a dropped stale actionMsg", h.state.Focused)
 	}
 }

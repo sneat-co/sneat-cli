@@ -34,13 +34,22 @@ import (
 // chatshell.StreamObserver and chatshell.SidebarObserver: it is the one
 // place that turns the aichat pipeline's Output into chatshell calls.
 //
-// Concurrency (coordinator ruling): every mutation of state (the live
+// Concurrency (S1 coordinator ruling): every mutation of state (the live
 // *session.State a chatshell key handler can read at any moment) happens on
 // the UI loop -- inside Submit itself (called synchronously from
-// chatshell's Update) or inside OnMsg (also called from Update). Submit's
-// own returned tea.Cmd runs pipeline.Turn/HandleAction on a COPY of state,
-// never the live pointer, and hands the resulting copy back in a message;
-// OnMsg is what writes it onto state. See Submit and handleTurn/handleSlash.
+// chatshell's Update), OnSidebarChange/OnStreamEvent (also called
+// synchronously from Update), or OnMsg (dispatched from Update). A
+// background tea.Cmd closure -- Submit's own, and OnStreamEvent's
+// EventCompleted branch, whose eventual HandleAction call used to run
+// straight against the live h.state/h.ctx from a worker goroutine, a real
+// bug -- runs pipeline.Turn/HandleAction on a COPY of state and a per-turn
+// cancellable ctx captured on the UI loop BEFORE the closure is built, never
+// the live pointer/h.ctx, and hands the resulting copy back in a message
+// tagged with the turn's seq (h.turnSeq); OnMsg applies only that message's
+// turn-owned fields (applyStateDelta) onto live state, and only when seq is
+// still current -- a stale result (a newer turn already started) is dropped
+// outright. See Submit, applyStateDelta, handleTurn, and OnStreamEvent's own
+// doc comments.
 type handler struct {
 	ctx       context.Context
 	pipeline  pipeline.Pipeline
@@ -52,10 +61,31 @@ type handler struct {
 	model *chatshell.Model
 
 	streamSeq int64
+	// turnSeq is S1's monotonically increasing turn counter (coordinator
+	// ruling S1): Submit assigns each turn the next value; every background
+	// result that turn eventually produces (turnMsg, llmRequestReadyMsg,
+	// actionMsg) carries it, and the UI loop drops (no render, no state
+	// write, no SetBusy(false)) any result whose seq no longer matches --
+	// meaning a newer turn already started (e.g. Esc cancelled this one's
+	// background work and the user typed a new one before it returned).
+	// Written only from the UI loop (Submit); read with atomic.LoadInt64
+	// from both the UI loop and a background tea.Cmd closure comparing its
+	// captured seq.
+	turnSeq int64
 	// splitters maps an in-flight stream's id to its Splitter, so
 	// OnStreamEvent's EventCompleted can retrieve the parsed <sneat-action>
 	// once the stream that produced it is known to have finished.
 	splitters map[string]*pipeline.Splitter
+	// streamState/streamCtx/streamTurnSeq are set once per stream (in
+	// startLLMStream, before any event can fire) so OnStreamEvent's
+	// EventCompleted branch -- whose own returned tea.Cmd runs HandleAction
+	// on a worker goroutine -- operates on a private state snapshot and a
+	// per-turn cancellable ctx (S1: "never the live h.state/h.ctx") rather
+	// than the handler's own live fields, and can tag its result with the
+	// turn it belongs to.
+	streamState   map[string]*session.State
+	streamCtx     map[string]context.Context
+	streamTurnSeq map[string]int64
 	// streamText/streamUser accumulate an in-flight stream's visible text and
 	// the user turn that started it, so OnStreamDone can record the exchange
 	// into history once the stream finishes (brief §7/S7 coordinator ruling:
@@ -125,11 +155,23 @@ func (h *handler) Submit(text string) tea.Cmd {
 		}
 	}
 
+	// S1 coordinator ruling: this turn's own seq, assigned on the UI loop
+	// before any background work starts. handleTurn (and, if this turn
+	// proceeds into an LLM stream, startLLMStream/OnStreamEvent's
+	// EventCompleted branch) carry it forward on every message this turn
+	// produces, and drop a result whose seq no longer matches h.turnSeq --
+	// see the field's own doc comment for why that can happen even though
+	// chatshell's composer is disabled while busy (Esc cancels the busy
+	// phase without necessarily killing the background goroutine).
+	seq := atomic.AddInt64(&h.turnSeq, 1)
+
 	// Snapshot state ON THE UI LOOP: a shallow copy isolates the background
-	// call's Pending/Previous/LastShown/Sidebar/Selection/Focused
-	// reassignments (pipeline never mutates a slice/struct in place, only
-	// reassigns a State field) from the live h.state until OnMsg applies the
-	// result back.
+	// call's Pending/Previous/LastShown/Selection/Focused reassignments
+	// (pipeline never mutates a slice/struct in place, only reassigns a
+	// State field) from the live h.state until OnMsg applies the result
+	// back. Sidebar is deliberately excluded from what gets applied back
+	// (applyStateDelta) -- see its own doc comment -- so a pin added WHILE
+	// this turn's background work is still running is never lost.
 	snapshot := *h.state
 	if ref := h.model.FocusedRef(); ref != nil {
 		snapshot.Focus(ref)
@@ -144,12 +186,30 @@ func (h *handler) Submit(text string) tea.Cmd {
 
 	work := func() tea.Msg {
 		out, err := h.pipeline.Turn(ctx, trimmed, &snapshot, h.spaceID)
-		return turnMsg{text: trimmed, output: out, err: err, state: snapshot}
+		return turnMsg{text: trimmed, output: out, err: err, state: snapshot, seq: seq}
 	}
 	if busyCmd == nil {
 		return work
 	}
 	return tea.Batch(work, busyCmd)
+}
+
+// applyStateDelta copies the turn-owned fields of from onto the live
+// h.state: Focused/Selection/LastShown/Pending/Previous/PreviousAt (S1
+// coordinator ruling: "field-level deltas ... applied on the UI loop").
+// Sidebar is deliberately NOT among them -- it is owned by OnSidebarChange,
+// which writes it directly on the UI loop the moment a pin/unpin happens,
+// and a turn's snapshot (taken before its OWN background work started) must
+// never overwrite a pin the user added while that work was still running.
+// Always call this on the UI loop, and only once a seq check has confirmed
+// from is not stale.
+func (h *handler) applyStateDelta(from session.State) {
+	h.state.Focused = from.Focused
+	h.state.Selection = from.Selection
+	h.state.LastShown = from.LastShown
+	h.state.Pending = from.Pending
+	h.state.Previous = from.Previous
+	h.state.PreviousAt = from.PreviousAt
 }
 
 // applySpaceChange is B3's session-side half (coordinator ruling B3): when
@@ -229,19 +289,36 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 	if sp == nil {
 		return nil
 	}
+	// S1 coordinator ruling: everything the closure below needs is captured
+	// HERE, on the UI loop (OnStreamEvent always runs on it) -- the closure
+	// itself runs on a worker goroutine and must never read h.state/h.ctx/
+	// h.spaceID directly, only these local copies. snapshot is a value copy
+	// (not the shared *session.State startLLMStream stored), so HandleAction
+	// mutating it in place can never race with anything else touching that
+	// stored pointer or the live h.state.
+	turnSeq := h.streamTurnSeq[id]
+	ctx := h.streamCtx[id]
+	if ctx == nil {
+		ctx = h.ctx // defensive: should always be set by startLLMStream's open
+	}
+	var snapshot session.State
+	if sp2 := h.streamState[id]; sp2 != nil {
+		snapshot = *sp2
+	}
+	spaceID := h.spaceID
 	return func() tea.Msg {
 		trailing, action, err := sp.Finish()
 		if err != nil {
 			// Splitter contract: a malformed/unterminated block is surfaced,
 			// never silently dropped, and whatever text was already held
 			// back is still shown (coordinator ruling SPLITTER).
-			return actionMsg{parseErr: err, trailing: trailing}
+			return actionMsg{parseErr: err, trailing: trailing, seq: turnSeq}
 		}
 		if action == nil {
 			return nil // a plain text-only answer
 		}
-		out, err := h.pipeline.HandleAction(h.ctx, *action, h.state, h.spaceID)
-		return actionMsg{output: out, err: err}
+		out, err := h.pipeline.HandleAction(ctx, *action, &snapshot, spaceID)
+		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq}
 	}
 }
 
@@ -255,6 +332,9 @@ func (h *handler) OnStreamDone(id string, err error) tea.Cmd {
 	}
 	delete(h.streamText, id)
 	delete(h.streamUser, id)
+	delete(h.streamState, id)
+	delete(h.streamCtx, id)
+	delete(h.streamTurnSeq, id)
 	if h.logger != nil {
 		// S11: PathLLMFallback when nothing decided this turn at all (the
 		// StreamRequest that started it used SelectAll); PathDecision when a
@@ -294,9 +374,22 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 	case turnMsg:
 		return h.handleTurn(m)
 	case llmRequestReadyMsg:
+		if atomic.LoadInt64(&h.turnSeq) != m.seq {
+			// S1: a newer turn already started (superseding an Esc-cancelled
+			// one) before this "building the request" phase finished --
+			// drop it, and leave busy alone: the newer turn owns it.
+			return nil
+		}
 		h.model.SetBusy(false) // clears the "building the request" phase; StartStream sets busy again
 		return h.startLLMStream(m)
 	case actionMsg:
+		if atomic.LoadInt64(&h.turnSeq) != m.seq {
+			// S1 coordinator ruling: a stale result -- the turn it belongs to
+			// is no longer the current one -- is dropped outright: no render,
+			// no state write, no SetBusy(false) (a newer turn is already
+			// driving busy and will clear it itself).
+			return nil
+		}
 		if m.parseErr != nil {
 			if m.trailing != "" {
 				h.model.AppendAssistant(m.trailing)
@@ -315,6 +408,11 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 			}
 			return nil
 		}
+		// S1: apply only the turn-owned fields (see applyStateDelta) so a
+		// Sidebar pin added while HandleAction was running in the
+		// background is never overwritten by this stale-relative-to-Sidebar
+		// (but current-relative-to-turnSeq) snapshot.
+		h.applyStateDelta(m.state)
 		h.render(m.output, m.err)
 		return nil
 	case grid.RowActivatedMsg:
@@ -368,7 +466,17 @@ func (h *handler) appendReplies(replies []chat.Reply) {
 // resubmits its text through SendText, the same effect as the user typing
 // it; a URL button cannot open a browser from inside the TUI, so it is
 // echoed as a system line instead of silently doing nothing.
+// pressButton dispatches a focused block's activated button. S1 coordinator
+// ruling ("slash commands busy-gated"): chatshell's own composer is already
+// disabled while busy, but a focused TRANSCRIPT block's Enter key is NOT --
+// ZoneTranscript key events reach the block's own Update regardless of
+// m.busy (see tui/chatshell.Model.handleKey) -- so a button press could
+// otherwise fire chat.Processor.PressButton/SendText while a turn's
+// background work is still touching shared state. Busy-gate it here too.
 func (h *handler) pressButton(btn botkb.Button) tea.Cmd {
+	if h.model.Busy() {
+		return nil
+	}
 	switch b := btn.(type) {
 	case *botkb.DataButton:
 		return func() tea.Msg {
@@ -389,8 +497,19 @@ func (h *handler) pressButton(btn botkb.Button) tea.Cmd {
 }
 
 func (h *handler) handleTurn(m turnMsg) tea.Cmd {
+	if atomic.LoadInt64(&h.turnSeq) != m.seq {
+		// S1: a newer turn already started before this one's background
+		// pipeline.Turn call returned (Esc cancelled it and the user typed
+		// again) -- drop it outright, and leave busy/render to the newer
+		// turn.
+		return nil
+	}
 	h.model.SetBusy(false)
-	*h.state = m.state // apply the background work's result -- UI loop only
+	// S1: apply only the turn-owned fields, never Sidebar (applyStateDelta's
+	// own doc comment) -- a plain `*h.state = m.state` here would silently
+	// undo a pin the user added while this turn's background work was still
+	// running.
+	h.applyStateDelta(m.state)
 	if m.err != nil {
 		h.model.AppendSystem("error: " + m.err.Error())
 		h.logTurn(pathFor(m.output), m.output, m.err)
@@ -402,7 +521,7 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 		h.appendHistory(m.text, m.output.Text)
 		return nil
 	}
-	return h.beginLLMStream(m.text, m.output.Decision)
+	return h.beginLLMStream(m.text, m.output.Decision, m.seq)
 }
 
 // beginLLMStream is S2's fix: chatshell.Model.StartStream calls its `open`
@@ -418,7 +537,7 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 // the UI loop) does it call StartStream, whose own `open` now does no I/O
 // at all (just Pipeline.Stream, which only asks the already-selected
 // ai.LLMProvider to start streaming).
-func (h *handler) beginLLMStream(text string, d *decision.Decision) tea.Cmd {
+func (h *handler) beginLLMStream(text string, d *decision.Decision, seq int64) tea.Cmd {
 	focused := focusedScopes(h.state)
 	history := append([]ai.Message(nil), h.history...)
 	stateSnapshot := *h.state
@@ -432,7 +551,7 @@ func (h *handler) beginLLMStream(text string, d *decision.Decision) tea.Cmd {
 	h.model.SetBusyCancel(cancel)
 	work := func() tea.Msg {
 		req, report := h.pipeline.StreamRequest(ctx, text, &stateSnapshot, h.spaceID, d, focused, history)
-		return llmRequestReadyMsg{ctx: ctx, text: text, decision: d, req: req, report: report}
+		return llmRequestReadyMsg{ctx: ctx, text: text, decision: d, req: req, report: report, state: stateSnapshot, seq: seq}
 	}
 	if busyCmd == nil {
 		return work
@@ -463,15 +582,32 @@ func (h *handler) startLLMStream(m llmRequestReadyMsg) tea.Cmd {
 		h.streamModel = map[string]string{}
 		h.streamProvider = map[string]string{}
 		h.streamDecided = map[string]bool{}
+		h.streamState = map[string]*session.State{}
+		h.streamCtx = map[string]context.Context{}
+		h.streamTurnSeq = map[string]int64{}
 	}
 	h.streamText[id] = &strings.Builder{}
 	h.streamUser[id] = m.text
 	h.streamStart[id] = time.Now()
 	h.streamDecided[id] = m.decision != nil
+	// S1: the snapshot and turn seq OnStreamEvent's EventCompleted branch
+	// will later hand its background HandleAction closure -- stateSnapshot
+	// takes its own copy so a second write into h.streamState[id] (there
+	// won't be one; one entry per id) could never alias it.
+	stateSnapshot := m.state
+	h.streamState[id] = &stateSnapshot
+	h.streamTurnSeq[id] = m.seq
 	h.logStreamRequest(m.decision, m.report)
 	open := func(ctx context.Context) iter.Seq2[ai.Event, error] {
 		seq, splitter := h.pipeline.Stream(ctx, m.req)
 		h.splitters[id] = splitter
+		// The REAL per-turn cancellable ctx (S1: "Esc cancels via
+		// SetBusyCancel" -- during an active stream, Esc/Ctrl+C actually
+		// cancels via chatshell's own streamCancel, which is exactly this
+		// ctx: see tui/chatshell.Model.StartStream/cancelStream). Stored so
+		// OnStreamEvent's EventCompleted branch hands HandleAction this same
+		// cancellable ctx instead of the session-lifetime h.ctx.
+		h.streamCtx[id] = ctx
 		return seq
 	}
 	return h.model.StartStream(id, open)
@@ -703,6 +839,10 @@ type turnMsg struct {
 	output pipeline.Output
 	err    error
 	state  session.State
+	// seq is the turn this message belongs to (S1: Submit's atomic.AddInt64
+	// result) -- handleTurn drops the message if h.turnSeq has since moved
+	// on.
+	seq int64
 }
 
 // llmRequestReadyMsg carries beginLLMStream's background-built
@@ -716,6 +856,13 @@ type llmRequestReadyMsg struct {
 	decision *decision.Decision
 	req      ai.ChatRequest
 	report   ctxmgr.Report
+	// state is the snapshot beginLLMStream took (S1); startLLMStream stores
+	// it per-stream-id so OnStreamEvent's EventCompleted branch can hand it
+	// to a background HandleAction call without ever touching live h.state.
+	state session.State
+	// seq is the turn this request belongs to (S1) -- carried forward onto
+	// every message the resulting stream itself produces (actionMsg).
+	seq int64
 }
 
 type actionMsg struct {
@@ -723,4 +870,13 @@ type actionMsg struct {
 	err      error
 	parseErr error
 	trailing string
+	// state is HandleAction's resulting snapshot (S1); OnMsg applies only
+	// its turn-owned fields (applyStateDelta) onto live h.state, and only
+	// when seq is still current.
+	state session.State
+	// seq is the turn this action belongs to (S1: the value startLLMStream
+	// recorded in h.streamTurnSeq when this stream started) -- OnMsg drops
+	// the message outright (no render, no state write) if h.turnSeq has
+	// since moved on to a newer turn.
+	seq int64
 }
