@@ -5,6 +5,8 @@
 package rules
 
 import (
+	"strings"
+
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/decision/rules"
 	"github.com/strongo/aichat/ai/session"
@@ -24,6 +26,7 @@ func New() *rules.Provider {
 		listTodosRule(),
 		listToBuyRule(),
 		listContactsRule(),
+		findContactRule(),
 		helpRule(),
 		// Confirmation/rejection/cancellation/undo only fire when the session
 		// has a Pending (or, for undo, a Previous) action -- an unambiguous
@@ -117,6 +120,35 @@ func listContactsRule() rules.Rule {
 		d := decided(sneatdomain.ModuleContacts, sneatdomain.IntentListContacts, sneatdomain.PresentationContactsGrid)
 		d.RequiredData = []string{sneatdomain.DataContacts}
 		return d, true
+	}}
+}
+
+// findContactPrefixes name a contact/person lookup ("find contact Alice",
+// "show contact Bob", "contact Alice") -- a small fixed prefix table, not a
+// general parser, per the no-giant-NLP-engine rule. text arrives already
+// normalised (lowercase, collapsed whitespace) by the rules.Provider that
+// calls Match, so the prefixes below are matched lowercase.
+var findContactPrefixes = []string{"find contact ", "show contact ", "contact "}
+
+// findContactRule is S8's deterministic path for find_contact/show_contact:
+// a matched prefix's remainder becomes the decision.Reference.Expression
+// pipeline.findOrShowContact resolves against real data -- never a model-
+// invented contact.
+func findContactRule() rules.Rule {
+	return rules.Rule{Name: "contacts.find_contact", Match: func(text string, _ session.State) (decision.Decision, bool) {
+		for _, prefix := range findContactPrefixes {
+			if !strings.HasPrefix(text, prefix) {
+				continue
+			}
+			name := strings.TrimSpace(text[len(prefix):])
+			if name == "" {
+				return decision.Decision{}, false
+			}
+			d := decided(sneatdomain.ModuleContacts, sneatdomain.IntentFindContact, sneatdomain.PresentationContactsGrid)
+			d.Reference = &decision.Reference{Kind: sneatdomain.EntityContact, Expression: name}
+			return d, true
+		}
+		return decision.Decision{}, false
 	}}
 }
 

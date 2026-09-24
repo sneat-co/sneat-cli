@@ -444,6 +444,13 @@ func blockFor(presentation string, entities []session.EntityRef) transcript.Bloc
 // data.Happening/data.Contact record, which is a follow-up once a
 // presentation asks for a card explicitly rather than this len==1 inference.
 func cardFor(ref session.EntityRef) *controls.CardBlock {
+	// S8/S9: a contact card shows only its display name -- no raw entity
+	// keys (controls.NewContactCard's doc comment). Every other entity kind
+	// still falls back to the generic key dump below until a dedicated card
+	// (e.g. a richer HappeningCard) replaces it.
+	if ref.Type == sneatdomain.EntityContact {
+		return controls.NewContactCard(ref.Title, ref)
+	}
 	title := ref.Title
 	if title == "" {
 		title = ref.Type

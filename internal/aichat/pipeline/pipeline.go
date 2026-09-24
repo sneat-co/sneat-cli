@@ -130,6 +130,12 @@ func (p Pipeline) turnFromDecision(ctx context.Context, d decision.Decision, st 
 // the LLM path and the rules path cannot drift into two different
 // confirmation behaviours for the same action kind.
 func (p Pipeline) HandleAction(ctx context.Context, a Action, st *session.State, spaceID string) (Output, error) {
+	if isContactLookup(a.Kind) {
+		// S8: find_contact/show_contact are read-only lookups, never an
+		// Executor action -- see findOrShowContact's doc comment.
+		ref := decision.Reference{Kind: sneatdomain.EntityContact, Expression: a.Reference, Pronoun: a.Pronoun}
+		return p.findOrShowContact(ctx, ref, st, spaceID)
+	}
 	if a.Reference == "" && !a.Pronoun {
 		return p.runAction(ctx, session.Action{Kind: a.Kind, Args: spaceScopedArgs(a.Slots, spaceID)}, st)
 	}
@@ -156,6 +162,16 @@ func spaceScopedArgs(slots map[string]string, spaceID string) map[string]string 
 }
 
 func (p Pipeline) handleCommand(ctx context.Context, d decision.Decision, st *session.State, spaceID string) (Output, error) {
+	kind := d.Module.Value + "." + d.Intent.Value
+	// S8: find_contact/show_contact must be checked BEFORE the Presentation
+	// switch below -- both intents share PresentationContactsGrid with the
+	// plain "list every contact" intent (contacts.list_contacts), and the
+	// switch dispatches on Presentation alone, so without this a find/show
+	// decision with a Reference would be misrouted to listContacts (the
+	// full, unfiltered list) instead of resolving ref.
+	if isContactLookup(kind) && d.Reference != nil {
+		return p.findOrShowContact(ctx, *d.Reference, st, spaceID)
+	}
 	switch d.Presentation {
 	case sneatdomain.PresentationDayCalendar:
 		return p.showDay(ctx, st, spaceID)
@@ -174,7 +190,7 @@ func (p Pipeline) handleCommand(ctx context.Context, d decision.Decision, st *se
 		return Output{Text: helpText}, nil
 	}
 	if d.Reference != nil {
-		return p.resolveAndAct(ctx, d.Module.Value+"."+d.Intent.Value, *d.Reference, d.Slots, st, spaceID)
+		return p.resolveAndAct(ctx, kind, *d.Reference, d.Slots, st, spaceID)
 	}
 	return Output{NeedsLLM: true, Decision: &d}, nil
 }
