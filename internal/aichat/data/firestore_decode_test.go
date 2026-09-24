@@ -7,6 +7,7 @@ import (
 	calendariusdbo "github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/sneat-co/listus/backend/const4listus"
 	listusdbo "github.com/sneat-co/listus/backend/dbo4listus"
+	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-go-core/coretypes"
 )
 
@@ -219,6 +220,77 @@ func TestToHappening_FallsBackToReaderLocation(t *testing.T) {
 	want := time.Date(2026, 9, 25, 12, 0, 0, 0, tokyo)
 	if !h.Start.Equal(want) {
 		t.Errorf("Start = %v, want %v (decoded in the reader's fallback zone)", h.Start, want)
+	}
+}
+
+// TestToHappening_HonoursUTCOffsetWhenTimeZoneEmpty is S4: a slot with an
+// explicit UTCOffset but no TimeZone name decodes in that fixed offset, not
+// the reader's fallback -- e.g. a slot that only ever recorded "+05:30" and
+// never an IANA zone name.
+func TestToHappening_HonoursUTCOffsetWhenTimeZoneEmpty(t *testing.T) {
+	dbo := calendariusdbo.HappeningDbo{
+		HappeningBase: calendariusdbo.HappeningBase{
+			Type: calendariusdbo.HappeningTypeSingle, Status: "active", Title: "Call",
+			Slots: map[string]*calendariusdbo.HappeningSlot{
+				"s1": {HappeningSlotTiming: calendariusdbo.HappeningSlotTiming{
+					Timing: calendariusdbo.Timing{
+						Start:     calendariusdbo.DateTime{Date: "2026-09-25", Time: "09:00"},
+						End:       calendariusdbo.DateTime{Date: "2026-09-25", Time: "09:30"},
+						UTCOffset: "+05:30", // no TimeZone name
+					},
+					Repeats: calendariusdbo.RepeatPeriodOnce,
+				}},
+			},
+		},
+	}
+	h := toHappening("sp1", "h1", dbo, time.UTC)
+	if h.Start.UTC().Hour() != 3 || h.Start.UTC().Minute() != 30 {
+		t.Errorf("Start in UTC = %v, want 03:30 UTC (09:00 minus +05:30)", h.Start.UTC())
+	}
+}
+
+// TestFixedZoneFromOffset covers the offset parser directly, including
+// rejection of malformed input rather than silently misreading it.
+func TestFixedZoneFromOffset(t *testing.T) {
+	tests := []struct {
+		in       string
+		wantSecs int
+		wantOK   bool
+	}{
+		{"+01:00", 3600, true},
+		{"-05:30", -(5*3600 + 30*60), true},
+		{"+00:00", 0, true},
+		{"", 0, false},
+		{"garbage", 0, false},
+		{"01:00", 0, false}, // missing sign
+	}
+	for _, tt := range tests {
+		loc, ok := fixedZoneFromOffset(tt.in)
+		if ok != tt.wantOK {
+			t.Errorf("fixedZoneFromOffset(%q) ok = %v, want %v", tt.in, ok, tt.wantOK)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		_, secs := time.Date(2026, 1, 1, 0, 0, 0, 0, loc).Zone()
+		if secs != tt.wantSecs {
+			t.Errorf("fixedZoneFromOffset(%q) secs = %d, want %d", tt.in, secs, tt.wantSecs)
+		}
+	}
+}
+
+// TestNewFirestoreHappenings_WithLocation is S4: the reader takes the user
+// zone as a parameter instead of a hardcoded time.Local.
+func TestNewFirestoreHappenings_WithLocation(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	r := NewFirestoreHappenings(config.Config{}, nil, WithLocation(tokyo))
+	fh, ok := r.(*firestoreHappenings)
+	if !ok || fh.loc != tokyo {
+		t.Fatalf("reader loc = %v, want %v", fh, tokyo)
 	}
 }
 

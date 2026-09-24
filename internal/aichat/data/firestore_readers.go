@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,17 +42,45 @@ func containsFold(haystack, needleLower string) bool {
 // final report's "manual / not done" list.
 type firestoreHappenings struct {
 	session *firestoredb.Session
-	// loc is the "user zone" a slot with no TimeZone of its own decodes in
-	// (S5). Defaults to time.Local (the CLI's host zone) -- a real per-user
-	// configured zone (flag/env override) is a follow-up, not implemented by
-	// this MVP slice; see the final report.
+	// loc is the "user zone" a slot with no TimeZone/UTCOffset of its own
+	// decodes in (S5/S4). Defaults to time.Local when the caller passes no
+	// WithLocation option.
 	loc *time.Location
 }
 
+// ReaderOption configures a Firestore-backed reader's optional behaviour.
+type ReaderOption func(*readerOptions)
+
+type readerOptions struct{ loc *time.Location }
+
+// WithLocation sets the "user zone" (S4 ruling: "reader takes the user zone
+// as a parameter (not hardcoded time.Local)") a slot with no TimeZone/
+// UTCOffset of its own decodes in. Callers that know the signed-in user's
+// actual configured zone (a future settings/flag/env source) pass it here;
+// omitting the option keeps the previous default, time.Local.
+func WithLocation(loc *time.Location) ReaderOption {
+	return func(o *readerOptions) {
+		if loc != nil {
+			o.loc = loc
+		}
+	}
+}
+
+func newReaderOptions(opts []ReaderOption) readerOptions {
+	o := readerOptions{loc: time.Local}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
 // NewFirestoreHappenings builds a HappeningsReader over ONE lazily-opened,
-// reused Firestore client (m4) rather than a fresh client per call.
-func NewFirestoreHappenings(cfg config.Config, ts oauth2.TokenSource) HappeningsReader {
-	return &firestoreHappenings{session: firestoredb.NewSession(cfg, ts), loc: time.Local}
+// reused Firestore client (m4) rather than a fresh client per call. See
+// WithLocation (S4) for the "user zone" a TimeZone/UTCOffset-less slot
+// decodes in.
+func NewFirestoreHappenings(cfg config.Config, ts oauth2.TokenSource, opts ...ReaderOption) HappeningsReader {
+	o := newReaderOptions(opts)
+	return &firestoreHappenings{session: firestoredb.NewSession(cfg, ts), loc: o.loc}
 }
 
 // Close releases the reader's Firestore client, if one was ever opened.
@@ -104,18 +133,25 @@ func (r *firestoreHappenings) list(ctx context.Context, spaceID string) ([]calen
 	return dbos, ids, nil
 }
 
-// parseSlotDateTime interprets a calendarius DateTime in the slot's own
-// TimeZone when it has one, else fallback (S5 ruling: "the slot's
-// TimeZone/UTCOffset when present else user zone"). A prior version always
-// used time.Parse's implicit UTC, which was silently wrong for both a slot
-// with an explicit TimeZone and a user whose local zone isn't UTC.
-func parseSlotDateTime(dt calendariusdbo.DateTime, tz string, fallback *time.Location) (time.Time, bool) {
+// parseSlotDateTime interprets a calendarius DateTime in, in priority
+// order: the slot's own TimeZone (an IANA name); else its UTCOffset (a
+// fixed "+01:00"-style offset, honoured when TimeZone is empty -- S4);
+// else fallback, the reader's configured "user zone". A prior version
+// always used time.Parse's implicit UTC, which was silently wrong for a
+// slot with an explicit TimeZone/UTCOffset and for a user whose local zone
+// isn't UTC.
+func parseSlotDateTime(dt calendariusdbo.DateTime, tz, utcOffset string, fallback *time.Location) (time.Time, bool) {
 	loc := fallback
 	if loc == nil {
 		loc = time.UTC
 	}
-	if tz != "" {
+	switch {
+	case tz != "":
 		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		}
+	case utcOffset != "":
+		if l, ok := fixedZoneFromOffset(utcOffset); ok {
 			loc = l
 		}
 	}
@@ -126,17 +162,38 @@ func parseSlotDateTime(dt calendariusdbo.DateTime, tz string, fallback *time.Loc
 	return t, true
 }
 
+// fixedZoneFromOffset parses a "+01:00"/"-05:30"-style UTC offset into a
+// fixed-offset time.Location.
+func fixedZoneFromOffset(s string) (*time.Location, bool) {
+	if len(s) != 6 || (s[0] != '+' && s[0] != '-') || s[3] != ':' {
+		return nil, false
+	}
+	h, hErr := strconv.Atoi(s[1:3])
+	m, mErr := strconv.Atoi(s[4:6])
+	if hErr != nil || mErr != nil {
+		return nil, false
+	}
+	secs := h*3600 + m*60
+	if s[0] == '-' {
+		secs = -secs
+	}
+	return time.FixedZone(s, secs), true
+}
+
 // firstSlotWindow returns the earliest slot's start/end as time.Time,
 // interpreted per parseSlotDateTime's rule. fallback is the reader's
 // configured "user zone" (see firestoreHappenings.loc), used only for a slot
-// that has no TimeZone of its own.
+// that has no TimeZone/UTCOffset of its own. End prefers the slot's own
+// EndUTCOffset over its (start) UTCOffset -- they can legitimately differ
+// across a DST transition -- falling back to UTCOffset when EndUTCOffset is
+// unset (the common case: one offset for the whole slot).
 func firstSlotWindow(h calendariusdbo.HappeningDbo, fallback *time.Location) (start, end time.Time, slotID string, recurring bool, slot *calendariusdbo.HappeningSlot) {
 	for id, s := range h.Slots {
 		if s == nil {
 			continue
 		}
 		recurring = recurring || s.Repeats != "" && s.Repeats != calendariusdbo.RepeatPeriodOnce
-		st, ok := parseSlotDateTime(s.Start, s.TimeZone, fallback)
+		st, ok := parseSlotDateTime(s.Start, s.TimeZone, s.UTCOffset, fallback)
 		if !ok {
 			continue
 		}
@@ -150,7 +207,11 @@ func firstSlotWindow(h calendariusdbo.HappeningDbo, fallback *time.Location) (st
 			slot = &cp
 			end = time.Time{}
 			if s.End.Time != "" {
-				if et, ok := parseSlotDateTime(s.End, s.TimeZone, fallback); ok {
+				endOffset := s.EndUTCOffset
+				if endOffset == "" {
+					endOffset = s.UTCOffset
+				}
+				if et, ok := parseSlotDateTime(s.End, s.TimeZone, endOffset, fallback); ok {
 					end = et
 				}
 			}
