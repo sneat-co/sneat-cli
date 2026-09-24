@@ -92,6 +92,11 @@ type RunChatArgs struct {
 	// emulators, ...), for building the Firestore readers and sneatapi
 	// client RunChat's implementation needs beyond Spaces/Contacts.
 	Cfg config.Config
+	// CurrentSpace is the signed-in session's persisted default space
+	// (session.Session.CurrentSpace), the single source of truth the aichat
+	// pipeline starts in unless the user switches space mid-session
+	// (coordinator ruling SPACE). Empty when the session has none set yet.
+	CurrentSpace string
 }
 
 // ContactDeleter deletes a contact by space and id. It is the id-based view of

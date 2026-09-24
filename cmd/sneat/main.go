@@ -114,16 +114,17 @@ func main() {
 			auth := sneatauth.New(sneatauth.Options{APIKey: args.Cfg.APIKey, AuthEmulatorHost: args.Cfg.AuthEmulatorHost})
 			ts := tokensrc.FromEnvOrSession(os.Getenv, context.Background(), store, auth, time.Now)
 			return chatapp.Run(chatapp.Deps{
-				Spaces:      args.Spaces,
-				Contacts:    chatContacts{args.Contacts},
-				UID:         args.UID,
-				Email:       args.Email,
-				Version:     info.Version,
-				Cfg:         args.Cfg,
-				AIConfig:    args.AIConfig,
-				NoJev:       args.NoJev,
-				TokenSource: ts,
-				Debug:       os.Getenv("SNEAT_DEBUG") != "",
+				Spaces:       args.Spaces,
+				Contacts:     chatContacts{args.Contacts},
+				UID:          args.UID,
+				Email:        args.Email,
+				Version:      info.Version,
+				Cfg:          args.Cfg,
+				AIConfig:     args.AIConfig,
+				NoJev:        args.NoJev,
+				TokenSource:  ts,
+				Debug:        os.Getenv("SNEAT_DEBUG") != "",
+				CurrentSpace: args.CurrentSpace,
 			})
 		},
 	}

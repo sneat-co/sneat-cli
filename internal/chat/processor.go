@@ -275,6 +275,9 @@ func commandArg(text string) string {
 	return ""
 }
 
+// ActiveSpace implements Processor.
+func (p *processor) ActiveSpace() string { return p.activeSpace }
+
 // spaceCmd reports the active space, or that none is chosen yet
 // (REQ: space-command). It is the only way to see the active space after the
 // one line that names it when it is picked.

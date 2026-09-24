@@ -58,4 +58,12 @@ type Processor interface {
 	// renderer's command palette and for /help — the same registry, so a
 	// command cannot exist in one and not the other (chat-messenger#req:command-registry).
 	Commands() []CommandInfo
+
+	// ActiveSpace returns the space ID most recently selected by /space or a
+	// space-card press, or "" if none has been selected yet. It exists so a
+	// caller outside this package (internal/chatapp's aichat pipeline) can
+	// treat the Processor's own active-space selection as the single source
+	// of truth for "which space" rather than tracking a second, divergent
+	// notion of it.
+	ActiveSpace() string
 }

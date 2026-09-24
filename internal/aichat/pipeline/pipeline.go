@@ -139,14 +139,24 @@ const helpText = "I can show your calendar (today, this week, upcoming), your to
 func (p Pipeline) showDay(ctx context.Context, st *session.State, spaceID string) (Output, error) {
 	now := p.now()
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	to := from.Add(24 * time.Hour)
+	// AddDate, not +24h: a calendar day is not always 24 wall-clock hours in
+	// the user's zone (DST transitions), coordinator ruling TIMEZONES.
+	to := from.AddDate(0, 0, 1)
 	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationDayCalendar, "You have no happenings today.")
 }
 
 func (p Pipeline) showWeek(ctx context.Context, st *session.State, spaceID string) (Output, error) {
 	now := p.now()
+	// ISO week: Monday start. time.Weekday is Sunday=0..Saturday=6, so the
+	// offset back to Monday is -6 on a Sunday and -(weekday-1) otherwise
+	// (coordinator ruling TIMEZONES: week start Monday unless locale says
+	// otherwise -- no locale signal is wired yet, so Monday is the default).
 	weekday := int(now.Weekday())
-	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -weekday)
+	offset := -(weekday - 1)
+	if weekday == 0 {
+		offset = -6
+	}
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, offset)
 	to := from.AddDate(0, 0, 7)
 	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationWeekCalendar, "You have nothing scheduled this week.")
 }

@@ -7,8 +7,13 @@ package chatapp
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -42,8 +47,18 @@ type Deps struct {
 	// reads, sneatapi mutations, and (unless BYOK) the LLM/decision cloud
 	// calls.
 	TokenSource oauth2.TokenSource
-	// Debug enables ai/diag logging at slog.LevelDebug to stderr.
+	// Debug enables ai/diag logging at slog.LevelDebug, written to
+	// <UserCacheDir>/sneat/chat-debug.log -- never stderr, which chatshell's
+	// alt-screen owns.
 	Debug bool
+	// CurrentSpace is the session's persisted default space (coordinator
+	// ruling SPACE), read from session.Session.CurrentSpace. Empty means
+	// "none set yet" -- defaultSpaceID falls back to a deterministic choice.
+	CurrentSpace string
+	// TZ is the IANA zone day/week windows and slot times resolve in
+	// (coordinator ruling TIMEZONES). Empty defaults to the process's local
+	// zone name.
+	TZ string
 }
 
 // Product identifies this CLI to Sneat AI Cloud (ai.ChatRequest.Product /
@@ -60,7 +75,7 @@ func Run(deps Deps) error {
 		Spaces: deps.Spaces, Contacts: deps.Contacts, UID: deps.UID, Email: deps.Email, Version: deps.Version,
 	})
 
-	spaceID := defaultSpaceID(ctx, deps.Spaces, deps.UID)
+	spaceID := defaultSpaceID(ctx, deps.Spaces, deps.UID, deps.CurrentSpace)
 
 	readers := data.Readers{
 		Happenings: data.NewFirestoreHappenings(deps.Cfg, deps.TokenSource),
@@ -91,7 +106,7 @@ func Run(deps Deps) error {
 
 	var logger *slog.Logger
 	if deps.Debug {
-		logger = slog.Default()
+		logger = newDebugLogger()
 	}
 
 	pl := pipeline.Pipeline{
@@ -122,26 +137,66 @@ func Run(deps Deps) error {
 	return err
 }
 
-// defaultSpaceID picks the user's first space (by the same ordering
-// spaces/list uses elsewhere would be nicer, but that helper lives in
-// cmd/sneat/commands as an unexported function) -- KNOWN MVP LIMITATION: no
-// `/space` picker wired into the aichat pipeline yet, see the final report.
-// A read failure or an account with no spaces leaves spaceID empty; every
-// pipeline call that needs one then answers "no space" rather than panicking
-// (Pipeline's readers/executor all validate spaceID through the normal
-// sneat-go 400 path).
-func defaultSpaceID(ctx context.Context, spaces chat.SpacesReader, uid string) string {
+// defaultSpaceID chooses the pipeline's starting space (coordinator ruling
+// SPACE): the session's persisted CurrentSpace wins outright when set; else
+// the user's family space if one exists among their spaces; else the lowest
+// space ID after sorting -- never map iteration order. A read failure or an
+// account with no spaces leaves spaceID empty; every pipeline call that
+// needs one then answers "no space" rather than panicking (Pipeline's
+// readers/executor all validate spaceID through the normal sneat-go 400
+// path).
+func defaultSpaceID(ctx context.Context, spaces chat.SpacesReader, uid, currentSpace string) string {
+	if currentSpace != "" {
+		return currentSpace
+	}
 	if spaces == nil {
 		return ""
 	}
 	m, err := spaces.ListSpaces(ctx, uid)
-	if err != nil {
+	if err != nil || len(m) == 0 {
 		return ""
 	}
-	for id := range m {
-		return id // map iteration order is arbitrary; any one space is a reasonable MVP default
+	ids := make([]string, 0, len(m))
+	for id, info := range m {
+		ids = append(ids, id)
+		if isFamilySpace(info) {
+			return id
+		}
 	}
-	return ""
+	slices.Sort(ids)
+	return ids[0]
+}
+
+// isFamilySpace reports whether a space-list entry is the user's family
+// space, matching internal/chat/processor.go's own "type" field convention
+// (see resolveSpace) rather than a separately-invented shape.
+func isFamilySpace(info any) bool {
+	b, _ := info.(map[string]any)
+	if b == nil {
+		return false
+	}
+	t, _ := b["type"].(string)
+	return strings.EqualFold(t, "family")
+}
+
+// newDebugLogger writes ai/diag's Debug-level JSON logs to
+// <UserCacheDir>/sneat/chat-debug.log rather than stderr, which chatshell's
+// alt-screen owns exclusively while the program runs. A failure to open the
+// file falls back to a discarded logger rather than corrupting the screen.
+func newDebugLogger() *slog.Logger {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	dir = filepath.Join(dir, "sneat")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "chat-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	return slog.New(slog.NewJSONHandler(f, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
 func slashCommands(cmds []chat.CommandInfo) []chatshell.Command {

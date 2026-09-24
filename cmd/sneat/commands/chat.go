@@ -111,5 +111,6 @@ func runChat(env Env, cmd *cobra.Command) error {
 	return env.RunChat(RunChatArgs{
 		Spaces: spaces, Contacts: contacts, UID: sess.UID, Email: sess.Email,
 		AIConfig: aiCfg, NoJev: noJevFromCmd(cmd), Cfg: cfg,
+		CurrentSpace: sess.CurrentSpace,
 	})
 }

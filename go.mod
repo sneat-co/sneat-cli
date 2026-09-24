@@ -24,7 +24,7 @@ require (
 	github.com/sneat-co/sneat-go-core v0.69.0
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/aichat v0.0.0-20260924103729-14d1dea011f5
+	github.com/strongo/aichat v0.0.0-20260924105409-8c23aa19fe38
 	github.com/strongo/buildinfo v0.2.1
 	github.com/strongo/deviceauth v0.1.0
 	github.com/strongo/strongoapp v0.31.58

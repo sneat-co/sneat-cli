@@ -3,6 +3,7 @@ package chatapp
 import (
 	"context"
 	"fmt"
+	"iter"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -28,6 +29,14 @@ import (
 // handler implements chatshell.Handler, chatshell.MsgHandler,
 // chatshell.StreamObserver and chatshell.SidebarObserver: it is the one
 // place that turns the aichat pipeline's Output into chatshell calls.
+//
+// Concurrency (coordinator ruling): every mutation of state (the live
+// *session.State a chatshell key handler can read at any moment) happens on
+// the UI loop -- inside Submit itself (called synchronously from
+// chatshell's Update) or inside OnMsg (also called from Update). Submit's
+// own returned tea.Cmd runs pipeline.Turn/HandleAction on a COPY of state,
+// never the live pointer, and hands the resulting copy back in a message;
+// OnMsg is what writes it onto state. See Submit and handleTurn/handleSlash.
 type handler struct {
 	ctx       context.Context
 	pipeline  pipeline.Pipeline
@@ -47,22 +56,62 @@ type handler struct {
 
 // --- chatshell.Handler -----------------------------------------------------
 
+// Submit runs on the UI loop (chatshell's handleInputKey calls it
+// synchronously from Update), so it is where FOCUS is read (coordinator
+// ruling: FocusedRef()/SelectionRefs() at Submit time, on the UI loop) and
+// where the state snapshot handed to the background pipeline call is taken.
+// The returned tea.Cmd's closure runs on a worker goroutine and must not
+// touch h.state -- it works only on the snapshot, and its result message is
+// applied back to h.state by OnMsg, which does run on the UI loop.
 func (h *handler) Submit(text string) tea.Cmd {
 	trimmed := strings.TrimSpace(text)
+
+	// Sync the pipeline's space to whatever the slash-command Processor's
+	// active space now is (coordinator ruling SPACE: /space is the single
+	// source of truth once the Processor itself changes it -- see
+	// chat.Processor.ActiveSpace).
+	if active := h.processor.ActiveSpace(); active != "" {
+		h.spaceID = active
+	}
+
 	if strings.HasPrefix(trimmed, "/") {
 		return func() tea.Msg {
 			replies, err := h.processor.SendText(h.ctx, trimmed)
 			return slashMsg{replies: replies, err: err}
 		}
 	}
-	return func() tea.Msg {
-		out, err := h.pipeline.Turn(h.ctx, trimmed, h.state, h.spaceID)
-		return turnMsg{text: trimmed, output: out, err: err}
+
+	// Snapshot state ON THE UI LOOP: a shallow copy isolates the background
+	// call's Pending/Previous/LastShown/Sidebar/Selection/Focused
+	// reassignments (pipeline never mutates a slice/struct in place, only
+	// reassigns a State field) from the live h.state until OnMsg applies the
+	// result back.
+	snapshot := *h.state
+	if ref := h.model.FocusedRef(); ref != nil {
+		snapshot.Focus(ref)
 	}
+	if sel := h.model.SelectionRefs(); len(sel) > 0 {
+		snapshot.Selection = sel
+	}
+
+	ctx, cancel := context.WithCancel(h.ctx)
+	busyCmd := h.model.SetBusy(true)
+	h.model.SetBusyCancel(cancel)
+
+	work := func() tea.Msg {
+		out, err := h.pipeline.Turn(ctx, trimmed, &snapshot, h.spaceID)
+		return turnMsg{text: trimmed, output: out, err: err, state: snapshot}
+	}
+	if busyCmd == nil {
+		return work
+	}
+	return tea.Batch(work, busyCmd)
 }
 
 // --- chatshell.SidebarObserver ---------------------------------------------
 
+// OnSidebarChange fires from chatshell's Update (UI loop), so writing
+// straight to h.state is safe here.
 func (h *handler) OnSidebarChange(refs []session.EntityRef) {
 	h.state.Sidebar = refs
 }
@@ -74,22 +123,46 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 		return nil
 	}
 	sp := h.splitters[id]
-	delete(h.splitters, id)
 	if sp == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		_, action, err := sp.Finish()
-		if err != nil || action == nil {
-			return nil // a plain text-only answer, or a malformed block already reported by the transcript's error entry
+		trailing, action, err := sp.Finish()
+		if err != nil {
+			// Splitter contract: a malformed/unterminated block is surfaced,
+			// never silently dropped, and whatever text was already held
+			// back is still shown (coordinator ruling SPLITTER).
+			return actionMsg{parseErr: err, trailing: trailing}
+		}
+		if action == nil {
+			return nil // a plain text-only answer
 		}
 		out, err := h.pipeline.HandleAction(h.ctx, *action, h.state, h.spaceID)
 		return actionMsg{output: out, err: err}
 	}
 }
 
+// OnStreamDone fires exactly once per StartStream call (success, fatal
+// error, or cancellation) -- this is where the splitter entry for id is
+// retired and the LLM-leg diagnostics are logged, regardless of outcome.
+func (h *handler) OnStreamDone(id string, err error) tea.Cmd {
+	delete(h.splitters, id)
+	if h.logger != nil {
+		t := aidiag.Turn{Path: aidiag.PathLLMFallback}
+		if err != nil {
+			t.Errors = []string{aidiag.ErrorCode(err)}
+		}
+		aidiag.Log(h.ctx, h.logger, t)
+	}
+	return nil
+}
+
 // --- chatshell.MsgHandler ----------------------------------------------------
 
+// OnMsg runs on the UI loop (chatshell's dispatchUnhandled calls it from
+// Update): every write to h.state in this file happens from here or from
+// Submit itself (before the async work is dispatched), never from inside a
+// tea.Cmd closure.
 func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 	switch m := msg.(type) {
 	case slashMsg:
@@ -97,6 +170,16 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 	case turnMsg:
 		return h.handleTurn(m)
 	case actionMsg:
+		if m.parseErr != nil {
+			if m.trailing != "" {
+				h.model.AppendAssistant(m.trailing)
+			}
+			h.model.AppendSystem("(couldn't parse action)")
+			if h.logger != nil {
+				aidiag.Log(h.ctx, h.logger, aidiag.Turn{Path: aidiag.PathLLMFallback, Errors: []string{aidiag.ErrorCode(m.parseErr)}})
+			}
+			return nil
+		}
 		h.render(m.output, m.err)
 		return nil
 	case grid.RowActivatedMsg:
@@ -109,6 +192,9 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 }
 
 func (h *handler) handleSlash(m slashMsg) tea.Cmd {
+	if active := h.processor.ActiveSpace(); active != "" {
+		h.spaceID = active
+	}
 	if m.err != nil {
 		h.model.AppendSystem("error: " + m.err.Error())
 		return nil
@@ -116,15 +202,19 @@ func (h *handler) handleSlash(m slashMsg) tea.Cmd {
 	for _, r := range m.replies {
 		// The messenger Reply's Keyboard (buttons) has no chatshell
 		// equivalent in this MVP slice -- slash commands still answer, just
-		// as plain text, not as pressable buttons. See the final report.
+		// as plain text, not as pressable buttons. See the final report
+		// (coordinator ruling SLASH BUTTONS, declined this round).
 		h.model.AppendAssistant(r.Text)
 	}
 	return nil
 }
 
 func (h *handler) handleTurn(m turnMsg) tea.Cmd {
+	h.model.SetBusy(false)
+	*h.state = m.state // apply the background work's result -- UI loop only
 	if m.err != nil {
 		h.model.AppendSystem("error: " + m.err.Error())
+		h.logTurn(aidiag.PathDeterministic, m.output, m.err)
 		return nil
 	}
 	if !m.output.NeedsLLM {
@@ -137,15 +227,23 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 
 func (h *handler) startLLMStream(text string, d *decision.Decision) tea.Cmd {
 	focused := focusedScopes(h.state)
-	req, report := h.pipeline.StreamRequest(h.ctx, text, h.state, h.spaceID, d, focused)
-	h.logStreamRequest(d, report)
-	seq, splitter := h.pipeline.Stream(h.ctx, req)
+	// StreamRequest itself does no I/O; DynamicBlocks reads happen inside
+	// the open func below, which chatshell's StartStream runs under the
+	// per-stream context it owns -- not on the UI loop, and cancellable via
+	// Esc/Ctrl+C like the rest of the stream.
+	stateSnapshot := *h.state
 	id := h.nextStreamID()
 	if h.splitters == nil {
 		h.splitters = map[string]*pipeline.Splitter{}
 	}
-	h.splitters[id] = splitter
-	return h.model.StartStream(id, seq)
+	open := func(ctx context.Context) iter.Seq2[ai.Event, error] {
+		req, report := h.pipeline.StreamRequest(ctx, text, &stateSnapshot, h.spaceID, d, focused)
+		h.logStreamRequest(d, report)
+		seq, splitter := h.pipeline.Stream(ctx, req)
+		h.splitters[id] = splitter
+		return seq
+	}
+	return h.model.StartStream(id, open)
 }
 
 func (h *handler) nextStreamID() string {
@@ -265,8 +363,7 @@ func moduleForEntityType(t string) string {
 }
 
 // logTurn/logStreamRequest emit ai/diag.Turn records at Debug -- never user
-// text (see internal/aichat/diag's removed stand-in's doc, now delegated to
-// ai/diag directly).
+// text.
 func (h *handler) logTurn(path aidiag.Path, out pipeline.Output, err error) {
 	if h.logger == nil {
 		return
@@ -302,13 +399,19 @@ type slashMsg struct {
 	err     error
 }
 
+// turnMsg carries the state SNAPSHOT the background pipeline.Turn call
+// produced (see Submit's doc comment); handleTurn is the only place that
+// writes it onto the live h.state, and it does so on the UI loop.
 type turnMsg struct {
 	text   string
 	output pipeline.Output
 	err    error
+	state  session.State
 }
 
 type actionMsg struct {
-	output pipeline.Output
-	err    error
+	output   pipeline.Output
+	err      error
+	parseErr error
+	trailing string
 }
