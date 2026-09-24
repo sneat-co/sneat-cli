@@ -1,6 +1,8 @@
 package data
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -295,6 +297,33 @@ func TestNewFirestoreHappenings_WithLocation(t *testing.T) {
 	}
 }
 
+// TestFirestoreSession_AdaptsRealSession exercises firestoreSession's own
+// DB/Close methods against a REAL *firestoredb.Session (not a fake): opening
+// a Firestore client is lazy and needs no live project or emulator (see
+// internal/firestoredb's TestOpen_RealConstructor), so this runs fast.
+func TestFirestoreSession_AdaptsRealSession(t *testing.T) {
+	fs := firestoreSession{s: firestoredb.NewSession(config.Config{Project: "p1"}, nil)}
+	db, err := fs.DB(context.Background())
+	if err != nil {
+		t.Fatalf("DB() = %v, want nil", err)
+	}
+	if db == nil {
+		t.Fatal("DB() = nil, want a readOnlyRunner")
+	}
+	if err := fs.Close(); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+}
+
+// sameSession reports whether a sessionProvider wraps the given
+// *firestoredb.Session (NewFirestoreHappenings/Todos adapt the session
+// through firestoreSession, so a direct field comparison no longer works).
+func sameSession(t *testing.T, got sessionProvider, want *firestoredb.Session) bool {
+	t.Helper()
+	fs, ok := got.(firestoreSession)
+	return ok && fs.s == want
+}
+
 // TestReaders_ShareOneFirestoreSession is m6: Happenings/Todos/Contacts
 // readers built from the SAME *firestoredb.Session must all hold that
 // identical session (one Firestore client for the whole chat session), not
@@ -304,13 +333,13 @@ func TestReaders_ShareOneFirestoreSession(t *testing.T) {
 
 	happenings := NewFirestoreHappenings(session)
 	fh, ok := happenings.(*firestoreHappenings)
-	if !ok || fh.session != session {
+	if !ok || !sameSession(t, fh.session, session) {
 		t.Errorf("Happenings reader session = %v, want the shared %v", fh, session)
 	}
 
 	todos := NewFirestoreTodos(session)
 	ft, ok := todos.(*firestoreTodos)
-	if !ok || ft.session != session {
+	if !ok || !sameSession(t, ft.session, session) {
 		t.Errorf("Todos reader session = %v, want the shared %v", ft, session)
 	}
 
@@ -381,6 +410,41 @@ func TestReaders_Close(t *testing.T) {
 	}
 	if !h.closed {
 		t.Fatal("Happenings reader was not closed")
+	}
+}
+
+// closerTodosStub is TestReaders_Close_JoinsErrors' TodosReader-shaped
+// counterpart to closerStub.
+type closerTodosStub struct {
+	FakeTodos
+	closed bool
+	err    error
+}
+
+func (c *closerTodosStub) Close() error {
+	c.closed = true
+	return c.err
+}
+
+// TestReaders_Close_JoinsErrors covers Readers.Close's error-joining branch:
+// a closer that fails must have its error surfaced (via errors.Join), and
+// every OTHER closer must still run rather than short-circuiting.
+func TestReaders_Close_JoinsErrors(t *testing.T) {
+	hErr := errors.New("happenings close failed")
+	tErr := errors.New("todos close failed")
+	h := &closerStub{err: hErr}
+	tc := &closerTodosStub{err: tErr}
+	readers := Readers{Happenings: h, Todos: tc, Contacts: &FakeContacts{}}
+
+	err := readers.Close()
+	if err == nil {
+		t.Fatal("Close() = nil, want the joined errors")
+	}
+	if !errors.Is(err, hErr) || !errors.Is(err, tErr) {
+		t.Fatalf("Close() = %v, want it to wrap both %v and %v", err, hErr, tErr)
+	}
+	if !h.closed || !tc.closed {
+		t.Fatalf("both closers must run even though one failed: h.closed=%v tc.closed=%v", h.closed, tc.closed)
 	}
 }
 

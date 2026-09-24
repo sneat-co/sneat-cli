@@ -14,8 +14,17 @@ import (
 // ContactsReader shape, adding FindByName as a client-side substring filter
 // over List -- contactus has no server-side name-search query this MVP
 // slice can call instead.
+// contactsReader is the subset of *firestoredb.ContactsReader this adapter
+// depends on. Depending on this narrower interface (rather than the
+// concrete type) lets a test fake stand in for a real Firestore connection.
+type contactsReader interface {
+	ListContacts(ctx context.Context, spaceID string) ([]firestoredb.Contact, error)
+	GetContact(ctx context.Context, spaceID, contactID string) (firestoredb.Contact, error)
+	Close() error
+}
+
 type firestoreContacts struct {
-	r *firestoredb.ContactsReader
+	r contactsReader
 }
 
 // NewFirestoreContacts builds a ContactsReader over session, an

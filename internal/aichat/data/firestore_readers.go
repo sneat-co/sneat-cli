@@ -39,7 +39,7 @@ func containsFold(haystack, needleLower string) bool {
 // run against a real or emulated Firestore space to confirm it -- see the
 // final report's "manual / not done" list.
 type firestoreHappenings struct {
-	session *firestoredb.Session
+	session sessionProvider
 	// loc is the "user zone" a slot with no TimeZone/UTCOffset of its own
 	// decodes in (S5/S4). Defaults to time.Local when the caller passes no
 	// WithLocation option.
@@ -80,7 +80,7 @@ func newReaderOptions(opts []ReaderOption) readerOptions {
 // "user zone" a TimeZone/UTCOffset-less slot decodes in.
 func NewFirestoreHappenings(session *firestoredb.Session, opts ...ReaderOption) HappeningsReader {
 	o := newReaderOptions(opts)
-	return &firestoreHappenings{session: session, loc: o.loc}
+	return &firestoreHappenings{session: firestoreSession{s: session}, loc: o.loc}
 }
 
 // Close releases the reader's Firestore client, if one was ever opened.
@@ -99,6 +99,16 @@ func happeningsCollectionRef(spaceID string) dal.CollectionRef {
 	return dal.NewCollectionRef(const4calendarius.HappeningsCollection, "", moduleKey)
 }
 
+// newHappeningQueryRecord builds an empty, incomplete-key envelope for one
+// query result row. Named (rather than an inline closure in list) so it has
+// its own direct unit test: a real backend's query executor invokes it per
+// decoded document, but this package's own fake QueryExecutor (used in unit
+// tests) supplies already-built records and never calls it -- mirrors
+// internal/firestoredb's newContactRecord.
+func newHappeningQueryRecord() record.Record {
+	return record.NewRecordWithIncompleteKey("happenings", reflect.String, &calendariusdbo.HappeningDbo{})
+}
+
 func (r *firestoreHappenings) list(ctx context.Context, spaceID string) ([]calendariusdbo.HappeningDbo, []string, error) {
 	db, err := r.session.DB(ctx)
 	if err != nil {
@@ -107,9 +117,7 @@ func (r *firestoreHappenings) list(ctx context.Context, spaceID string) ([]calen
 
 	q := dal.NewQueryBuilder(dal.From(happeningsCollectionRef(spaceID))).
 		WhereField("status", dal.Equal, "active").
-		SelectIntoRecord(func() record.Record {
-			return record.NewRecordWithIncompleteKey("happenings", reflect.String, &calendariusdbo.HappeningDbo{})
-		})
+		SelectIntoRecord(newHappeningQueryRecord)
 
 	var records []record.Record
 	err = db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
@@ -280,14 +288,14 @@ func (r *firestoreHappenings) Get(ctx context.Context, spaceID, happeningID stri
 // firestoreHappenings, the collection path is unverified against a live
 // space.
 type firestoreTodos struct {
-	session *firestoredb.Session
+	session sessionProvider
 }
 
 // NewFirestoreTodos builds a TodosReader over session, an ALREADY-OWNED
 // *firestoredb.Session shared with the other readers (m6; see
 // NewFirestoreHappenings's doc comment).
 func NewFirestoreTodos(session *firestoredb.Session) TodosReader {
-	return &firestoreTodos{session: session}
+	return &firestoreTodos{session: firestoreSession{s: session}}
 }
 
 // Close releases the reader's Firestore client, if one was ever opened (see
