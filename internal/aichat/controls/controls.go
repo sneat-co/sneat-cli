@@ -13,7 +13,9 @@ package controls
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -26,10 +28,16 @@ import (
 
 // Item is one row of a ListBlock: a title, an optional one-line subtitle
 // (e.g. a happening's time, a todo's list), and the entity it refers to.
+//
+// Header marks a non-actionable section-heading row (S9: WeekCalendar's
+// "Monday"/"Tuesday"/... day sections) -- it carries no entity, the cursor
+// skips over it, and View renders it without a bullet/reverse-video cursor
+// treatment.
 type Item struct {
 	Title    string
 	Subtitle string
 	Ref      session.EntityRef
+	Header   bool
 }
 
 // ItemActivatedMsg is emitted when Enter is pressed over a ListBlock's
@@ -55,16 +63,48 @@ type ListBlock struct {
 }
 
 // NewListBlock builds a ListBlock. items may be empty (an empty list is
-// still a valid, renderable block: "Nothing scheduled.").
+// still a valid, renderable block: "Nothing scheduled."). The cursor starts
+// on the first non-Header item, so a block that opens with a section
+// heading (WeekCalendar's "Monday") doesn't report that heading as
+// Current().
 func NewListBlock(heading string, items []Item) *ListBlock {
-	return &ListBlock{Heading: heading, Items: items}
+	b := &ListBlock{Heading: heading, Items: items}
+	if len(items) > 0 && items[0].Header {
+		if i, ok := nextSelectable(items, 0, 1); ok {
+			b.cursor = i
+		}
+	}
+	return b
 }
 
-func (b *ListBlock) Focusable() bool { return len(b.Items) > 0 }
+// nextSelectable scans from start (inclusive) in the given direction
+// (+1/-1) for the next non-Header index within bounds. ok is false when
+// nothing selectable is found in that direction (including a list of all
+// headers -- degenerate, but must not panic or loop forever), in which case
+// the caller keeps its current position.
+func nextSelectable(items []Item, start, dir int) (idx int, ok bool) {
+	for i := start; i >= 0 && i < len(items); i += dir {
+		if !items[i].Header {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// Focusable reports whether the block has at least one non-Header item --
+// an all-headers list (degenerate) is not a real destination for focus.
+func (b *ListBlock) Focusable() bool {
+	for _, it := range b.Items {
+		if !it.Header {
+			return true
+		}
+	}
+	return false
+}
 
 // Current implements transcript.EntityBlock.
 func (b *ListBlock) Current() *session.EntityRef {
-	if b.cursor < 0 || b.cursor >= len(b.Items) {
+	if b.cursor < 0 || b.cursor >= len(b.Items) || b.Items[b.cursor].Header {
 		return nil
 	}
 	ref := b.Items[b.cursor].Ref
@@ -79,11 +119,15 @@ func (b *ListBlock) Update(msg tea.Msg) (transcript.Block, tea.Cmd) {
 	switch key.String() {
 	case "up", "k":
 		if b.cursor > 0 {
-			b.cursor--
+			if i, ok := nextSelectable(b.Items, b.cursor-1, -1); ok {
+				b.cursor = i
+			}
 		}
 	case "down", "j":
 		if b.cursor < len(b.Items)-1 {
-			b.cursor++
+			if i, ok := nextSelectable(b.Items, b.cursor+1, 1); ok {
+				b.cursor = i
+			}
 		}
 	case "+":
 		// Same convention as tui/grid's "+": pin the entity under the cursor
@@ -113,6 +157,10 @@ func (b *ListBlock) View(width int, focused bool) string {
 		return clampWidth(sb.String(), width)
 	}
 	for i, it := range b.Items {
+		if it.Header {
+			sb.WriteString("\n" + lipgloss.NewStyle().Bold(true).Render(it.Title))
+			continue
+		}
 		line := "\n  " + it.Title
 		if it.Subtitle != "" {
 			line += "  " + lipgloss.NewStyle().Faint(true).Render(it.Subtitle)
@@ -206,4 +254,167 @@ func NewContactsGrid(title string, contacts []Contact) *grid.Model {
 type Contact struct {
 	Name string
 	Ref  session.EntityRef
+}
+
+// HappeningRow is the sliver of a happening a calendar presentation needs
+// (S9): the entity ref for resolution/actions/"+", plus the Start/End/
+// Recurring a bare session.EntityRef cannot carry. Decoupled from
+// internal/aichat/data.Happening for the same leaf-package reason as
+// Contact above.
+type HappeningRow struct {
+	Ref       session.EntityRef
+	Title     string
+	Start     time.Time
+	End       time.Time
+	Recurring bool
+}
+
+// TodoRow is the sliver of a todo/buy-list item a list presentation needs
+// (S9: "TodoList/BuyList with done state").
+type TodoRow struct {
+	Ref   session.EntityRef
+	Title string
+	Done  bool
+}
+
+// sortedHappenings returns happenings sorted by Start (zero Start, e.g. a
+// recurring happening's unresolved occurrence, sorts last rather than
+// first -- see HappeningRow's doc comment on Recurring). The input is not
+// mutated.
+func sortedHappenings(happenings []HappeningRow) []HappeningRow {
+	out := make([]HappeningRow, len(happenings))
+	copy(out, happenings)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Start.IsZero() != out[j].Start.IsZero() {
+			return out[j].Start.IsZero()
+		}
+		return out[i].Start.Before(out[j].Start)
+	})
+	return out
+}
+
+// timeRangeLabel renders a happening's Subtitle for a same-day presentation
+// (DayCalendar, a WeekCalendar's day section): "10:00-10:30", or just
+// "10:00" with no End, or "(recurring)" when Start couldn't be resolved to
+// a real occurrence at all (see HappeningsReader's documented limitation).
+func timeRangeLabel(h HappeningRow) string {
+	if h.Start.IsZero() {
+		if h.Recurring {
+			return "(recurring)"
+		}
+		return ""
+	}
+	label := h.Start.Format("15:04")
+	if !h.End.IsZero() && h.End.After(h.Start) {
+		label += "-" + h.End.Format("15:04")
+	}
+	if h.Recurring {
+		label += " (recurring)"
+	}
+	return label
+}
+
+// dateTimeLabel renders a happening's Subtitle for a cross-day chronological
+// presentation (HappeningsList/upcoming): "Sep 26 10:00".
+func dateTimeLabel(h HappeningRow) string {
+	if h.Start.IsZero() {
+		if h.Recurring {
+			return "(recurring)"
+		}
+		return ""
+	}
+	label := h.Start.Format("Jan 2 15:04")
+	if h.Recurring {
+		label += " (recurring)"
+	}
+	return label
+}
+
+// NewHappeningCard renders one happening's detail (S9: HappeningCard) --
+// used both for a single resolved happening and for a reschedule/cancel
+// confirmation's "what am I about to change" context.
+func NewHappeningCard(h HappeningRow) *CardBlock {
+	fields := [][2]string{{"When", dateTimeLabel(h)}}
+	if !h.End.IsZero() && h.End.After(h.Start) {
+		fields[0][1] = h.Start.Format("Jan 2 15:04") + "-" + h.End.Format("15:04")
+	}
+	if h.Recurring {
+		fields = append(fields, [2]string{"Repeats", "yes (this MVP shows the template time, not the resolved next occurrence)"})
+	}
+	return NewCardBlock(h.Title, h.Ref, fields...)
+}
+
+// NewDayCalendar renders happenings time-sorted with start-end times (S9):
+// "10:00-10:30  Dentist appointment".
+func NewDayCalendar(heading string, happenings []HappeningRow) *ListBlock {
+	sorted := sortedHappenings(happenings)
+	items := make([]Item, 0, len(sorted))
+	for _, h := range sorted {
+		items = append(items, Item{Title: h.Title, Subtitle: timeRangeLabel(h), Ref: h.Ref})
+	}
+	return NewListBlock(heading, items)
+}
+
+// NewHappeningsList renders happenings chronologically with date+time (S9):
+// "Sep 26 10:00  Dentist appointment".
+func NewHappeningsList(heading string, happenings []HappeningRow) *ListBlock {
+	sorted := sortedHappenings(happenings)
+	items := make([]Item, 0, len(sorted))
+	for _, h := range sorted {
+		items = append(items, Item{Title: h.Title, Subtitle: dateTimeLabel(h), Ref: h.Ref})
+	}
+	return NewListBlock(heading, items)
+}
+
+// NewWeekCalendar groups happenings into Mon..Sun sections, each time-sorted
+// with times (S9). weekStart is the Monday the week begins on (pipeline.go's
+// showWeek already computes this the same way). Section headings and an
+// empty day's placeholder row are both non-focusable Header items -- the
+// cursor skips them (see Item.Header/nextSelectable).
+func NewWeekCalendar(heading string, weekStart time.Time, happenings []HappeningRow) *ListBlock {
+	byDay := make(map[string][]HappeningRow)
+	for _, h := range happenings {
+		if h.Start.IsZero() {
+			continue // nothing to file under a day section without a resolved date
+		}
+		key := h.Start.Format("2006-01-02")
+		byDay[key] = append(byDay[key], h)
+	}
+	var items []Item
+	for i := 0; i < 7; i++ {
+		day := weekStart.AddDate(0, 0, i)
+		items = append(items, Item{Title: day.Format("Monday, Jan 2"), Header: true})
+		dayItems := sortedHappenings(byDay[day.Format("2006-01-02")])
+		if len(dayItems) == 0 {
+			items = append(items, Item{Title: "  (nothing scheduled)", Header: true})
+			continue
+		}
+		for _, h := range dayItems {
+			items = append(items, Item{Title: h.Title, Subtitle: timeRangeLabel(h), Ref: h.Ref})
+		}
+	}
+	return NewListBlock(heading, items)
+}
+
+// NewTodoList renders todo-list items with their done state (S9): a "[x]"/
+// "[ ]" marker. Does not itself sort -- TodosReader.List already orders
+// not-done first (m5); this only shows the state that ordering implies.
+func NewTodoList(heading string, todos []TodoRow) *ListBlock {
+	items := make([]Item, 0, len(todos))
+	for _, t := range todos {
+		mark := "[ ]"
+		if t.Done {
+			mark = "[x]"
+		}
+		items = append(items, Item{Title: mark + " " + t.Title, Ref: t.Ref})
+	}
+	return NewListBlock(heading, items)
+}
+
+// NewBuyList renders a to-buy/shopping list with done state (S9). Same
+// shape as NewTodoList today; kept as its own named constructor (rather
+// than callers reusing NewTodoList directly) so a to-buy-specific field
+// (quantity, say) can be added later without an ambiguous shared name.
+func NewBuyList(heading string, items []TodoRow) *ListBlock {
+	return NewTodoList(heading, items)
 }

@@ -3,12 +3,14 @@ package controls
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui"
+	"github.com/strongo/aichat/tui/transcript"
 )
 
 func plain(s string) string { return ansi.Strip(s) }
@@ -126,6 +128,91 @@ func TestCardBlock_View(t *testing.T) {
 	view := plain(b.View(40, true))
 	if !strings.Contains(view, "Alice") || !strings.Contains(view, "alice@example.com") {
 		t.Fatalf("view = %q", view)
+	}
+}
+
+// TestNewDayCalendar_TimeSortedWithStartEnd covers S9: DayCalendar is
+// time-sorted with real start-end times shown, not just a title.
+func TestNewDayCalendar_TimeSortedWithStartEnd(t *testing.T) {
+	later := HappeningRow{Title: "Standup", Ref: session.EntityRef{Type: "happening", Keys: map[string]string{"id": "later"}},
+		Start: time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 25, 14, 15, 0, 0, time.UTC)}
+	earlier := HappeningRow{Title: "Dentist", Ref: session.EntityRef{Type: "happening", Keys: map[string]string{"id": "earlier"}},
+		Start: time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 25, 10, 30, 0, 0, time.UTC)}
+	b := NewDayCalendar("Today", []HappeningRow{later, earlier})
+	if len(b.Items) != 2 || b.Items[0].Title != "Dentist" || b.Items[1].Title != "Standup" {
+		t.Fatalf("Items = %+v, want time-sorted (Dentist 10:00 before Standup 14:00)", b.Items)
+	}
+	if b.Items[0].Subtitle != "10:00-10:30" {
+		t.Errorf("Subtitle = %q, want the start-end range", b.Items[0].Subtitle)
+	}
+}
+
+// TestNewHappeningsList_ChronologicalDateTime covers S9: HappeningsList
+// shows a chronological date+time label, not just a bare time.
+func TestNewHappeningsList_ChronologicalDateTime(t *testing.T) {
+	h := HappeningRow{Title: "Flight", Start: time.Date(2026, 9, 26, 7, 30, 0, 0, time.UTC)}
+	b := NewHappeningsList("Upcoming", []HappeningRow{h})
+	if b.Items[0].Subtitle != "Sep 26 07:30" {
+		t.Errorf("Subtitle = %q, want a date+time label", b.Items[0].Subtitle)
+	}
+}
+
+// TestNewWeekCalendar_GroupsByDayAndSkipsHeadersOnNavigation covers S9:
+// Mon..Sun sections, each time-sorted, with the cursor skipping non-
+// actionable section-heading/placeholder rows.
+func TestNewWeekCalendar_GroupsByDayAndSkipsHeadersOnNavigation(t *testing.T) {
+	monday := time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC)
+	standup := HappeningRow{Title: "Standup", Ref: session.EntityRef{Type: "happening", Keys: map[string]string{"id": "standup"}},
+		Start: time.Date(2026, 9, 21, 9, 0, 0, 0, time.UTC)}
+	dentist := HappeningRow{Title: "Dentist", Ref: session.EntityRef{Type: "happening", Keys: map[string]string{"id": "dentist"}},
+		Start: time.Date(2026, 9, 24, 16, 0, 0, 0, time.UTC)} // Thursday
+	b := NewWeekCalendar("This week", monday, []HappeningRow{dentist, standup})
+
+	// The cursor must start on the FIRST real item (Standup, Monday), not
+	// the "Monday, Sep 21" heading at index 0.
+	cur := b.Current()
+	if cur == nil || cur.Keys["id"] != "standup" {
+		t.Fatalf("initial Current() = %v, want Standup (the first non-header item)", cur)
+	}
+
+	// Moving down must skip Tuesday/Wednesday's "(nothing scheduled)"
+	// placeholders and Thursday's heading, landing directly on Dentist.
+	blk := b
+	for i := 0; i < 20 && blk.Current().Keys["id"] != "dentist"; i++ {
+		var b2 transcript.Block
+		b2, _ = blk.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		blk = b2.(*ListBlock)
+	}
+	if blk.Current() == nil || blk.Current().Keys["id"] != "dentist" {
+		t.Fatalf("cursor never reached Dentist by pressing down; Current() = %v", blk.Current())
+	}
+}
+
+// TestNewTodoList_ShowsDoneState covers S9: TodoList/BuyList show done
+// state via a marker, not just the title.
+func TestNewTodoList_ShowsDoneState(t *testing.T) {
+	todos := []TodoRow{
+		{Title: "Buy milk", Done: false},
+		{Title: "Call plumber", Done: true},
+	}
+	b := NewTodoList("Todos", todos)
+	if b.Items[0].Title != "[ ] Buy milk" {
+		t.Errorf("Items[0].Title = %q", b.Items[0].Title)
+	}
+	if b.Items[1].Title != "[x] Call plumber" {
+		t.Errorf("Items[1].Title = %q", b.Items[1].Title)
+	}
+}
+
+// TestNewHappeningCard_ShowsWhen covers S9's HappeningCard: a single
+// happening's detail shows its date/time, not just its title.
+func TestNewHappeningCard_ShowsWhen(t *testing.T) {
+	h := HappeningRow{Title: "Dentist appointment", Ref: session.EntityRef{Type: "happening"},
+		Start: time.Date(2026, 9, 26, 16, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 26, 16, 30, 0, 0, time.UTC)}
+	b := NewHappeningCard(h)
+	view := plain(b.View(60, false))
+	if !strings.Contains(view, "Dentist appointment") || !strings.Contains(view, "16:00") || !strings.Contains(view, "16:30") {
+		t.Fatalf("view = %q, want title + start-end", view)
 	}
 }
 
