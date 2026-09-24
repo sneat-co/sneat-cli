@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/strongo/aichat/ai/decision"
@@ -21,6 +23,71 @@ func contactsTestReaders() data.Readers {
 		{ID: "c2", SpaceID: "sp1", Name: "Alicia Jones"},
 		{ID: "c3", SpaceID: "sp1", Name: "Bob"},
 	}}}
+}
+
+// errContacts is a data.ContactsReader whose List/FindByName/Get each fail
+// with a configurable error, for exercising findOrShowContact's and
+// Resolver.Resolve's error-propagation branches.
+type errContacts struct {
+	listErr      error
+	findByNameFn func(ctx context.Context, spaceID, query string) ([]data.Contact, error)
+}
+
+func (e errContacts) List(ctx context.Context, spaceID string) ([]data.Contact, error) {
+	if e.listErr != nil {
+		return nil, e.listErr
+	}
+	return nil, nil
+}
+
+func (e errContacts) FindByName(ctx context.Context, spaceID, query string) ([]data.Contact, error) {
+	if e.findByNameFn != nil {
+		return e.findByNameFn(ctx, spaceID, query)
+	}
+	return nil, nil
+}
+
+func (e errContacts) Get(ctx context.Context, spaceID, contactID string) (data.Contact, error) {
+	return data.Contact{}, fmt.Errorf("errContacts: Get not configured")
+}
+
+// TestFindOrShowContact_NoContactsReader covers the "no contacts reader
+// configured" guard, called directly since it fires before any Resolver
+// wiring matters.
+func TestFindOrShowContact_NoContactsReader(t *testing.T) {
+	p := Pipeline{Readers: data.Readers{}, Resolver: Resolver{}, Now: fixedNow}
+	_, err := p.findOrShowContact(context.Background(), decision.Reference{Expression: "bob"}, &session.State{}, "sp1")
+	if err == nil {
+		t.Fatal("expected an error when no contacts reader is configured")
+	}
+}
+
+// TestFindOrShowContact_ListError propagates List's error straight through
+// (the resolve.Resolve fast path needs the full contact list first).
+func TestFindOrShowContact_ListError(t *testing.T) {
+	wantErr := fmt.Errorf("list failed")
+	readers := data.Readers{Contacts: errContacts{listErr: wantErr}}
+	p := Pipeline{Readers: readers, Resolver: Resolver{Readers: readers}, Now: fixedNow}
+	_, err := p.findOrShowContact(context.Background(), decision.Reference{Expression: "bob"}, &session.State{}, "sp1")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+}
+
+// TestFindOrShowContact_ResolverError covers the ordinary-Resolver
+// fallback's own error branch: resolve.Resolve finds nothing (empty
+// contact list => OutcomeUnknown), so findOrShowContact falls through to
+// Resolver.Resolve, whose FindByName call then fails.
+func TestFindOrShowContact_ResolverError(t *testing.T) {
+	wantErr := fmt.Errorf("find by name failed")
+	readers := data.Readers{Contacts: errContacts{findByNameFn: func(ctx context.Context, spaceID, query string) ([]data.Contact, error) {
+		return nil, wantErr
+	}}}
+	p := Pipeline{Readers: readers, Resolver: Resolver{Readers: readers}, Now: fixedNow}
+	_, err := p.findOrShowContact(context.Background(), decision.Reference{Kind: sneatdomain.EntityContact, Expression: "bob"}, &session.State{}, "sp1")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
 }
 
 // TestTurn_FindContact_OneMatch_RendersContactCard covers S8's real,
