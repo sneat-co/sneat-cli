@@ -77,6 +77,18 @@ An executed action whose `Executor.Execute` returns a non-nil undo action MUST b
 
 Every action `pipeline.SneatExecutor` executes MUST go through a sneat-go HTTP endpoint (calendarius's `update_slot`/`cancel_happening`/`revoke_happening_cancellation`, listus's `list_items_create`/`list_items_set_is_done`/`list_items_delete`, via `internal/sneatapi`) and MUST NOT write Firestore directly. Reschedule and cancel-happening actions MUST read the happening's current state first (for the slot's duration and to build the undo action) rather than trusting the resolved reference's cached Title/Keys alone.
 
+### Contacts
+
+#### REQ: contacts-lookup-resolves-not-guesses
+
+`pipeline.findOrShowContact` (find_contact/show_contact) MUST resolve a contact reference against real space data via `sneat-ai-backend/resolve.Resolve`, falling back to `Resolver`'s title search when `resolve.Resolve` finds nothing, and MUST NOT execute through `Executor` — these are read-only lookups. One resolved contact MUST render a `ContactCard` with no raw entity keys; several MUST render a `ContactsGrid` choice.
+
+### Diagnostics
+
+#### REQ: full-decision-trace-is-logged
+
+`pipeline.Output.Trace` MUST carry `decision.Chain.Decide`'s full `Trace` (every provider's outcome and latency, not just which one decided) on every turn, and `chatapp`'s diagnostics logging MUST log it — including a labelled path (`deterministic` when the Sneat rules provider or no provider at all decided, `decision` when any other provider such as Jev decided) — behind the existing debug-only logger, never user text.
+
 ### Interactive shell
 
 #### REQ: chatshell-cutover
@@ -90,6 +102,14 @@ A presentation MUST render as a `tui/transcript.Block`: `ContactsGrid` MUST reus
 #### REQ: sidebar-and-focus-feed-session-state
 
 Pinning an entity to the chatshell sidebar (`Model.PinToSidebar`, driven by a control's own "+ add to sidebar" or `tui.AddToSidebarMsg`) MUST update `session.State.Sidebar` via the `SidebarObserver` callback, and a focused block's entity MUST be resolvable the same way a decision's pronoun reference resolves against `session.State.Candidates()` (chat-ai#req:resolver-never-trusts-a-model-id) -- focusing or pinning an entity is what makes "move it to Friday" or "mark it done" resolvable without the user repeating the entity's name.
+
+#### REQ: calendar-and-todo-presentations-carry-real-data
+
+A `day_calendar`/`week_calendar`/`happenings_list` presentation MUST render each happening's actual start (and end, when known) time, and a `todo_list`/`buy_list` presentation MUST render each item's done state — `pipeline.Output.HappeningRows`/`TodoRows` carry this data alongside `Entities` specifically so the rendered control is not title-only.
+
+#### REQ: bot-keyboard-buttons-are-focusable
+
+A `chat.Reply` carrying a `Keyboard` (a slash command's or a button press's own reply) MUST render as a focusable block whose buttons a user can navigate and press through the chatshell's normal focus/key handling, dispatching a data button through `chat.Processor.PressButton` and a text button through `SendText` -- the chat-messenger slash-command surface's buttons (e.g. `/spaces`' space picker) MUST keep working after the chatshell cutover, not degrade to plain text.
 
 ## Acceptance Criteria
 
@@ -141,16 +161,46 @@ Pinning an entity to the chatshell sidebar (`Model.PinToSidebar`, driven by a co
 **When** a `<sneat-action>` referencing "it" is handled, or the model renders a deterministic Output
 **Then** the focused/pinned entity resolves the pronoun and the matching control (`ListBlock`/`CardBlock`/`tui/grid`) appears in the transcript
 
+### AC: calendar-week-and-todo-views-show-real-data
+
+**Requirements:** chat-ai#req:calendar-and-todo-presentations-carry-real-data
+
+**Given** a space with one happening at a known time and a todo list with one done and one open item
+**When** the user asks for today's calendar, this week's calendar, and their todos, through a headless `chatshell.Model`
+**Then** the rendered day view, week view, and todo view each show the happening's real time and the todo's done/open marker, not just titles
+
+### AC: bot-keyboard-button-press-dispatches-like-a-slash-command
+
+**Requirements:** chat-ai#req:bot-keyboard-buttons-are-focusable
+
+**Given** `/spaces` has rendered its space-picker buttons in a headless `chatshell.Model`
+**When** the user focuses the buttons block and presses Enter over a space button
+**Then** the press dispatches through `chat.Processor.PressButton` and the resulting space card appears in the transcript, the same outcome typing the equivalent command would produce
+
+### AC: contact-lookup-resolves-or-offers-choices
+
+**Requirements:** chat-ai#req:contacts-lookup-resolves-not-guesses
+
+**Given** a space with a uniquely-named contact, two similarly-named contacts, and an unmatched name
+**When** the user asks to find each of them by name
+**Then** the unique name renders a `ContactCard`, the ambiguous name renders both candidates as a choice, and the unmatched name answers plainly that nothing was found -- none of the three executes an Executor action
+
 ## Out of Scope
 
-Deferred to follow-on work:
+Deferred to follow-on work (m11: kept honest against the current code, not the state at initial spec time):
 
-- **The main-LLM leg's live network verification.** `pipeline.StreamRequest`/`Stream` are exercised against real `ai/openaicompat` and `ai/cloud` providers over `httptest` (scenarios 11/12), and `chatapp`'s stream wiring is exercised headlessly with no LLM configured (proving the clean "not available" path, scenario 13). A real OpenAI-compatible/Anthropic endpoint or a live `api.sneat.cloud` was not used.
-- **Full Shift-Arrow/F6 keyboard navigation exercised end-to-end.** The headless chatshell tests drive `Submit`/`OnMsg`/`OnStreamEvent`/`PinToSidebar`/`HandleAction` directly rather than through the actual focus-ring key sequence (Shift+Up/Down/Left/Right, F6); `tui/focus`'s own package tests cover the ring itself.
+- **The main-LLM leg's live network verification.** `pipeline.StreamRequest`/`Stream` are exercised against real `ai/openaicompat` and `ai/cloud` providers over `httptest` (scenarios 11/12), and `chatapp`'s free-form explain path (scenario 1) and no-LLM-configured path (scenario 13) are both exercised headlessly through the real `chatshell.Model`. A real OpenAI-compatible/Anthropic endpoint or a live `api.sneat.cloud` was not used.
+- **Full F6/Shift+Right sidebar-toggle keyboard navigation exercised end-to-end.** Shift+Up/Down and Enter/"+" over a rendered block ARE now driven through the real `chatshell.Model.Update` key sequence in several tests (focusing an item, pinning to the sidebar, pressing a bot-keyboard button); F6 (sidebar visibility) and Shift+Right (moving focus into the sidebar itself) are not exercised by an `internal/chatapp` test — `tui/focus`'s and `tui/chatshell`'s own package tests cover the ring and those keys directly.
 - **Firestore-backed happenings/todos/contacts readers' collection paths.** `internal/aichat/data`'s Firestore readers mirror `internal/firestoredb`'s existing contact-reading convention and are unit-tested against real `dbo4calendarius`/`dbo4listus` structs, but the collection PATH itself was not verified against a live or emulated space.
-- **Recurring happening occurrence expansion.** `HappeningsReader` returns a recurring happening's stored template slot, not a resolved next-occurrence; see `internal/aichat/data`'s doc comment.
-- **Timezone handling.** `internal/aichat/data`'s slot date/time parsing and `pipeline.parseWhen` treat calendarius's date+time strings as the server's local `time.Location`, not the space's own stored timezone.
-- **A `/space` picker for the aichat pipeline.** The (currently unwired) `chatapp.defaultSpaceID` picks an arbitrary one of the user's spaces (Go map iteration order); it does not read or drive the existing `/space`/`/spaces` active-space selection the slash-command Processor already has.
+- **Recurring happening occurrence expansion is partial, not general.** A day/week view now excludes a recurring happening on a day its rule does not hit (S6), but only for a WEEKLY rule with explicit `Weekdays` — daily/monthly/yearly recurrence still falls back to being excluded rather than computed, and `HappeningsReader.Get`/`FindByTitle` still return the stored template slot, not a resolved next-occurrence; see `internal/aichat/data`'s and `controls.filterRecurringToWindow`'s doc comments.
+- **Contact relationship-word resolution ("my mum", "my wife") never actually matches.** `contacts.find_contact`/`show_contact` resolve through `sneat-ai-backend/resolve.Resolve`, which supports relationship words, but `internal/aichat/data.Contact` carries only ID/Name (no roles/gender/relations), so that path always degrades to `OutcomeUnknown` and falls back to a plain name search; see `pipeline.findOrShowContact`'s doc comment.
+- **A bot-keyboard button press always appends a new transcript entry.** `chat.Reply.Edit` (re-render the pressed card in place — e.g. a space card's own buttons replacing themselves) has no `chatshell` equivalent yet; see `chatapp.appendReplies`'s doc comment.
+- **A `HappeningCard`/reschedule-confirmation card does not yet carry a richer field set.** `chatapp.cardFor`'s fallback (used for a happening, still) shows only the entity's raw `Keys` as label/value pairs; only a contact card (`controls.NewContactCard`) and the calendar/todo LIST presentations (`controls.NewDayCalendar`/`NewWeekCalendar`/`NewHappeningsList`/`NewTodoList`/`NewBuyList`, all wired through `pipeline.Output.HappeningRows`/`TodoRows`) carry real data beyond a title.
+
+Now DONE, no longer deferred (kept here only as history — see the requirements above for the current behaviour):
+
+- Timezone handling: a slot's own `TimeZone`/`UTCOffset` is honoured when present, else the session's IANA zone (`Pipeline.TZ`, `--tz`/env override).
+- A `/space` picker for the aichat pipeline: `chatapp.Submit` syncs the pipeline's active space from the slash-command `Processor.ActiveSpace()` on every turn, so `/space`/`/spaces` and the pipeline never disagree about which space is active.
 
 ## Open Questions
 
