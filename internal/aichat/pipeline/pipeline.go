@@ -429,7 +429,7 @@ func (p Pipeline) pickFromLastShown(text string, st *session.State) (Output, boo
 	if !ok {
 		return Output{}, false
 	}
-	res, handled := resolveByPosition(pos, *st)
+	res, handled := resolveByPosition(pos, "", *st) // "" = any kind: this fallback has no reference kind to filter by
 	if !handled {
 		return Output{}, false
 	}

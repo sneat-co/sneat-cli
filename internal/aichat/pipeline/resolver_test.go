@@ -211,6 +211,59 @@ func TestResolver_ExpressionTemporalWord_NoMatchInWindow(t *testing.T) {
 	}
 }
 
+// TestResolver_WordSetMatchesAnyOrder covers m1: a happening titled with
+// words in one order still matches a reference expression naming them in
+// the OTHER order -- a joined-substring query would miss this.
+func TestResolver_WordSetMatchesAnyOrder(t *testing.T) {
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h1", SpaceID: "sp1", Title: "Appointment: Dentist"},
+	}}}
+	r := Resolver{Readers: readers, Now: func() time.Time { return time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC) }}
+	res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "dentist appointment"}, session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeOne || res.Candidates[0].Keys["happeningID"] != "h1" {
+		t.Fatalf("res = %+v, want h1 matched despite reversed word order", res)
+	}
+}
+
+// TestResolver_PossessiveWeekday covers m1: "Friday's yoga" recognises
+// "Friday's" as the weekday "Friday", not a literal title word.
+func TestResolver_PossessiveWeekday(t *testing.T) {
+	now := time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC) // Friday
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{
+		{ID: "fri", SpaceID: "sp1", Title: "Yoga", Start: time.Date(2026, 9, 25, 18, 0, 0, 0, time.UTC)},
+		{ID: "mon", SpaceID: "sp1", Title: "Yoga", Start: time.Date(2026, 9, 21, 18, 0, 0, 0, time.UTC)},
+	}}}
+	r := Resolver{Readers: readers, Now: func() time.Time { return now }}
+	res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "Friday's yoga"}, session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeOne || res.Candidates[0].Keys["happeningID"] != "fri" {
+		t.Fatalf("res = %+v, want ONLY the Friday yoga (possessive weekday narrowed the window)", res)
+	}
+}
+
+// TestResolver_OrdinalFiltersByKind covers m2: "2" after a happenings
+// choice list must not resolve to a todo reference.
+func TestResolver_OrdinalFiltersByKind(t *testing.T) {
+	shown := []session.EntityRef{
+		{Type: sneatdomain.EntityHappening, Title: "A", Keys: map[string]string{"happeningID": "h1"}},
+		{Type: sneatdomain.EntityHappening, Title: "B", Keys: map[string]string{"happeningID": "h2"}},
+	}
+	st := session.State{LastShown: shown}
+	r := Resolver{Readers: testReaders()}
+	res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityTodo, Expression: "2"}, st, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeNone {
+		t.Fatalf("res = %+v, want OutcomeNone -- LastShown[1] is a happening, not a todo", res)
+	}
+}
+
 // TestResolver_OrdinalOutOfRange_ReportsNone ensures a number beyond the
 // shown list's length is a clean "no such option", not a panic or a
 // fall-through to some unrelated candidate.

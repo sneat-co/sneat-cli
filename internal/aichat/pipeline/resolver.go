@@ -84,7 +84,10 @@ func (r Resolver) Resolve(ctx context.Context, ref decision.Reference, st sessio
 		return resolvePronoun(ref.Kind, st), nil
 	}
 	if pos, ok := parseOrdinal(ref.Expression); ok {
-		if res, handled := resolveByPosition(pos, st); handled {
+		// m2: only pick a LastShown item of the KIND this reference actually
+		// asks for -- e.g. a happenings-choice list followed by a todo
+		// reference's "2" must not silently pick a happening.
+		if res, handled := resolveByPosition(pos, ref.Kind, st); handled {
 			return res, nil
 		}
 		// Not a valid position into LastShown (e.g. out of range, or nothing
@@ -102,10 +105,16 @@ func (r Resolver) Resolve(ctx context.Context, ref decision.Reference, st sessio
 			return Result{Outcome: OutcomeNone}, fmt.Errorf("pipeline: no happenings reader configured")
 		}
 		terms, window := significantTerms(r.now(), ref.Expression)
-		hs, err := r.Readers.Happenings.FindByTitle(ctx, spaceID, strings.Join(terms, " "))
+		// m1: word-SET matching, not a joined-substring query -- "" lists
+		// every active happening (FindByTitle("") matches everything via
+		// strings.Contains(title, "")), and filterByWordSet then requires
+		// every significant word present, in ANY order, so "appointment
+		// dentist" and "dentist appointment" match the same title.
+		hs, err := r.Readers.Happenings.FindByTitle(ctx, spaceID, "")
 		if err != nil {
 			return Result{}, err
 		}
+		hs = filterByWordSet(hs, terms)
 		hs = filterByWindow(hs, window)
 		return classify(toEntityRefs(hs, func(h data.Happening) session.EntityRef {
 			return session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title,
@@ -218,14 +227,23 @@ func parseOrdinal(expr string) (pos int, ok bool) {
 // no LastShown to pick from at all, so the caller falls through to a
 // literal search instead of reporting a hard "no match" for what might just
 // be a coincidentally numeric title.
-func resolveByPosition(pos int, st session.State) (Result, bool) {
+// kind == "" means "any kind" (used by pipeline.go's context-free
+// pickFromLastShown fallback, which has no reference kind to filter by);
+// a non-empty kind (m2) rejects a position whose LastShown entity is a
+// different kind, e.g. "2" after a happenings choice list must not resolve
+// to a todo reference just because index 2 happens to exist.
+func resolveByPosition(pos int, kind string, st session.State) (Result, bool) {
 	if len(st.LastShown) == 0 {
 		return Result{}, false
 	}
 	if pos < 1 || pos > len(st.LastShown) {
 		return Result{Outcome: OutcomeNone}, true
 	}
-	return Result{Outcome: OutcomeOne, Candidates: []session.EntityRef{st.LastShown[pos-1]}}, true
+	picked := st.LastShown[pos-1]
+	if kind != "" && picked.Type != kind {
+		return Result{Outcome: OutcomeNone}, true
+	}
+	return Result{Outcome: OutcomeOne, Candidates: []session.EntityRef{picked}}, true
 }
 
 // referenceStopwords are dropped from a happening reference expression
@@ -242,17 +260,20 @@ var referenceStopwords = map[string]bool{
 type dayWindow struct{ from, to time.Time }
 
 // significantTerms splits a happening reference expression ("my dentist
-// appointment tomorrow") into its significant search words (stopwords
-// removed) and, when one word names a temporal window ("tomorrow",
-// "Friday" -- resolved via sneat-ai-backend's temporal package, per the
-// reuse-existing-sneat-code rule), the day window it resolves to (S4). The
-// temporal word itself is excluded from the returned terms: it narrows
-// WHEN, it is not part of the title being searched for.
+// appointment tomorrow", "Friday's yoga class") into its significant search
+// words (stopwords removed) and, when one word names a temporal window
+// ("tomorrow", "Friday"/"Friday's" -- resolved via sneat-ai-backend's
+// temporal package, per the reuse-existing-sneat-code rule), the day window
+// it resolves to (S4). The temporal word itself is excluded from the
+// returned terms: it narrows WHEN, it is not part of the title being
+// searched for. A possessive weekday ("Friday's") is recognised the same as
+// the bare weekday (m1) -- temporal.ParseText's own vocabulary has no
+// possessive form.
 func significantTerms(now time.Time, expr string) (terms []string, win *dayWindow) {
 	words := strings.Fields(expr)
 	kept := make([]string, 0, len(words))
 	for _, w := range words {
-		lw := strings.ToLower(w)
+		lw := stripPossessive(strings.ToLower(w))
 		if referenceStopwords[lw] {
 			continue
 		}
@@ -263,9 +284,50 @@ func significantTerms(now time.Time, expr string) (terms []string, win *dayWindo
 				continue // the temporal word narrows WHEN, not the title
 			}
 		}
-		kept = append(kept, w)
+		kept = append(kept, lw)
 	}
 	return kept, win
+}
+
+// stripPossessive removes a trailing "'s"/"’s" (m1: "Friday's" recognised
+// the same as "Friday") -- both ASCII and the Unicode right single quote,
+// since free text/voice transcription may use either.
+func stripPossessive(w string) string {
+	for _, suffix := range []string{"'s", "’s"} {
+		if strings.HasSuffix(w, suffix) {
+			return strings.TrimSuffix(w, suffix)
+		}
+	}
+	return w
+}
+
+// filterByWordSet keeps a happening only when EVERY term in terms appears
+// as a case-insensitive substring somewhere in its Title, in ANY order
+// (m1: "match by word set... not joined substring") -- "dentist
+// appointment" and "appointment dentist" both match a title containing
+// both words, which a single joined-substring query ("dentist
+// appointment") would miss if the title's own word order differed. An
+// empty terms list (e.g. the whole expression was a temporal word) keeps
+// every happening -- filterByWindow narrows it instead.
+func filterByWordSet(hs []data.Happening, terms []string) []data.Happening {
+	if len(terms) == 0 {
+		return hs
+	}
+	out := hs[:0]
+	for _, h := range hs {
+		title := strings.ToLower(h.Title)
+		match := true
+		for _, term := range terms {
+			if !strings.Contains(title, term) {
+				match = false
+				break
+			}
+		}
+		if match {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // filterByWindow keeps only happenings whose Start falls in win, or that
