@@ -516,3 +516,62 @@ func TestChatshell_PinToSidebar_ThenReferredToByPronoun(t *testing.T) {
 		t.Fatalf("view does not show completion, view:\n%s", h.model.View().Content)
 	}
 }
+
+// TestApplySpaceChange_ClearsWorkingContext_KeepsSidebar is B3's session
+// side: switching the active space invalidates Focused/Selection/Pending/
+// Previous/LastShown (they may point at an entity from the space just left)
+// but leaves Sidebar pins in place -- they stay visible so switching back
+// doesn't lose them, and are never resolved-and-acted-on for the new space
+// only because Resolver/SneatExecutor refuse a cross-space target
+// defensively (covered separately by the reviewer's own B3 probe tests,
+// TestProbeCheck_B3_SpaceLeakViaReference and
+// TestProbeCheck_FocusFromOtherSpace, both of which pass unmodified against
+// this branch).
+func TestApplySpaceChange_ClearsWorkingContext_KeepsSidebar(t *testing.T) {
+	h, _ := testHandler(t)
+	h.spaceID = "sp1"
+
+	oldRef := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Standup", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
+	h.state.Focused = &oldRef
+	h.state.Selection = []session.EntityRef{oldRef}
+	h.state.LastShown = []session.EntityRef{oldRef}
+	h.state.Pending = &session.Action{Kind: "calendar.reschedule_happening", Target: &oldRef}
+	h.state.Previous = &session.Action{Kind: "calendar.reschedule_happening", Target: &oldRef}
+	h.state.PreviousAt = time.Now()
+	h.state.Sidebar = []session.EntityRef{oldRef}
+
+	// Same space (or empty, meaning "the Processor has no opinion yet") is
+	// never a change: nothing is cleared.
+	h.applySpaceChange("")
+	h.applySpaceChange("sp1")
+	if h.state.Focused == nil || h.spaceID != "sp1" {
+		t.Fatalf("applySpaceChange treated a no-op as a space change: spaceID=%q focused=%+v", h.spaceID, h.state.Focused)
+	}
+
+	h.applySpaceChange("sp2")
+
+	if h.spaceID != "sp2" {
+		t.Fatalf("spaceID = %q, want sp2", h.spaceID)
+	}
+	if h.state.Focused != nil {
+		t.Errorf("Focused survived a space change: %+v", h.state.Focused)
+	}
+	if h.state.Selection != nil {
+		t.Errorf("Selection survived a space change: %+v", h.state.Selection)
+	}
+	if h.state.LastShown != nil {
+		t.Errorf("LastShown survived a space change: %+v", h.state.LastShown)
+	}
+	if h.state.Pending != nil {
+		t.Errorf("Pending survived a space change: %+v", h.state.Pending)
+	}
+	if h.state.Previous != nil {
+		t.Errorf("Previous survived a space change: %+v", h.state.Previous)
+	}
+	if !h.state.PreviousAt.IsZero() {
+		t.Errorf("PreviousAt survived a space change: %v", h.state.PreviousAt)
+	}
+	if len(h.state.Sidebar) != 1 || !h.state.Sidebar[0].Same(oldRef) {
+		t.Errorf("Sidebar pin was dropped on a space change, want it kept: %+v", h.state.Sidebar)
+	}
+}

@@ -72,11 +72,16 @@ func Run(deps Deps) (err error) {
 	ctx := context.Background()
 	httpClient := http.DefaultClient
 
+	spaceID := defaultSpaceID(ctx, deps.Spaces, deps.UID, deps.CurrentSpace)
+
+	// m9 coordinator ruling: seed the Processor's own active space with the
+	// pipeline's default space pick, so /space agrees with it from the
+	// first turn instead of reporting "No space is selected" until the
+	// user presses a space button.
 	processor := chat.NewProcessor(chat.Deps{
 		Spaces: deps.Spaces, Contacts: deps.Contacts, UID: deps.UID, Email: deps.Email, Version: deps.Version,
+		CurrentSpace: spaceID,
 	})
-
-	spaceID := defaultSpaceID(ctx, deps.Spaces, deps.UID, deps.CurrentSpace)
 
 	readers := data.Readers{
 		Happenings: data.NewFirestoreHappenings(deps.Cfg, deps.TokenSource),

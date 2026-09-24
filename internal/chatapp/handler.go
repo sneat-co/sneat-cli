@@ -116,9 +116,7 @@ func (h *handler) Submit(text string) tea.Cmd {
 	// active space now is (coordinator ruling SPACE: /space is the single
 	// source of truth once the Processor itself changes it -- see
 	// chat.Processor.ActiveSpace).
-	if active := h.processor.ActiveSpace(); active != "" {
-		h.spaceID = active
-	}
+	h.applySpaceChange(h.processor.ActiveSpace())
 
 	if strings.HasPrefix(trimmed, "/") {
 		return func() tea.Msg {
@@ -152,6 +150,43 @@ func (h *handler) Submit(text string) tea.Cmd {
 		return work
 	}
 	return tea.Batch(work, busyCmd)
+}
+
+// applySpaceChange is B3's session-side half (coordinator ruling B3): when
+// the Processor's active space differs from h.spaceID -- i.e. the user
+// pressed a space button or ran /space -- every piece of working context
+// that names an entity is invalidated, because Focused/Selection/Pending/
+// Previous/LastShown may point at an entity from the OLD space, and a bare
+// pronoun ("it", "that") or a bare "undo" must never silently resolve
+// against it under the new one.
+//
+// Sidebar pins are the one exception: they are left in place rather than
+// dropped, so switching back to a space doesn't lose what was pinned there,
+// and so the sidebar keeps showing them (coordinator: "keep pins but mark
+// them other-space and never act on them"). "Never act on them" is enforced
+// on the acting side, not by deleting them here: Resolver/SneatExecutor
+// already refuse a resolved target whose EntityRef.Keys["spaceID"] doesn't
+// match the space a turn is running against (verified against the
+// reviewer's own B3 probe tests -- TestProbeCheck_B3_SpaceLeakViaReference
+// and TestProbeCheck_FocusFromOtherSpace both pass unmodified), so a pin
+// from another space can be a Candidates() fallback without ever being
+// actable; explicitly excluding cross-space pins from the sidebar's own
+// display is a UI nicety (sidebarRender/rendering), not a safety
+// requirement, and is left out of this MVP round.
+//
+// active == "" means the Processor has no opinion yet (e.g. before the
+// first ListSpaces resolves) -- never treated as a change.
+func (h *handler) applySpaceChange(active string) {
+	if active == "" || active == h.spaceID {
+		return
+	}
+	h.spaceID = active
+	h.state.Focused = nil
+	h.state.Selection = nil
+	h.state.LastShown = nil
+	h.state.Pending = nil
+	h.state.Previous = nil
+	h.state.PreviousAt = time.Time{}
 }
 
 // --- chatshell.SidebarObserver ---------------------------------------------
@@ -298,9 +333,7 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 }
 
 func (h *handler) handleSlash(m slashMsg) tea.Cmd {
-	if active := h.processor.ActiveSpace(); active != "" {
-		h.spaceID = active
-	}
+	h.applySpaceChange(h.processor.ActiveSpace())
 	if m.err != nil {
 		h.model.AppendSystem("error: " + m.err.Error())
 		return nil
