@@ -184,8 +184,18 @@ func (h *handler) Submit(text string) tea.Cmd {
 	busyCmd := h.model.SetBusy(true)
 	h.model.SetBusyCancel(cancel)
 
+	// m2 (fix round r4 review): capture spaceID and pl HERE, on the UI loop,
+	// same as ctx/snapshot/seq above -- work's closure must never read
+	// h.spaceID/h.pipeline live, or a /space switch (applySpaceChange,
+	// synchronous on the UI loop) that lands AFTER Submit returns but
+	// BEFORE this closure actually runs on its worker goroutine would run
+	// this turn against a DIFFERENT space than the one active when the user
+	// submitted it -- the same class of race S1's ctx/snapshot capture
+	// already guards against, just for these two fields.
+	spaceID := h.spaceID
+	pl := h.pipeline
 	work := func() tea.Msg {
-		out, err := h.pipeline.Turn(ctx, trimmed, &snapshot, h.spaceID)
+		out, err := pl.Turn(ctx, trimmed, &snapshot, spaceID)
 		return turnMsg{text: trimmed, output: out, err: err, state: snapshot, seq: seq}
 	}
 	if busyCmd == nil {
@@ -309,6 +319,7 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 		snapshot = *sp2
 	}
 	spaceID := h.spaceID
+	pl := h.pipeline // m2: captured here too, not read live inside work below
 	// M2 (fix round r4 review): the stream itself has already finished by
 	// the time this tea.Cmd runs (that is what EventCompleted means), so
 	// chatshell's own stream-tied busy state has already cleared -- but
@@ -339,7 +350,7 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 			// a nil Msg outright), which would leave busy stuck true.
 			return actionMsg{seq: turnSeq}
 		}
-		out, err := h.pipeline.HandleAction(actionCtx, *action, &snapshot, spaceID)
+		out, err := pl.HandleAction(actionCtx, *action, &snapshot, spaceID)
 		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq}
 	}
 	if busyCmd == nil {
@@ -580,8 +591,14 @@ func (h *handler) beginLLMStream(text string, d *decision.Decision, seq int64) t
 	// to do it asynchronously.
 	busyCmd := h.model.SetBusy(true)
 	h.model.SetBusyCancel(cancel)
+	// m2 (fix round r4 review): capture spaceID and pl here, on the UI loop,
+	// same as ctx/stateSnapshot/seq above -- see Submit's own doc comment on
+	// its matching capture for why a live h.spaceID/h.pipeline read inside a
+	// background closure is a race against a concurrent /space switch.
+	spaceID := h.spaceID
+	pl := h.pipeline
 	work := func() tea.Msg {
-		req, report := h.pipeline.StreamRequest(ctx, text, &stateSnapshot, h.spaceID, d, focused, history)
+		req, report := pl.StreamRequest(ctx, text, &stateSnapshot, spaceID, d, focused, history)
 		return llmRequestReadyMsg{ctx: ctx, text: text, decision: d, req: req, report: report, state: stateSnapshot, seq: seq}
 	}
 	if busyCmd == nil {

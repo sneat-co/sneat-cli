@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/strongo/aichat/ai/session"
@@ -13,6 +14,34 @@ type spaceIDFakeSpaces map[string]any
 
 func (f spaceIDFakeSpaces) ListSpaces(context.Context, string) (map[string]any, error) {
 	return f, nil
+}
+
+// TestSessionClock_UsesGivenZone_NotProcessLocal is m1 (fix round r4
+// review): SneatExecutor.Now/Pipeline.Now/Resolver.Now must all resolve
+// "now" in the SESSION's chosen zone (--tz/SNEAT_TZ), not the process's own
+// -- otherwise --tz only relabels timestamps for display while "today"/
+// "this week" keep being computed in whatever zone the server happens to
+// run in. Pacific/Kiritimati (UTC+14) is used because it is never the
+// process's own zone in CI/dev, so a wiring bug that silently fell back to
+// time.Now()'s bare (process-local) Location() would show up as a location
+// mismatch here regardless of where this test actually runs.
+func TestSessionClock_UsesGivenZone_NotProcessLocal(t *testing.T) {
+	loc, err := time.LoadLocation("Pacific/Kiritimati")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	now := sessionClock(loc)
+	before := time.Now()
+	got := now()
+	after := time.Now()
+
+	if got.Location().String() != loc.String() {
+		t.Fatalf("Location = %q, want %q -- sessionClock must resolve \"now\" in the session's OWN zone, not the process's", got.Location(), loc)
+	}
+	// Same instant, just relocated -- not a frozen or offset clock.
+	if got.Before(before.Add(-time.Second)) || got.After(after.Add(time.Second)) {
+		t.Fatalf("got = %v, want within [%v, %v] (same instant as time.Now(), just in loc)", got, before, after)
+	}
 }
 
 // TestDefaultSpaceID covers the SPACE ruling: session.CurrentSpace wins

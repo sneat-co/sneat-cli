@@ -91,6 +91,7 @@ func Run(deps Deps) (err error) {
 	// unparseable zone name falls back to time.Local rather than failing the
 	// whole session over a typo'd --tz.
 	loc := locationFromName(deps.TZ)
+	now := sessionClock(loc)
 
 	// m6: ONE Firestore client for the whole chat session, shared by all
 	// three readers, instead of each reader opening its own -- a prior
@@ -117,7 +118,7 @@ func Run(deps Deps) (err error) {
 	}()
 
 	api := sneatapi.New(deps.Cfg.APIBaseURL, deps.TokenSource, httpClient)
-	executor := pipeline.SneatExecutor{Calendar: api, Todo: api, Happenings: readers.Happenings, Now: time.Now}
+	executor := pipeline.SneatExecutor{Calendar: api, Todo: api, Happenings: readers.Happenings, Now: now}
 
 	cloudToken := func(context.Context) (string, error) {
 		tok, err := deps.TokenSource.Token()
@@ -144,10 +145,10 @@ func Run(deps Deps) (err error) {
 
 	pl := pipeline.Pipeline{
 		Chain:    decision.Chain{Providers: providers.Decision},
-		Resolver: pipeline.Resolver{Readers: readers},
+		Resolver: pipeline.Resolver{Readers: readers, Now: now},
 		Executor: executor,
 		Readers:  readers,
-		Now:      time.Now,
+		Now:      now,
 		TZ:       loc.String(),
 		LLM:      providers.LLM,
 		CtxMgr:   ctxmgr.NewManager(ctxmgr.Policy{}),
@@ -199,6 +200,22 @@ func defaultSpaceID(ctx context.Context, spaces chat.SpacesReader, uid, currentS
 	}
 	slices.Sort(ids)
 	return ids[0]
+}
+
+// sessionClock builds the "now" every part of one chat session resolves
+// "today"/"this week"/"tomorrow"/a bare-time reschedule against --
+// SneatExecutor.Now, Pipeline.Now, and Resolver.Now alike (m1, fix round r4
+// review). A bare time.Now() carries the PROCESS's own zone (the server/
+// container's local zone, e.g. UTC), not the user's chosen one: --tz/
+// SNEAT_TZ would then only relabel timestamps for DISPLAY while the actual
+// "what day is today" logic silently kept using the process's own zone --
+// wrong whenever the two disagree (e.g. --tz America/New_York on a UTC
+// server: for several hours a day, the process's own "today" is already
+// the NEXT calendar day in New York). loc is deps.TZ resolved via
+// locationFromName, so callers get one shared, correctly-zoned clock rather
+// than each separately relocating a bare time.Now().
+func sessionClock(loc *time.Location) func() time.Time {
+	return func() time.Time { return time.Now().In(loc) }
 }
 
 // locationFromName resolves name (an IANA zone, e.g. "Europe/Berlin", or
