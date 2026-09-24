@@ -2,9 +2,19 @@ package pipeline
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrActionNotTrailing is returned by Finish when a well-formed
+// <sneat-action> block parsed successfully but was NOT the trailing content
+// of the reply -- non-whitespace prose followed it (S6 coordinator ruling
+// SPLITTER: "a block followed by non-whitespace prose is NOT executed --
+// only a trailing block counts"). The block itself is intentionally
+// discarded (Action returns nil); the prose that invalidated it is still
+// included in Finish's trailing text, so nothing is lost, only not acted on.
+var ErrActionNotTrailing = errors.New("pipeline: <sneat-action> block was not the trailing content of the reply, ignored")
 
 // startTag/endTag delimit the single semantic action block a main-LLM
 // inference may emit at the end of its streamed answer, per the product
@@ -40,6 +50,12 @@ type Splitter struct {
 	actionOK bool
 	action   Action
 	err      error
+	// postAction accumulates visible text emitted AFTER the most recently
+	// parsed action block's closing tag (reset to empty by every new
+	// parseAction call, success or failure). Non-whitespace content here at
+	// Finish time means that block was not trailing -- see
+	// ErrActionNotTrailing.
+	postAction strings.Builder
 }
 
 // Feed appends the next streamed delta and returns the portion of it that is
@@ -64,30 +80,56 @@ func (s *Splitter) Feed(delta string) string {
 			hold := partialTagSuffixLen(s.pending, startTag)
 			safe := s.pending[:len(s.pending)-hold]
 			out.WriteString(safe)
+			s.recordPostAction(safe)
 			s.pending = s.pending[len(s.pending)-hold:]
 			return out.String()
 		}
 		out.WriteString(s.pending[:idx])
+		s.recordPostAction(s.pending[:idx])
 		s.pending = s.pending[idx+len(startTag):]
 		s.inAction = true
 	}
 }
 
+// recordPostAction tracks text that renders after the most recent parsed
+// action block, for the S6 "only a trailing block counts" rule.
+func (s *Splitter) recordPostAction(text string) {
+	if s.actionOK {
+		s.postAction.WriteString(text)
+	}
+}
+
 // Finish flushes any trailing plain text (buffered because it could have
-// been the start of a tag that never completed) and returns the parsed
-// action, if the stream carried a well-formed one. An unterminated
-// <sneat-action> block is reported as an error; a well-formed block with
-// invalid JSON is reported as an error too, with Action left nil -- callers
-// treat both like "no action" and still show the text collected so far.
+// been the start of a tag that never completed, or because it followed an
+// already-parsed action block) and returns the parsed action, if the stream
+// carried one that qualifies. Three cases return an error but still return
+// EVERY byte of trailing text the stream produced -- S6 coordinator ruling
+// SPLITTER: no data loss, ever, even when the action itself is discarded:
+//   - an unterminated <sneat-action> block: everything since the (never
+//     closed) start tag is shown as ordinary prose, Action is nil;
+//   - a well-formed block with invalid JSON: reported, Action is nil;
+//   - a well-formed, validly-parsed block that non-whitespace prose
+//     followed (ErrActionNotTrailing): the block is discarded, but the
+//     prose that invalidated it is included in trailing exactly as it
+//     would have been shown had no action ever been emitted.
 func (s *Splitter) Finish() (trailing string, action *Action, err error) {
 	if s.inAction {
-		return "", nil, fmt.Errorf("pipeline: stream ended inside an unterminated %s block", startTag)
+		// Unterminated: pending holds everything since the start tag (it
+		// was never re-added to out because the loop returned early from
+		// inside the `s.inAction` branch) -- show it as prose rather than
+		// discarding it.
+		trailing, s.pending = s.pending, ""
+		return trailing, nil, fmt.Errorf("pipeline: stream ended inside an unterminated %s block", startTag)
 	}
 	trailing, s.pending = s.pending, ""
+	s.recordPostAction(trailing)
 	if s.err != nil {
 		return trailing, nil, s.err
 	}
 	if s.actionOK {
+		if strings.TrimSpace(s.postAction.String()) != "" {
+			return trailing, nil, ErrActionNotTrailing
+		}
 		a := s.action
 		return trailing, &a, nil
 	}
@@ -100,8 +142,11 @@ func (s *Splitter) Finish() (trailing string, action *Action, err error) {
 // mid-answer -- has its LAST block win, matching "the end of the reply is
 // the model's final answer" rather than silently keeping the first. A
 // successful later block also clears any error an earlier malformed block
-// left, for the same reason.
+// left, for the same reason. Every new block call also resets postAction:
+// text after an EARLIER block does not disqualify a LATER, genuinely
+// trailing one.
 func (s *Splitter) parseAction(raw string) {
+	s.postAction.Reset()
 	var a Action
 	if err := json.Unmarshal([]byte(raw), &a); err != nil {
 		s.err = fmt.Errorf("pipeline: malformed %s block: %w", startTag, err)

@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -272,6 +274,38 @@ func TestStreamRequest_SystemPromptTreatsSpaceContentAsData(t *testing.T) {
 	req, _ := p.StreamRequest(context.Background(), "hi", nil, "sp1", nil, nil, nil)
 	if !strings.Contains(req.System, "DATA") && !strings.Contains(req.System, "data") {
 		t.Fatalf("System = %q, want it to state space content is data, not instructions", req.System)
+	}
+}
+
+// fakeErroringLLM streams one delta ending mid-tag (held back by the
+// Splitter as a possible tag start) then a fatal stream error, never an
+// EventCompleted -- the shape splitStream's error branch must handle.
+type fakeErroringLLM struct{}
+
+func (fakeErroringLLM) Name() string { return "fake-erroring" }
+
+func (fakeErroringLLM) Stream(context.Context, ai.ChatRequest) iter.Seq2[ai.Event, error] {
+	return func(yield func(ai.Event, error) bool) {
+		if !yield(ai.Event{Type: ai.EventTextDelta, Text: "Hello <sneat-a"}, nil) {
+			return
+		}
+		yield(ai.Event{}, errors.New("boom"))
+	}
+}
+
+// TestStream_ErrorFlushesHeldBackText covers S6/llm.go's splitStream error
+// branch: a fatal stream error must not silently drop whatever safe text
+// the Splitter was still holding back (bytes that could have been the
+// start of a tag, here "<sneat-a") -- it must be flushed before the error.
+func TestStream_ErrorFlushesHeldBackText(t *testing.T) {
+	p := Pipeline{LLM: fakeErroringLLM{}}
+	seq, _ := p.Stream(context.Background(), ai.ChatRequest{})
+	text, _, _, err := ai.Collect(seq)
+	if err == nil {
+		t.Fatal("expected the stream's fatal error to propagate")
+	}
+	if text != "Hello <sneat-a" {
+		t.Fatalf("text = %q, want the held-back partial-tag bytes flushed before the error", text)
 	}
 }
 

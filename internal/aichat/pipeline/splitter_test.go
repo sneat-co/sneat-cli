@@ -1,6 +1,10 @@
 package pipeline
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 func feedAll(s *Splitter, deltas []string) string {
 	var out string
@@ -43,7 +47,8 @@ func TestSplitter_ActionBlockWholeInOneDelta(t *testing.T) {
 // TestSplitter_ActionBlockSplitAcrossDeltas is the scenario the MVP brief
 // names explicitly: the start tag, the JSON body, and the end tag each
 // arrive fragmented across several stream deltas, as a real token-by-token
-// LLM stream would produce them.
+// LLM stream would produce them. The block is the LAST thing in the reply
+// (nothing follows its closing tag), so it is trailing and executes.
 func TestSplitter_ActionBlockSplitAcrossDeltas(t *testing.T) {
 	deltas := []string{
 		"Sure, moving it now.",
@@ -53,7 +58,6 @@ func TestSplitter_ActionBlockSplitAcrossDeltas(t *testing.T) {
 		"ence\":\"dentist appointment\",\"slots\":{\"when\":\"Friday 16",
 		":00\"}}</sneat-ac",
 		"tion>",
-		" All done.",
 	}
 	s := &Splitter{}
 	visible := feedAll(s, deltas)
@@ -62,7 +66,7 @@ func TestSplitter_ActionBlockSplitAcrossDeltas(t *testing.T) {
 		t.Fatalf("Finish: %v", err)
 	}
 	full := visible + trailing
-	if full != "Sure, moving it now.  All done." {
+	if full != "Sure, moving it now. " {
 		t.Fatalf("got %q", full)
 	}
 	if action == nil {
@@ -71,6 +75,50 @@ func TestSplitter_ActionBlockSplitAcrossDeltas(t *testing.T) {
 	if action.Kind != "calendar.reschedule_happening" || action.Reference != "dentist appointment" || action.Slots["when"] != "Friday 16:00" {
 		t.Fatalf("action = %+v", action)
 	}
+}
+
+// TestSplitter_TextAfterActionBlockMeansNotTrailing_NoDataLoss covers S6
+// coordinator ruling SPLITTER: a block followed by non-whitespace prose
+// (here, "All done." after the closing tag) is NOT the trailing content of
+// the reply, so it must NOT execute -- but every byte of that prose still
+// reaches the visible transcript, unlike simply discarding the whole
+// message.
+func TestSplitter_TextAfterActionBlockMeansNotTrailing_NoDataLoss(t *testing.T) {
+	deltas := []string{
+		"Sure, moving it now.",
+		" <sneat-action>{\"kind\":\"calendar.reschedule_happening\",\"reference\":\"dentist\",\"slots\":{\"when\":\"Friday 16:00\"}}</sneat-action>",
+		" All done.",
+	}
+	s := &Splitter{}
+	visible := feedAll(s, deltas)
+	trailing, action, err := s.Finish()
+	if !errors.Is(err, ErrActionNotTrailing) {
+		t.Fatalf("Finish err = %v, want ErrActionNotTrailing", err)
+	}
+	if action != nil {
+		t.Fatalf("expected no action once trailing prose invalidates it, got %+v", action)
+	}
+	full := visible + trailing
+	if full != "Sure, moving it now.  All done." {
+		t.Fatalf("got %q, want every byte preserved (no data loss)", full)
+	}
+}
+
+// TestSplitter_WhitespaceOnlyAfterActionBlockStillCounts_AsTrailing covers
+// the flip side: whitespace-only content (a trailing newline, say) after
+// the closing tag does not disqualify the block -- only non-whitespace
+// prose does.
+func TestSplitter_WhitespaceOnlyAfterActionBlockStillCounts_AsTrailing(t *testing.T) {
+	s := &Splitter{}
+	visible := s.Feed(`Done. <sneat-action>{"kind":"todo.complete_todo"}</sneat-action>` + "\n")
+	trailing, action, err := s.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	if action == nil || action.Kind != "todo.complete_todo" {
+		t.Fatalf("action = %+v, want it to still be trailing", action)
+	}
+	_ = visible + trailing
 }
 
 func TestSplitter_NoTrailingTextAfterActionAtEnd(t *testing.T) {
@@ -88,16 +136,24 @@ func TestSplitter_NoTrailingTextAfterActionAtEnd(t *testing.T) {
 	}
 }
 
-func TestSplitter_UnterminatedBlockIsAnError(t *testing.T) {
+// TestSplitter_UnterminatedBlockIsAnError_NoDataLoss covers S6 coordinator
+// ruling SPLITTER: the text since the (never-closed) start tag must be
+// shown as prose, not silently discarded, even though the block itself is
+// unusable (no action).
+func TestSplitter_UnterminatedBlockIsAnError_NoDataLoss(t *testing.T) {
 	s := &Splitter{}
-	_ = feedAll(s, []string{"Working on it <sneat-action>{\"kind\":\"todo.complete_todo\""})
-	_, action, err := s.Finish()
+	visible := feedAll(s, []string{"Working on it <sneat-action>{\"kind\":\"todo.complete_todo\""})
+	trailing, action, err := s.Finish()
 	if err == nil {
 		t.Fatal("expected an error for an unterminated action block")
 	}
 	if action != nil {
 		t.Fatalf("expected no action, got %+v", action)
 	}
+	if !strings.Contains(trailing, `{"kind":"todo.complete_todo"`) {
+		t.Fatalf("trailing = %q, want the unterminated block's content shown as prose (no data loss)", trailing)
+	}
+	_ = visible
 }
 
 func TestSplitter_MalformedJSONIsAnError(t *testing.T) {

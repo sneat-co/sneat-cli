@@ -299,6 +299,15 @@ func splitStream(src iter.Seq2[ai.Event, error], sp *Splitter) iter.Seq2[ai.Even
 	return func(yield func(ai.Event, error) bool) {
 		for ev, err := range src {
 			if err != nil {
+				// S6 coordinator ruling SPLITTER: a stream error must not
+				// silently drop whatever safe text the splitter was still
+				// holding back (bytes that could have been the start of a
+				// tag) -- flush it as a final delta before the error itself.
+				if trailing, _, _ := sp.Finish(); trailing != "" {
+					if !yield(ai.Event{Type: ai.EventTextDelta, Text: trailing}, nil) {
+						return
+					}
+				}
 				yield(ev, err)
 				return
 			}

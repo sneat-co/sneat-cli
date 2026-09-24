@@ -2,6 +2,7 @@ package chatapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -262,7 +263,15 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 			if m.trailing != "" {
 				h.model.AppendAssistant(m.trailing)
 			}
-			h.model.AppendSystem("(couldn't parse action)")
+			// S6: a block that was not trailing (non-whitespace prose
+			// followed it) gets its own note, distinct from a genuinely
+			// malformed/unterminated one -- the model's answer still
+			// rendered fine, it just did not act.
+			note := "(couldn't parse action)"
+			if errors.Is(m.parseErr, pipeline.ErrActionNotTrailing) {
+				note = "(no action taken -- more text followed the action block)"
+			}
+			h.model.AppendSystem(note)
 			if h.logger != nil {
 				aidiag.Log(h.ctx, h.logger, aidiag.Turn{Path: aidiag.PathLLMFallback, Errors: []string{aidiag.ErrorCode(m.parseErr)}})
 			}
