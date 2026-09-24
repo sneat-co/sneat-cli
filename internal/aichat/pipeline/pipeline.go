@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/strongo/aichat/ai"
 	"github.com/strongo/aichat/ai/ctxmgr"
 	"github.com/strongo/aichat/ai/decision"
@@ -236,6 +237,11 @@ func (p Pipeline) showWindow(ctx context.Context, st *session.State, spaceID str
 	if err != nil {
 		return Output{}, err
 	}
+	// S6: HappeningsReader.Window returns EVERY recurring happening
+	// unconditionally (it cannot know, on its own, which days a rule hits --
+	// see its documented limitation), so the presentation layer narrows to
+	// the ones that actually occur in [from, to).
+	hs = filterRecurringToWindow(hs, from, to)
 	if len(hs) == 0 {
 		st.LastShown = nil
 		return Output{Text: emptyText, Presentation: presentation}, nil
@@ -247,6 +253,38 @@ func (p Pipeline) showWindow(ctx context.Context, st *session.State, spaceID str
 	}
 	st.LastShown = refs
 	return Output{Text: fmt.Sprintf("%d happening(s).", len(hs)), Presentation: presentation, Entities: refs}, nil
+}
+
+// filterRecurringToWindow keeps a non-recurring happening as-is (Window
+// already filtered those by Start) and keeps a recurring one only when its
+// rule actually produces an occurrence somewhere in [from, to) (S6: "day/
+// week views show recurring happenings only on days their rule hits
+// (weekdays/weeks)"). Only a weekly rule with explicit Weekdays is expanded
+// -- daily/monthly/yearly recurrence is excluded rather than shown on the
+// template's possibly-wrong stale date (see HappeningsReader's documented
+// limitation: this MVP slice has no full occurrence-expansion engine).
+func filterRecurringToWindow(hs []data.Happening, from, to time.Time) []data.Happening {
+	out := hs[:0]
+	for _, h := range hs {
+		if !h.Recurring || recurrenceHitsWindow(h, from, to) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// recurrenceHitsWindow reports whether h's weekly recurrence rule produces
+// at least one occurrence in the day-aligned range [from, to).
+func recurrenceHitsWindow(h data.Happening, from, to time.Time) bool {
+	if h.Slot == nil || h.Slot.Repeats != dbo4calendarius.RepeatPeriodWeekly || len(h.Slot.Weekdays) == 0 {
+		return false
+	}
+	for d := from; d.Before(to); d = d.AddDate(0, 0, 1) {
+		if weekdayCodeMatches(h.Slot.Weekdays, d.Weekday()) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p Pipeline) listTodos(ctx context.Context, st *session.State, spaceID, list string) (Output, error) {

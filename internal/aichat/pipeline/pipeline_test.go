@@ -61,6 +61,47 @@ func TestTurn_ShowWeek(t *testing.T) {
 	}
 }
 
+// TestTurn_ShowDay_RecurringOnlyOnMatchingWeekday is S6: a weekly-recurring
+// happening appears in a day view only on a day its Weekdays rule hits, not
+// on every day just because it "is recurring".
+func TestTurn_ShowDay_RecurringOnlyOnMatchingWeekday(t *testing.T) {
+	fridayYoga := dbo4calendarius.HappeningSlot{
+		HappeningSlotTiming: dbo4calendarius.HappeningSlotTiming{
+			Timing:   dbo4calendarius.Timing{Start: dbo4calendarius.DateTime{Date: "2026-09-18", Time: "09:00"}},
+			Repeats:  dbo4calendarius.RepeatPeriodWeekly,
+			Weekdays: []dbo4calendarius.WeekdayCode{dbo4calendarius.Friday2},
+		},
+	}
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{
+		{ID: "yoga", SpaceID: "sp1", Title: "Yoga", SlotID: "s1", Recurring: true, Slot: &fridayYoga},
+	}}}
+	p := Pipeline{
+		Chain:    decision.Chain{Providers: []decision.Provider{rules.New()}},
+		Resolver: Resolver{Readers: readers, Now: fixedNow},
+		Readers:  readers,
+		Now:      fixedNow, // fixedNow is a Friday
+	}
+
+	out, err := p.Turn(context.Background(), "show my calendar today", &session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if len(out.Entities) != 1 || out.Entities[0].Keys["happeningID"] != "yoga" {
+		t.Fatalf("Friday: Entities = %+v, want the Friday yoga class", out.Entities)
+	}
+
+	// Advance "now" to a Monday: the same recurring happening must NOT show.
+	monday := func() time.Time { return time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC) }
+	p.Now, p.Resolver.Now = monday, monday
+	out, err = p.Turn(context.Background(), "show my calendar today", &session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if len(out.Entities) != 0 {
+		t.Fatalf("Monday: Entities = %+v, want none (yoga only recurs on Fridays)", out.Entities)
+	}
+}
+
 func TestTurn_UnknownText_NeedsLLM(t *testing.T) {
 	p, st := newTestPipeline(nil)
 	out, err := p.Turn(context.Background(), "what is the meaning of life", st, "sp1")
