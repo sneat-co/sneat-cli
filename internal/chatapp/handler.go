@@ -384,8 +384,17 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 			// a nil Msg outright), which would leave busy stuck true.
 			return actionMsg{seq: turnSeq, id: id}
 		}
+		// prevBefore (fix round r6 review): snapshot.Previous exactly as it
+		// stood before HandleAction runs -- HandleAction mutates snapshot
+		// (a pointer) in place, reassigning Previous to a NEW *session.Action
+		// only when it actually executes something (pipeline.runAction).
+		// Comparing pointers after the call is how executed below tells
+		// "really executed" apart from "errored/cancelled/no-op, Previous
+		// is still whatever it already was".
+		prevBefore := snapshot.Previous
 		out, err := pl.HandleAction(actionCtx, *action, &snapshot, spaceID)
-		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq, id: id}
+		executed := err == nil && snapshot.Previous != prevBefore
+		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq, id: id, executed: executed}
 	}
 	if busyCmd == nil {
 		return work
@@ -477,20 +486,27 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 		// it.
 		delete(h.pendingAction, m.id)
 		if atomic.LoadInt64(&h.turnSeq) != m.seq {
-			// S1/M2 (fix round r5 review): a stale result -- the turn it
-			// belongs to is no longer current -- but if an action was
-			// actually dispatched to HandleAction (m.parseErr == nil), it
-			// already ran for real (possibly a destructive mutation) and
-			// must never be silently dropped: record Previous/undo and
-			// render it (applyUndoDelta's own doc comment), same as a
-			// current result would, just without touching
-			// Focused/Selection/LastShown/Pending (a newer, current turn
-			// may already hold its own fresher values there) or busy (the
-			// newer turn already owns it and will clear it itself). A parse
-			// error means nothing ever reached HandleAction -- there is
-			// nothing real to preserve, so that case is still dropped
-			// outright.
-			if m.parseErr == nil {
+			// S1/M2 (fix round r5, corrected in r6 review): a stale result --
+			// the turn it belongs to is no longer current -- must still
+			// apply/render when the action actually EXECUTED (m.executed,
+			// not merely m.parseErr == nil): a real mutation already
+			// happened and must never be silently dropped, or "undo" stops
+			// working for a turn that genuinely ran. m.parseErr == nil alone
+			// is NOT sufficient -- r5's regression: a stale plain text-only
+			// answer (action == nil, m.state is the session.State zero
+			// value) would set Previous=nil, WIPING the current turn's real
+			// undo; a stale action that reached HandleAction but errored or
+			// was cancelled (m.err != nil) carries m.state.Previous exactly
+			// as it stood BEFORE that call -- an unrelated, possibly older
+			// value that would overwrite a NEWER Previous a current turn
+			// already recorded. m.executed (set in OnStreamEvent's work
+			// closure by comparing state.Previous's pointer before/after the
+			// HandleAction call) is false in both cases, so this correctly
+			// drops them. When true, apply only Previous/undo
+			// (applyUndoDelta), never Focused/Selection/LastShown/Pending (a
+			// newer, current turn may already hold its own fresher values
+			// there) or busy (the newer turn already owns it).
+			if m.executed {
 				h.applyUndoDelta(m.state)
 				h.render(m.output, m.err)
 			}
@@ -1011,4 +1027,18 @@ type actionMsg struct {
 	// OnStreamDone stops re-asserting busy for a stream whose action has
 	// already resolved.
 	id string
+	// executed is true only when HandleAction was called AND it actually
+	// ran an action (err == nil and state.Previous now differs from the
+	// pointer it held right before the call) -- fix round r6 review
+	// correction to r5's applyUndoDelta fix: parseErr == nil is NOT enough
+	// to know something real happened. executed is FALSE for a plain
+	// text-only answer (action == nil, HandleAction never even called --
+	// state is the zero value, so its nil Previous would otherwise wipe a
+	// real one) and for an action that reached HandleAction but errored or
+	// was cancelled before executing (state.Previous is whatever stale
+	// value the ORIGINAL pre-action snapshot already held, not a fresh
+	// one, so applying it would overwrite a NEWER Previous with an old
+	// one). OnMsg's stale branch uses this, not parseErr, to decide
+	// whether a stale result may still apply/render.
+	executed bool
 }

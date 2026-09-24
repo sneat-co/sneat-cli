@@ -852,20 +852,19 @@ func TestProbeR4_M2_BusySurvivesStreamDone_AndSubmitIsRefused(t *testing.T) {
 // started -- e.g. Esc cancelled the one that produced it) must be dropped
 // outright, never rendered and never allowed to write its state snapshot
 // onto live state.
-// TestOnMsg_ActionMsg_StaleSeq_StillRendersAndRecordsUndo_ButNotFocus is
-// S1's other half, UPDATED for fix round r5's review correction: a stale
-// actionMsg (an older turn's result, superseded by a newer one already in
-// flight) whose action nonetheless actually ran (m.parseErr == nil --
-// Splitter.Finish parsed fine, so HandleAction WAS called, for real) must
-// never be silently dropped outright the way a genuinely parse-failed one
-// still is -- whatever it did (or the error it hit) already happened, so it
-// is rendered and its Previous/undo recorded regardless of staleness (or
-// "undo" would stop working for a turn that genuinely executed). What it
-// must NOT do is let its OWN stale Focused/Selection/LastShown/Pending
-// snapshot overwrite live state a newer, current turn may already have
-// moved on from -- exactly the field-level split applyUndoDelta (vs.
-// applyStateDelta) makes.
-func TestOnMsg_ActionMsg_StaleSeq_StillRendersAndRecordsUndo_ButNotFocus(t *testing.T) {
+// TestOnMsg_ActionMsg_StaleSeq_ActuallyExecuted_StillRendersAndRecordsUndo_ButNotFocus
+// is S1's other half, UPDATED for fix round r6's review correction to r5:
+// a stale actionMsg (an older turn's result, superseded by a newer one
+// already in flight) whose action actually EXECUTED (m.executed == true --
+// not merely m.parseErr == nil, r6's fix) must never be silently dropped
+// outright the way a no-op or genuinely parse-failed one still is --
+// something real already happened, so it is rendered and its Previous/undo
+// recorded regardless of staleness (or "undo" would stop working for a
+// turn that genuinely executed). What it must NOT do is let its OWN stale
+// Focused/Selection/LastShown/Pending snapshot overwrite live state a
+// newer, current turn may already have moved on from -- exactly the
+// field-level split applyUndoDelta (vs. applyStateDelta) makes.
+func TestOnMsg_ActionMsg_StaleSeq_ActuallyExecuted_StillRendersAndRecordsUndo_ButNotFocus(t *testing.T) {
 	h, model := testHandler(t)
 	h.turnSeq = 5 // simulate a newer turn already in flight
 
@@ -878,11 +877,11 @@ func TestOnMsg_ActionMsg_StaleSeq_StillRendersAndRecordsUndo_ButNotFocus(t *test
 		Previous: &session.Action{Kind: "todo.complete_todo", Target: &staleTarget, Undo: &session.Action{Kind: "todo.reopen_todo", Target: &staleTarget}},
 	}
 	var m tea.Model = model
-	m, _ = m.Update(actionMsg{output: pipeline.Output{Text: "Done."}, state: staleState, seq: 4})
+	m, _ = m.Update(actionMsg{output: pipeline.Output{Text: "Done."}, state: staleState, seq: 4, executed: true})
 	h.model = m.(*chatshell.Model)
 
 	if !strings.Contains(h.model.View().Content, "Done.") {
-		t.Fatal("a stale-but-EXECUTED actionMsg (m.parseErr == nil: HandleAction actually ran) must still render its Output")
+		t.Fatal("a stale-but-EXECUTED actionMsg (m.executed == true) must still render its Output")
 	}
 	if h.state.Focused == nil || !h.state.Focused.Same(liveFocused) {
 		t.Fatalf("Focused = %+v, want the live value untouched by a stale actionMsg's own Focused snapshot", h.state.Focused)
@@ -894,8 +893,9 @@ func TestOnMsg_ActionMsg_StaleSeq_StillRendersAndRecordsUndo_ButNotFocus(t *test
 
 // TestOnMsg_ActionMsg_StaleSeq_ParseErr_StillDropped covers the OTHER stale
 // case: a parse error (Splitter.Finish itself failed) means HandleAction
-// was NEVER called -- nothing real happened, so a stale result here is
-// still dropped outright, exactly as before fix round r5's correction.
+// was NEVER called -- nothing real happened (m.executed stays false), so a
+// stale result here is still dropped outright, exactly as before fix round
+// r5's correction.
 func TestOnMsg_ActionMsg_StaleSeq_ParseErr_StillDropped(t *testing.T) {
 	h, model := testHandler(t)
 	h.turnSeq = 5
@@ -912,6 +912,50 @@ func TestOnMsg_ActionMsg_StaleSeq_ParseErr_StillDropped(t *testing.T) {
 	}
 	if h.state.Previous != nil {
 		t.Fatalf("Previous = %+v, want nil -- nothing executed for a parse-error result", h.state.Previous)
+	}
+}
+
+// TestOnMsg_ActionMsg_StaleTextOnly_DoesNotClobberPrevious is fix round
+// r6's review regression (adapted from the reviewer's zz_m2_probe_test.go,
+// TestProbeR5_StaleTextOnlyClobbersPrevious): a stale PLAIN TEXT-ONLY
+// answer (action == nil, so HandleAction was never even called -- m.state
+// is the session.State ZERO VALUE, its Previous is nil) must not wipe the
+// current turn's real Previous/undo just because m.parseErr happened to be
+// nil. m.executed correctly stays false for this case (HandleAction never
+// ran at all), so OnMsg's stale branch now leaves Previous untouched.
+func TestOnMsg_ActionMsg_StaleTextOnly_DoesNotClobberPrevious(t *testing.T) {
+	h, _ := testHandler(t)
+	prev := &session.Action{Kind: "todo.complete_todo"}
+	h.state.Previous = prev
+	h.turnSeq = 5
+
+	h.OnMsg(actionMsg{seq: 4, id: "old"})
+
+	if h.state.Previous != prev {
+		t.Fatalf("Previous = %+v, want %+v -- a stale text-only actionMsg must not wipe the current turn's undo", h.state.Previous, prev)
+	}
+}
+
+// TestOnMsg_ActionMsg_StaleCancelled_DoesNotOverwriteNewerPrevious is fix
+// round r6's other review regression (adapted from
+// TestProbeR5_StaleCancelledOverwritesNewerPrevious): a stale action that
+// reached HandleAction but errored/was cancelled before executing carries
+// m.state.Previous exactly as it stood BEFORE that call -- an unrelated,
+// possibly much older value (here simulating a leftover from whatever turn
+// most recently ran before this one started) that must not overwrite a
+// NEWER Previous the current turn has since recorded. m.executed is false
+// here (m.err != nil), so OnMsg's stale branch drops it outright.
+func TestOnMsg_ActionMsg_StaleCancelled_DoesNotOverwriteNewerPrevious(t *testing.T) {
+	h, _ := testHandler(t)
+	older := &session.Action{Kind: "old"}
+	newer := &session.Action{Kind: "newer"}
+	h.state.Previous = newer
+	h.turnSeq = 5
+
+	h.OnMsg(actionMsg{seq: 4, id: "old", err: context.Canceled, state: session.State{Previous: older}})
+
+	if h.state.Previous != newer {
+		t.Fatalf("Previous = %+v, want the untouched newer %+v -- a stale non-executed (cancelled) result must not replace it", h.state.Previous, newer)
 	}
 }
 
