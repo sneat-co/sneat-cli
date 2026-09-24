@@ -233,7 +233,7 @@ func (p Pipeline) showDay(ctx context.Context, st *session.State, spaceID, when 
 	// AddDate, not +24h: a calendar day is not always 24 wall-clock hours in
 	// the user's zone (DST transitions), coordinator ruling TIMEZONES.
 	to := from.AddDate(0, 0, 1)
-	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationDayCalendar, emptyText)
+	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationDayCalendar, emptyText, false)
 }
 
 func (p Pipeline) showWeek(ctx context.Context, st *session.State, spaceID string) (Output, error) {
@@ -249,7 +249,7 @@ func (p Pipeline) showWeek(ctx context.Context, st *session.State, spaceID strin
 	}
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, offset)
 	to := from.AddDate(0, 0, 7)
-	out, err := p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationWeekCalendar, "You have nothing scheduled this week.")
+	out, err := p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationWeekCalendar, "You have nothing scheduled this week.", false)
 	out.WeekStart = from // S9 follow-up: controls.NewWeekCalendar needs the Monday to build its day sections.
 	return out, err
 }
@@ -257,10 +257,17 @@ func (p Pipeline) showWeek(ctx context.Context, st *session.State, spaceID strin
 func (p Pipeline) showUpcoming(ctx context.Context, st *session.State, spaceID string) (Output, error) {
 	from := p.now()
 	to := from.AddDate(0, 1, 0)
-	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationHappeningsList, "Nothing upcoming.")
+	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationHappeningsList, "Nothing upcoming.", true)
 }
 
-func (p Pipeline) showWindow(ctx context.Context, st *session.State, spaceID string, from, to time.Time, presentation, emptyText string) (Output, error) {
+// showWindow lists happenings in [from, to). onlyNextOccurrence is S3's
+// "upcoming shows next occurrence date": showUpcoming passes true so a
+// recurring happening contributes just its next occurrence in the (whole
+// month) window rather than flooding the list with every repeat;
+// showDay/showWeek pass false so a week view shows EVERY occurrence its
+// rule hits that week (S3: "project actual occurrence dates within the
+// window").
+func (p Pipeline) showWindow(ctx context.Context, st *session.State, spaceID string, from, to time.Time, presentation, emptyText string, onlyNextOccurrence bool) (Output, error) {
 	if p.Readers.Happenings == nil {
 		return Output{}, fmt.Errorf("pipeline: no happenings reader configured")
 	}
@@ -273,20 +280,89 @@ func (p Pipeline) showWindow(ctx context.Context, st *session.State, spaceID str
 	// see its documented limitation), so the presentation layer narrows to
 	// the ones that actually occur in [from, to).
 	hs = filterRecurringToWindow(hs, from, to)
-	if len(hs) == 0 {
-		st.LastShown = nil
-		return Output{Text: emptyText, Presentation: presentation}, nil
-	}
-	refs := make([]session.EntityRef, 0, len(hs))
-	rows := make([]controls.HappeningRow, 0, len(hs))
+	var refs []session.EntityRef
+	var rows []controls.HappeningRow
 	for _, h := range hs {
 		ref := session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title,
 			Keys: map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}}
-		refs = append(refs, ref)
-		rows = append(rows, controls.HappeningRow{Ref: ref, Title: h.Title, Start: h.Start, End: h.End, Recurring: h.Recurring})
+		// S3: each ROW carries its own projected occurrence Start/End, not
+		// the happening's stored template date -- a Mon/Fri recurring
+		// happening in a week view becomes two rows, each dated correctly.
+		occs := projectOccurrences(h, from, to)
+		if onlyNextOccurrence && len(occs) > 1 {
+			occs = occs[:1] // projectOccurrences returns them chronologically
+		}
+		for _, occ := range occs {
+			refs = append(refs, ref)
+			rows = append(rows, controls.HappeningRow{Ref: ref, Title: h.Title, Start: occ.start, End: occ.end, Recurring: h.Recurring})
+		}
+	}
+	if len(rows) == 0 {
+		st.LastShown = nil
+		return Output{Text: emptyText, Presentation: presentation}, nil
 	}
 	st.LastShown = refs
-	return Output{Text: fmt.Sprintf("%d happening(s).", len(hs)), Presentation: presentation, Entities: refs, HappeningRows: rows}, nil
+	return Output{Text: fmt.Sprintf("%d happening(s).", len(rows)), Presentation: presentation, Entities: refs, HappeningRows: rows}, nil
+}
+
+// occurrence is one concrete instance of a happening at an absolute
+// Start/End -- what projectOccurrences produces from a (possibly
+// recurring) data.Happening template.
+type occurrence struct{ start, end time.Time }
+
+// projectOccurrences expands h into its actual occurrence(s) within
+// [from, to) (S3: "project actual occurrence dates within the window").
+// A non-recurring happening has exactly one occurrence: its own Start/End.
+// A recurring happening expands to one occurrence per day its weekly
+// Weekdays rule hits in the window, in chronological order, at the
+// template's stored time-of-day and duration.
+//
+// S7 LIMITATION -- NOT IMPLEMENTED: this does not apply calendarius's
+// per-day adjustments (a single occurrence retimed/moved) or cancellations
+// (a single occurrence removed) when projecting. Those live in a SEPARATE
+// Firestore collection this MVP slice's HappeningsReader never reads
+// (days/{date}, dbo4calendarius.NewCalendarDayEntry): reading it here would
+// mean one extra Firestore read PER DAY in the window (the vendored
+// calendarius backend has no batch "adjustments in this date range" query),
+// and data.Happening/HappeningsReader were designed around one happening
+// document, not a per-occurrence override merged in from elsewhere -- a
+// real fix is a new reader type and a real per-window read cost, not a
+// small addition to this function. A projected occurrence can therefore
+// show the template's time/date even where the space has an adjustment or
+// cancellation recorded against it (e.g. a cancelled Friday still appears).
+// Flagged in the final report rather than silently shipped.
+func projectOccurrences(h data.Happening, from, to time.Time) []occurrence {
+	if !h.Recurring {
+		return []occurrence{{h.Start, h.End}}
+	}
+	if h.Slot == nil || h.Slot.Repeats != dbo4calendarius.RepeatPeriodWeekly || len(h.Slot.Weekdays) == 0 {
+		return nil // filterRecurringToWindow should already have dropped these
+	}
+	loc := h.Start.Location()
+	if loc == nil {
+		loc = time.UTC
+	}
+	hour, minute := 0, 0
+	var duration time.Duration
+	if !h.Start.IsZero() {
+		hour, minute = h.Start.Hour(), h.Start.Minute()
+		if !h.End.IsZero() && h.End.After(h.Start) {
+			duration = h.End.Sub(h.Start)
+		}
+	}
+	var out []occurrence
+	for d := from; d.Before(to); d = d.AddDate(0, 0, 1) {
+		if !weekdayCodeMatches(h.Slot.Weekdays, d.Weekday()) {
+			continue
+		}
+		start := time.Date(d.Year(), d.Month(), d.Day(), hour, minute, 0, 0, loc)
+		var end time.Time
+		if duration > 0 {
+			end = start.Add(duration)
+		}
+		out = append(out, occurrence{start, end})
+	}
+	return out
 }
 
 // filterRecurringToWindow keeps a non-recurring happening as-is (Window

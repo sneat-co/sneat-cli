@@ -10,6 +10,7 @@ import (
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
 
+	"github.com/sneat-co/sneat-cli/internal/aichat/controls"
 	"github.com/sneat-co/sneat-cli/internal/aichat/data"
 	"github.com/sneat-co/sneat-cli/internal/aichat/rules"
 	"github.com/sneat-co/sneat-cli/internal/aichat/sneatdomain"
@@ -58,6 +59,57 @@ func TestTurn_ShowWeek(t *testing.T) {
 	}
 	if len(out.Entities) != 2 {
 		t.Fatalf("entities = %+v, want the 2 happenings in this week's window (h1, h3) -- h2 is next week", out.Entities)
+	}
+}
+
+// TestTurn_ShowWeek_ProjectsBothRecurringOccurrences is S3: a Mon/Fri
+// recurring happening in a week view produces TWO rows, each carrying its
+// own projected occurrence date -- not the template's single stale date
+// (adapted from the coordinator's probe TestProbe_WeekCalendarShowsRecurring).
+func TestTurn_ShowWeek_ProjectsBothRecurringOccurrences(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t) // Monday 2026-09-21
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{yoga}}}
+	p := Pipeline{Readers: readers, Now: func() time.Time { return now }}
+	st := &session.State{}
+	out, err := p.showWeek(context.Background(), st, "sp1")
+	if err != nil {
+		t.Fatalf("showWeek: %v", err)
+	}
+	if len(out.HappeningRows) != 2 {
+		t.Fatalf("HappeningRows = %+v, want 2 (Monday + Friday occurrences)", out.HappeningRows)
+	}
+	wantDates := []string{"2026-09-21", "2026-09-25"}
+	for i, want := range wantDates {
+		if got := out.HappeningRows[i].Start.Format("2006-01-02"); got != want {
+			t.Errorf("HappeningRows[%d].Start = %s, want %s", i, got, want)
+		}
+	}
+	view := controls.NewWeekCalendar("This week", out.WeekStart, out.HappeningRows).View(0, false)
+	if !strings.Contains(view, "Yoga") {
+		t.Errorf("WeekCalendar view = %q, want it to render Yoga", view)
+	}
+}
+
+// TestTurn_ShowUpcoming_RecurringShowsOnlyNextOccurrence is S3's "upcoming
+// shows next occurrence date": a recurring happening contributes ONE row
+// (its next occurrence), not one per matching day across the whole month
+// window.
+func TestTurn_ShowUpcoming_RecurringShowsOnlyNextOccurrence(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{yoga}}}
+	p := Pipeline{Readers: readers, Now: func() time.Time { return now }}
+	st := &session.State{}
+	out, err := p.showUpcoming(context.Background(), st, "sp1")
+	if err != nil {
+		t.Fatalf("showUpcoming: %v", err)
+	}
+	if len(out.HappeningRows) != 1 {
+		t.Fatalf("HappeningRows = %+v, want exactly 1 (next occurrence only)", out.HappeningRows)
+	}
+	if got := out.HappeningRows[0].Start.Format("2006-01-02"); got != "2026-09-21" {
+		t.Errorf("HappeningRows[0].Start = %s, want 2026-09-21 (today, the NEXT occurrence)", got)
 	}
 }
 
