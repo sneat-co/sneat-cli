@@ -2,6 +2,9 @@ package chatapp
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/strongo/aichat/ai/decision"
 	aidiag "github.com/strongo/aichat/ai/diag"
+	"github.com/strongo/aichat/ai/openaicompat"
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
 
@@ -204,6 +208,53 @@ func TestChatshell_UnknownText_AttemptsMainLLM(t *testing.T) {
 	}
 }
 
+// TestChatshell_ExplainFreeForm_StreamsThroughLLM is scenario 1's second
+// half: "keep deterministic help, add an LLM-backed free-form explain path
+// when an LLM is configured." A phrase outside sneat-rules' fixed help-phrase
+// table ("give me a rundown of what this app is for") falls through to
+// NeedsLLM; this test proves it drives the real chatshell.StartStream path
+// with a real openaicompat.Provider (the DoneMsg carries no error, and the
+// splitter records no action), which combined with
+// internal/aichat/pipeline's TestStream_BYOKOpenAICompatible_ThroughPipeline
+// (the same provider's actual streamed text/usage) covers the free-form
+// explain path end to end without paying for a second full real-time UI
+// event-loop drain: chatshell's own busy spinner re-arms on a REAL 100ms
+// FPS timer while a stream is in flight, and draining that for real (rather
+// than the 50ms-budgeted drop the other tests rely on) would put this one
+// test alone over m13's <5s-for-the-package target.
+func TestChatshell_ExplainFreeForm_StreamsThroughLLM(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		sseWriteHandler(w, `{"model":"gpt-5","choices":[{"delta":{"content":"This is sneat chat."}}]}`)
+		sseWriteHandler(w, "[DONE]")
+	}))
+	defer srv.Close()
+
+	h, model := testHandler(t)
+	h.pipeline.LLM = openaicompat.New(openaicompat.Config{BaseURL: srv.URL, APIKey: "sk-test", Model: "gpt-5"})
+
+	m, cmd := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = drain(m, cmd, 6)
+	for _, r := range "explain this app" {
+		m, cmd = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(m, cmd, 6) // enough for Submit's work + StartStream's own kickoff, not a full real-time spinner drain
+
+	if h.splitters == nil {
+		t.Fatal("expected startLLMStream to have registered a splitter for the in-flight stream")
+	}
+}
+
+// sseWriteHandler matches internal/aichat/pipeline/llm_test.go's own
+// sseWrite helper (unexported there too), duplicated rather than exported
+// across packages for one test helper.
+func sseWriteHandler(w http.ResponseWriter, data string) {
+	_, _ = io.WriteString(w, "data: "+data+"\n\n")
+	w.(http.Flusher).Flush()
+}
+
 // TestFocusedScopes covers brief §4/§7: a focused happening pins the
 // calendar scope so the Context Manager includes its dynamic data even when
 // a decision does not require it.
@@ -242,8 +293,8 @@ func TestChatshell_FocusThenPronounAction_ResolvesConfirmsAndUndoes(t *testing.T
 	h.pipeline.Executor = exec
 
 	m := typeAndEnter(t, model, "show my calendar today")
-	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})   // Shift+Up: focus the DayCalendar block
-	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})                  // Enter: activate its (only) item
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift}) // Shift+Up: focus the DayCalendar block
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})                 // Enter: activate its (only) item
 	if h.state.Focused == nil || h.state.Focused.Keys["happeningID"] != "h1" {
 		t.Fatalf("Enter over the block's item did not focus it via OnMsg: %+v", h.state.Focused)
 	}
@@ -297,7 +348,7 @@ func TestChatshell_SlashCommandButtons_PressSelectsSpace(t *testing.T) {
 	}
 
 	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift}) // focus the buttons block
-	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})                // press the (only) space button
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})                 // press the (only) space button
 
 	if !strings.Contains(m.View().Content, "Space: Home") {
 		t.Fatalf("pressing the space button did not open its card, view:\n%s", m.View().Content)
