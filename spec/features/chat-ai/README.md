@@ -1,0 +1,123 @@
+---
+format: https://specscore.md/feature-specification
+status: Draft
+---
+
+# Feature: Chat AI Pipeline
+
+> [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-ai?op=explore) | [Edit](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-ai?op=edit) | [Ask question](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-ai?op=ask) | [Request change](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-ai?op=request-change) |
+**Status:** Draft
+**Source Ideas:** —
+
+## Summary
+
+`internal/aichat` is the sneat-chat MVP's AI processing pipeline: Sneat's decision taxonomy and deterministic rules on top of `strongo/aichat`'s shared `LLMProvider`/`DecisionProvider` contracts, entity resolution against real Firestore/API data, pending-confirmation and undo bookkeeping, the `<sneat-action>` stream-splitter convention for a main-LLM turn, and flag/env/file configuration for Sneat AI Cloud and BYOK. It is consumed by `cmd/sneat/commands/chat.go` today only for flag plumbing; running it against the interactive shell is out of scope for this artifact (see Out of Scope).
+
+## Problem
+
+`sneat chat` today (chat-messenger) is a deterministic slash-command processor with free text explicitly deferred. The sneat-chat MVP brief asks for a conversational layer that still prefers deterministic handling and a fast decision provider (Jev) before ever falling back to a main LLM call, resolves what the user refers to against real data rather than trusting a model-supplied ID, and never depends on Jev being available. Building that as Sneat-specific code entangled with a terminal renderer would make none of it reusable by DataTug or a future product; building it directly against `strongo/aichat`'s product-neutral contracts (`ai.LLMProvider`, `decision.Provider`, `decision.Chain`, `session.State`) keeps Sneat's part to naming (the taxonomy) and resolving (real data), which is what this Feature specifies.
+
+## Behavior
+
+### Decision taxonomy
+
+#### REQ: taxonomy
+
+`sneatdomain.Taxonomy()` MUST declare every module (`calendar`, `todo`, `contacts`, `general`), intent, presentation, data kind and entity type this pipeline understands, as a `decision.Taxonomy`, so any `decision.Provider` — the deterministic rules provider, a future Jev call, or a test double — validates against the same vocabulary (`decision.Validate`).
+
+### Deterministic rules
+
+#### REQ: rules-provider-first
+
+The processing chain MUST run a deterministic `decision.Provider` (`internal/aichat/rules`, built on `strongo/aichat/ai/decision/rules`) before any other provider, per the founder's addendum: "a chain of decision providers and the first that decided we use." It MUST be a small exact-phrase table, not a regex NLP engine, and MUST abstain (not guess) on text it does not recognise.
+
+#### REQ: confirmation-requires-pending
+
+The rules provider's confirmation, rejection/cancellation and undo rules MUST fire only when `session.State.Pending` (confirmation/rejection) or `session.State.Previous` (undo) is set. An unambiguous "yes" with nothing pending MUST abstain rather than being misread as agreement to nothing.
+
+### Pipeline
+
+#### REQ: chain-first-decides
+
+`pipeline.Pipeline.Turn` MUST run `decision.Chain.Decide` and, when a provider decides, dispatch on its `Interaction` and `Presentation`/`Module`+`Intent` without a main-LLM call. When no provider decides, `Turn` MUST return `Output.NeedsLLM = true` rather than guessing or erroring.
+
+#### REQ: resolver-never-trusts-a-model-id
+
+`pipeline.Resolver.Resolve` MUST resolve a `decision.Reference` against real data (`internal/aichat/data` readers) or, for a pronoun reference, against `session.State.Candidates()` filtered by entity type. It MUST NOT accept an entity ID from a `decision.Decision` or a `<sneat-action>` block — neither carries one, by contract.
+
+#### REQ: ambiguous-reference-is-a-choice
+
+When resolution finds more than one candidate, the pipeline MUST return them as a choice (`Output.Entities`) and MUST NOT execute, stage a pending action, or guess. When it finds none, it MUST ask the user to clarify.
+
+#### REQ: destructive-actions-confirm
+
+Rescheduling or cancelling a happening and deleting a todo MUST be staged as `session.State.Pending` with a human-readable `Summary` and MUST NOT execute until a deterministic or LLM-driven confirmation resolves it. A non-destructive resolved action (e.g. completing a todo) executes immediately.
+
+#### REQ: undo-when-supported
+
+An executed action whose `Executor.Execute` returns a non-nil undo action MUST be recorded as `session.State.Previous` with that `Undo`. `Turn`'s undo interaction MUST execute `Previous.Undo` when set and MUST answer that nothing can be undone otherwise.
+
+#### REQ: sneat-action-splitter
+
+`pipeline.Splitter` MUST hide a trailing `<sneat-action>{json}</sneat-action>` block from the text a main-LLM turn streams to the user, MUST tolerate the tags and JSON body splitting across any number of stream deltas, and MUST report an unterminated block or malformed JSON as an error rather than silently dropping or emitting it as visible text. `pipeline.Pipeline.HandleAction` MUST resolve and confirm/execute a parsed action through the same policy as a deterministic command (REQ: destructive-actions-confirm).
+
+### Configuration
+
+#### REQ: no-jev-still-works
+
+`aiconfig.Config.NoJev` (flag `--no-jev`, env `SNEAT_AI_LLM`/file `ai.decision.provider: disabled`) MUST remove only the cloud decision provider from the chain; the deterministic rules provider MUST remain, so every deterministic scenario keeps working with Jev disabled, unavailable, or never configured.
+
+#### REQ: byok-independent-of-decision
+
+`aiconfig.Build` MUST be able to select a BYOK main-LLM provider (`--ai-llm byok`, `--byok-protocol openai-compatible|anthropic`, `--byok-endpoint`, `--byok-model`, `--byok-api-key-env`, defaulting to `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` by protocol) independently of whether the cloud decision provider is in the chain, so a user may use Sneat AI Cloud for Jev while answering with their own key.
+
+## Acceptance Criteria
+
+### AC: deterministic-scenarios-need-no-llm
+
+**Requirements:** chat-ai#req:rules-provider-first, chat-ai#req:chain-first-decides, chat-ai#req:no-jev-still-works
+
+**Given** the deterministic rules provider is the only provider in the chain
+**When** the user sends "show my calendar today", "this week", "my todos", "contacts", or "help"
+**Then** `Turn` answers with `NeedsLLM = false` and the matching presentation, with no main-LLM call
+
+### AC: reference-resolution-never-guesses
+
+**Requirements:** chat-ai#req:resolver-never-trusts-a-model-id, chat-ai#req:ambiguous-reference-is-a-choice
+
+**Given** a space with two happenings whose titles both contain "dentist"
+**When** a reschedule action references "dentist"
+**Then** the pipeline returns both as candidates and does not stage a pending action or execute anything
+
+### AC: pending-confirm-cancel-undo
+
+**Requirements:** chat-ai#req:destructive-actions-confirm, chat-ai#req:undo-when-supported, chat-ai#req:confirmation-requires-pending
+
+**Given** a destructive action has been resolved to one candidate
+**When** the user replies "yes"
+**Then** the executor runs exactly once, `session.State.Previous` is set with its `Undo`, and a later "undo" runs the undo action and clears `Previous`
+
+### AC: action-block-splits-across-deltas
+
+**Requirements:** chat-ai#req:sneat-action-splitter
+
+**Given** a streamed main-LLM answer whose `<sneat-action>{...}</sneat-action>` block's tags and JSON body each arrive split across separate deltas
+**When** the stream is fed through `Splitter.Feed` and finished with `Splitter.Finish`
+**Then** the visible text excludes the block entirely and the action parses correctly
+
+## Out of Scope
+
+Deferred to follow-on work, in dependency order:
+
+- **The interactive chatshell cutover.** `strongo/aichat`'s `tui/chatshell`, `tui/grid`, `tui/transcript`, `tui/sidebar` and `tui/focus` packages landed in the parallel `aichat-tui` lane during this slice, but wiring `sneat chat` to run the pipeline through them — replacing `internal/chattui`, building the semantic control renderers (`HappeningCard`, `DayCalendar`, `WeekCalendar`, `HappeningsList`, `TodoList`, `BuyList`, `ContactCard`, `ContactsGrid` over `tui/grid`), and the sidebar/focus keyboard — is not done. `chat-messenger#req:free-text-deferred` and `chat-tui` remain accurate until that cutover lands; this Feature does not change their status.
+- **The main-LLM leg's Context Manager.** `strongo/aichat/ai/ctxmgr` was still an empty stub in the parallel `aichat-ai` lane as of this slice, so `Pipeline.Turn`'s `NeedsLLM = true` outcome is not yet wired to an actual LLM call with static/dynamic context selection — only `HandleAction` (a main LLM's `<sneat-action>` block) is implemented, ready for whatever builds the prompt around it.
+- **Sneat AI Cloud / BYOK end-to-end verification.** `aiconfig.Build` assembles `ai/cloud.Client` and the BYOK adapters correctly per their tested contracts, but was not run against a live `api.sneat.cloud` or a real OpenAI-compatible/Anthropic endpoint in this slice (see the implementation report's scenario coverage).
+- **Firestore-backed happenings/todos readers' collection paths.** `internal/aichat/data`'s `firestoreHappenings`/`firestoreTodos` mirror `internal/firestoredb`'s existing contact-reading convention but were not verified against a live or emulated space.
+- **Recurring happening occurrence expansion.** `HappeningsReader` returns a recurring happening's stored template slot, not a resolved next-occurrence; see `internal/aichat/data`'s doc comment.
+
+## Open Questions
+
+- Should `aiconfig.Build`'s chain include an `llmdecider.Decider` (a single-inference LLM decision fallback) between the rules provider and the main-LLM leg, or is `NeedsLLM` sufficient once the Context Manager exists? Deferred until `ai/ctxmgr` lands.
+
+---
+*This document follows the https://specscore.md/feature-specification*

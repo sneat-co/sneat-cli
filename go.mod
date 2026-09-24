@@ -16,6 +16,7 @@ require (
 	github.com/dal-go/record v0.1.3
 	github.com/sneat-co/calendarius/backend v0.10.1
 	github.com/sneat-co/contactus/backend v0.3.6
+	github.com/sneat-co/listus/backend v0.1.14
 	github.com/sneat-co/sneat-ai-backend v0.0.6
 	github.com/sneat-co/sneat-bots v0.30.26
 	github.com/sneat-co/sneat-core-modules v0.73.0
@@ -23,6 +24,7 @@ require (
 	github.com/sneat-co/sneat-go-core v0.69.0
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
+	github.com/strongo/aichat v0.0.0-20260924091342-6a10e3ea2f06
 	github.com/strongo/buildinfo v0.2.1
 	github.com/strongo/deviceauth v0.1.0
 	github.com/strongo/strongoapp v0.31.58
@@ -81,7 +83,6 @@ require (
 	github.com/sahilm/fuzzy v0.1.3 // indirect
 	github.com/sneat-co/assetus/backend v0.8.2 // indirect
 	github.com/sneat-co/commitius/backend v0.8.0 // indirect
-	github.com/sneat-co/listus/backend v0.1.14 // indirect
 	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.6 // indirect
 	github.com/sneat-co/sneat-ext-contracts/listus v0.0.6 // indirect
 	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.1 // indirect
