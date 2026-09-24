@@ -141,7 +141,11 @@ func TestStreamRequest_IncludesHistory(t *testing.T) {
 	if len(req.Messages) != 3 {
 		t.Fatalf("Messages = %+v, want history + current turn", req.Messages)
 	}
-	if req.Messages[0] != history[0] || req.Messages[1] != history[1] {
+	// ai.Message is no longer comparable via == (v0.0.3 added a []ai.ToolCall
+	// field for tool-calling support) -- compare the fields this test
+	// actually cares about instead.
+	if req.Messages[0].Role != history[0].Role || req.Messages[0].Text != history[0].Text ||
+		req.Messages[1].Role != history[1].Role || req.Messages[1].Text != history[1].Text {
 		t.Fatalf("Messages = %+v, want history first", req.Messages)
 	}
 	if req.Messages[2].Text != "what's next" || req.Messages[2].Role != ai.RoleUser {
