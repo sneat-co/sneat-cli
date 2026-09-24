@@ -210,3 +210,28 @@ func TestHandleAction_MainLLMAction(t *testing.T) {
 		t.Fatalf("executed = %+v", exec.Executed)
 	}
 }
+
+// TestHandleAction_AddTodo_IgnoresModelSuppliedSpaceID is the B3 regression:
+// an add_todo/add_to_buy action has no resolved Target (nothing to look up),
+// so the space it runs in came from action.Args["spaceID"] -- model-
+// controlled. Every action must execute in the pipeline's OWN space; a
+// model-forged spaceID (e.g. from a prompt-injected happening title) must
+// never leak through.
+func TestHandleAction_AddTodo_IgnoresModelSuppliedSpaceID(t *testing.T) {
+	exec := &FakeExecutor{}
+	p, st := newTestPipeline(exec)
+	kind := sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddTodo
+	_, err := p.HandleAction(context.Background(), Action{
+		Kind:  kind,
+		Slots: map[string]string{"title": "Buy milk", "spaceID": "attacker-space"},
+	}, st, "sp1")
+	if err != nil {
+		t.Fatalf("HandleAction: %v", err)
+	}
+	if len(exec.Executed) != 1 {
+		t.Fatalf("executed = %+v, want 1", exec.Executed)
+	}
+	if got := exec.Executed[0].Args["spaceID"]; got != "sp1" {
+		t.Fatalf("spaceID = %q, want the pipeline's own space sp1 (model-supplied spaceID must be discarded)", got)
+	}
+}

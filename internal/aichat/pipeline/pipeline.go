@@ -103,11 +103,28 @@ func (p Pipeline) Turn(ctx context.Context, text string, st *session.State, spac
 // confirmation behaviours for the same action kind.
 func (p Pipeline) HandleAction(ctx context.Context, a Action, st *session.State, spaceID string) (Output, error) {
 	if a.Reference == "" && !a.Pronoun {
-		return p.runAction(ctx, session.Action{Kind: a.Kind, Args: a.Slots}, st)
+		return p.runAction(ctx, session.Action{Kind: a.Kind, Args: spaceScopedArgs(a.Slots, spaceID)}, st)
 	}
 	kind := entityKindFor(a.Kind)
 	ref := decision.Reference{Kind: kind, Expression: a.Reference, Pronoun: a.Pronoun}
 	return p.resolveAndAct(ctx, a.Kind, ref, a.Slots, st, spaceID)
+}
+
+// spaceScopedArgs copies slots and forces "spaceID" to the pipeline's own
+// current space, discarding whatever value the model (rules or the main
+// LLM) may have supplied for it. B3 ruling: every action executes in the
+// pipeline's space; a model-provided spaceID is never trusted -- the same
+// reason a Resolver never trusts a model-supplied entity ID.
+func spaceScopedArgs(slots map[string]string, spaceID string) map[string]string {
+	args := make(map[string]string, len(slots)+1)
+	for k, v := range slots {
+		if k == "spaceID" {
+			continue
+		}
+		args[k] = v
+	}
+	args["spaceID"] = spaceID
+	return args
 }
 
 func (p Pipeline) handleCommand(ctx context.Context, d decision.Decision, st *session.State, spaceID string) (Output, error) {
