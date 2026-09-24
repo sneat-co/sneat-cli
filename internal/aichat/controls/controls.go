@@ -19,6 +19,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/strongo/aichat/ai/session"
+	"github.com/strongo/aichat/tui"
 	"github.com/strongo/aichat/tui/grid"
 	"github.com/strongo/aichat/tui/transcript"
 )
@@ -73,6 +74,12 @@ func (b *ListBlock) Update(msg tea.Msg) (transcript.Block, tea.Cmd) {
 	case "down", "j":
 		if b.cursor < len(b.Items)-1 {
 			b.cursor++
+		}
+	case "+":
+		// Same convention as tui/grid's "+": pin the entity under the cursor
+		// to the working-context sidebar (brief §4/§18 scenario 8).
+		if ref := b.Current(); ref != nil {
+			return b, func() tea.Msg { return tui.AddToSidebarMsg{Ref: *ref} }
 		}
 	}
 	return b, nil
@@ -133,7 +140,19 @@ func (b *CardBlock) Current() *session.EntityRef {
 	return &ref
 }
 
-func (b *CardBlock) Update(msg tea.Msg) (transcript.Block, tea.Cmd) { return b, nil }
+func (b *CardBlock) Update(msg tea.Msg) (transcript.Block, tea.Cmd) {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return b, nil
+	}
+	if key.String() == "+" {
+		// Same convention as tui/grid's "+" and ListBlock's above: pin this
+		// card's entity to the sidebar (brief §4/§18 scenario 8).
+		ref := b.Ref
+		return b, func() tea.Msg { return tui.AddToSidebarMsg{Ref: ref} }
+	}
+	return b, nil
+}
 
 func (b *CardBlock) View(width int, focused bool) string {
 	title := b.Title

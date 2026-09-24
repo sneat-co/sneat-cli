@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/strongo/aichat/ai/session"
+	"github.com/strongo/aichat/tui"
 )
 
 func plain(s string) string { return ansi.Strip(s) }
@@ -59,6 +60,57 @@ func TestListBlock_CursorMovesWithArrowKeys(t *testing.T) {
 	}
 	if blk.(*ListBlock).Current().Keys["id"] != "b" {
 		t.Fatalf("cursor did not move down")
+	}
+}
+
+// TestListBlock_PlusEmitsAddToSidebar covers brief §4/§18 scenario 8: "+"
+// over the cursor's item pins it to the sidebar, the same convention as
+// tui/grid's own "+" handling.
+func TestListBlock_PlusEmitsAddToSidebar(t *testing.T) {
+	items := []Item{
+		{Title: "A", Ref: session.EntityRef{Type: "happening", Keys: map[string]string{"id": "a"}}},
+		{Title: "B", Ref: session.EntityRef{Type: "happening", Keys: map[string]string{"id": "b"}}},
+	}
+	b := NewListBlock("List", items)
+	blk, cmd := b.Update(tea.KeyPressMsg{Text: "+", Code: '+'})
+	if cmd == nil {
+		t.Fatal("expected a command for '+'")
+	}
+	if blk != b {
+		t.Fatal("Update must return the same block for '+'")
+	}
+	msg := cmd()
+	added, ok := msg.(tui.AddToSidebarMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want tui.AddToSidebarMsg", msg)
+	}
+	if added.Ref.Keys["id"] != "a" {
+		t.Fatalf("pinned ref = %+v, want the cursor's item", added.Ref)
+	}
+}
+
+func TestListBlock_PlusOnEmptyListIsNoOp(t *testing.T) {
+	b := NewListBlock("Todos", nil)
+	_, cmd := b.Update(tea.KeyPressMsg{Text: "+", Code: '+'})
+	if cmd != nil {
+		t.Fatal("expected no command for '+' on an empty list")
+	}
+}
+
+func TestCardBlock_PlusEmitsAddToSidebar(t *testing.T) {
+	ref := session.EntityRef{Type: "contact", Keys: map[string]string{"contactID": "c1"}}
+	b := NewCardBlock("Alice", ref)
+	_, cmd := b.Update(tea.KeyPressMsg{Text: "+", Code: '+'})
+	if cmd == nil {
+		t.Fatal("expected a command for '+'")
+	}
+	msg := cmd()
+	added, ok := msg.(tui.AddToSidebarMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want tui.AddToSidebarMsg", msg)
+	}
+	if added.Ref.Keys["contactID"] != "c1" {
+		t.Fatalf("pinned ref = %+v", added.Ref)
 	}
 }
 
