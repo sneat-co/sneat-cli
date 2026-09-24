@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/bots-go-framework/bots-go-core/botkb"
 	"github.com/strongo/aichat/ai"
 	"github.com/strongo/aichat/ai/ctxmgr"
 	"github.com/strongo/aichat/ai/decision"
@@ -278,6 +279,8 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 		ref := m.Ref
 		h.state.Focus(&ref)
 		return nil
+	case buttonActivatedMsg:
+		return h.pressButton(m.Button)
 	}
 	return nil
 }
@@ -290,14 +293,54 @@ func (h *handler) handleSlash(m slashMsg) tea.Cmd {
 		h.model.AppendSystem("error: " + m.err.Error())
 		return nil
 	}
-	for _, r := range m.replies {
-		// The messenger Reply's Keyboard (buttons) has no chatshell
-		// equivalent in this MVP slice -- slash commands still answer, just
-		// as plain text, not as pressable buttons. See the final report
-		// (coordinator ruling SLASH BUTTONS, declined this round).
-		h.model.AppendAssistant(r.Text)
-	}
+	h.appendReplies(m.replies)
 	return nil
+}
+
+// appendReplies renders a []chat.Reply the same way for a typed slash
+// command and a button press: text first, then a buttonsBlock (S10) when the
+// reply carries a Keyboard. It always APPENDS -- Reply.Edit ("re-render the
+// pressed message in place", e.g. a space card's own Keyboard replacing
+// itself) has no chatshell equivalent this MVP round (no in-place transcript
+// entry replacement API), a known limitation noted in the final report.
+func (h *handler) appendReplies(replies []chat.Reply) {
+	for _, r := range replies {
+		if r.Text != "" {
+			h.model.AppendAssistant(r.Text)
+		}
+		if r.Keyboard == nil {
+			continue
+		}
+		if blk := newButtonsBlock(r.Keyboard); blk != nil {
+			h.model.AppendBlock(blk)
+		}
+	}
+}
+
+// pressButton dispatches an activated button (S10): a data button goes
+// through chat.Processor.PressButton exactly like the messenger surface
+// (see internal/chat/processor.go's own PressButton doc); a text button
+// resubmits its text through SendText, the same effect as the user typing
+// it; a URL button cannot open a browser from inside the TUI, so it is
+// echoed as a system line instead of silently doing nothing.
+func (h *handler) pressButton(btn botkb.Button) tea.Cmd {
+	switch b := btn.(type) {
+	case *botkb.DataButton:
+		return func() tea.Msg {
+			replies, err := h.processor.PressButton(h.ctx, b.Data)
+			return slashMsg{replies: replies, err: err}
+		}
+	case *botkb.TextButton:
+		return func() tea.Msg {
+			replies, err := h.processor.SendText(h.ctx, b.Text)
+			return slashMsg{replies: replies, err: err}
+		}
+	case *botkb.UrlButton:
+		h.model.AppendSystem("Open in browser: " + b.URL)
+		return nil
+	default:
+		return nil
+	}
 }
 
 func (h *handler) handleTurn(m turnMsg) tea.Cmd {

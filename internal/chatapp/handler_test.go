@@ -284,6 +284,26 @@ func TestChatshell_FocusThenPronounAction_ResolvesConfirmsAndUndoes(t *testing.T
 	}
 }
 
+// TestChatshell_SlashCommandButtons_PressSelectsSpace covers S10: a slash
+// command reply carrying a Keyboard (chat.Processor's /spaces) renders as a
+// focusable buttonsBlock, and pressing Enter over it dispatches through
+// chat.Processor.PressButton exactly like the messenger surface -- restoring
+// the behaviour the chatshell cutover had left as plain text only.
+func TestChatshell_SlashCommandButtons_PressSelectsSpace(t *testing.T) {
+	_, model := testHandler(t)
+	m := typeAndEnter(t, model, "/spaces")
+	if !strings.Contains(m.View().Content, "1 space") {
+		t.Fatalf("view does not show the spaces list:\n%s", m.View().Content)
+	}
+
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift}) // focus the buttons block
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})                // press the (only) space button
+
+	if !strings.Contains(m.View().Content, "Space: Home") {
+		t.Fatalf("pressing the space button did not open its card, view:\n%s", m.View().Content)
+	}
+}
+
 // TestChatshell_ContactSearch_GridThenCard is the scenario-7 chatshell-level
 // test: contact search renders the reusable tui/grid; a single match renders
 // a contact card instead.
