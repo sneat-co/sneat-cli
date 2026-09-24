@@ -459,8 +459,10 @@ func dateTimeOf(start, end time.Time) dbo4calendarius.Timing {
 // straight from the reference text itself ("cancel Friday's yoga", "move
 // Friday's yoga to 16:00" -- significantTerms' day window, carried on
 // session.EntityRef.Keys["date"] by Resolver.Resolve) or from a week-view
-// row's own focused occurrence (chatapp's blockFor sets the same key when a
-// user picks a recurring row). Without this, "move Friday's yoga to 16:00"
+// row's own focused occurrence (pipeline.go's happeningRowsInWindow sets
+// the same key on a recurring row's ref, per its own doc comment -- fix
+// round r3b's M1 nit fixed here: it was previously misattributed to
+// chatapp's blockFor, which never sets it). Without this, "move Friday's yoga to 16:00"
 // silently retimed WHATEVER occurrence recurringAnchor happened to guess
 // (typically the next one from "now", e.g. Monday's, not Friday's) because
 // a bare time-only "when" carries no date of its own for parseWhen/

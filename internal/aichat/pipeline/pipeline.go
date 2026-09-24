@@ -494,6 +494,14 @@ func (p Pipeline) resolveAndAct(ctx context.Context, kind string, ref decision.R
 	}
 	switch res.Outcome {
 	case OutcomeNone:
+		// minor (fix round r5 review): a specific reason (e.g. "Yoga doesn't
+		// happen on Wednesday" -- Resolve found a real word/title match but
+		// ruled out every candidate on the named day) beats the generic
+		// "couldn't find" text, which would otherwise make a real recurring
+		// happening sound like it doesn't exist at all.
+		if res.Refusal != "" {
+			return Output{Text: res.Refusal}, nil
+		}
 		return Output{Text: fmt.Sprintf("I couldn't find a %s matching %q.", ref.Kind, ref.Expression)}, nil
 	case OutcomeMany:
 		// S3: an ambiguous reference's candidates become the choice list a

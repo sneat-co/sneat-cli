@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/sneat-co/sneat-ai-backend/temporal"
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
@@ -56,6 +57,13 @@ const (
 type Result struct {
 	Outcome    Outcome
 	Candidates []session.EntityRef // len 0, 1, or >1 matching Outcome
+	// Refusal (fix round r5 review, minor) is a specific reason OutcomeNone
+	// happened, better than the caller's generic "I couldn't find a %s
+	// matching %q" fallback -- e.g. "Yoga doesn't happen on Wednesday" when
+	// a word/title match exists but the named day is wrong for a recurring
+	// happening's own rule. Empty means "no specific reason, use the
+	// generic message".
+	Refusal string
 }
 
 // Resolve resolves ref against real data in spaceID.
@@ -116,6 +124,22 @@ func (r Resolver) Resolve(ctx context.Context, ref decision.Reference, st sessio
 		}
 		hs = filterByWordSet(hs, terms)
 		hs = filterByWindow(hs, window)
+		// m/minor (fix round r5 review): filterByWindow keeps EVERY recurring
+		// happening regardless of whether its OWN rule actually hits the
+		// named day (it cannot know that on its own -- see its own doc
+		// comment) -- so "cancel Wednesday's yoga" on a Mon/Fri-only yoga
+		// would otherwise silently attach Keys["date"]="<the Wednesday>" to
+		// an occurrence that never exists. When a checkable rule (weekly,
+		// explicit Weekdays) says the named day is flat-out wrong, refuse
+		// with a specific reason instead of resolving to a phantom
+		// occurrence or falling back to the generic "couldn't find" text.
+		if window != nil {
+			var refusal *Result
+			hs, refusal = excludeWrongWeekday(hs, window)
+			if refusal != nil {
+				return *refusal, nil
+			}
+		}
 		return classify(toEntityRefs(hs, func(h data.Happening) session.EntityRef {
 			keys := map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}
 			// M1 (fix round r3b review): a temporal word in the reference
@@ -370,6 +394,39 @@ func filterByWindow(hs []data.Happening, win *dayWindow) []data.Happening {
 		}
 	}
 	return out
+}
+
+// excludeWrongWeekday drops a recurring happening from hs whose OWN rule
+// (weekly, explicit Weekdays -- the only shape this MVP slice can check;
+// see weekdayCodeMatches/recurringAnchor's own doc comments for the same
+// scoping) provably does NOT hit window.from's weekday -- a bare word/title
+// match ("yoga") plus filterByWindow's own deliberately-inclusive "keep
+// every recurring happening, it cannot know which days" is not enough to
+// say "cancel Wednesday's yoga" actually names a real occurrence. refusal
+// is non-nil (and hs's returned slice empty) only when EVERY candidate that
+// matched was excluded this way -- a mix of a wrong-day recurring
+// happening and a genuinely-matching one (recurring or not) still resolves
+// normally, since there IS a real candidate. A recurring happening whose
+// rule this slice cannot check (no weekly Weekdays -- daily/monthly/yearly,
+// or a missing Slot) is conservatively kept, exactly as filterByWindow
+// already does, rather than risk a false refusal.
+func excludeWrongWeekday(hs []data.Happening, window *dayWindow) (kept []data.Happening, refusal *Result) {
+	var wrongDay []data.Happening
+	kept = hs[:0]
+	for _, h := range hs {
+		if h.Recurring && h.Slot != nil && h.Slot.Repeats == dbo4calendarius.RepeatPeriodWeekly && len(h.Slot.Weekdays) > 0 {
+			if !weekdayCodeMatches(h.Slot.Weekdays, window.from.Weekday()) {
+				wrongDay = append(wrongDay, h)
+				continue
+			}
+		}
+		kept = append(kept, h)
+	}
+	if len(kept) == 0 && len(wrongDay) > 0 {
+		return kept, &Result{Outcome: OutcomeNone,
+			Refusal: fmt.Sprintf("%s doesn't happen on %s.", wrongDay[0].Title, window.from.Weekday())}
+	}
+	return kept, nil
 }
 
 func classify(refs []session.EntityRef) Result {

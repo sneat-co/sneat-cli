@@ -310,6 +310,69 @@ func TestResolver_ExpressionNoTemporalWord_NoDateKey(t *testing.T) {
 	}
 }
 
+// TestResolver_ReferenceDay_NoOccurrenceThatDay_Refuses is a minor (fix
+// round r5 review): "cancel Wednesday's yoga" against a happening that only
+// recurs Mon/Fri must not resolve to a phantom Wednesday occurrence, or
+// fall back to the generic "couldn't find" text as if no yoga existed at
+// all -- it must refuse with the SPECIFIC reason.
+func TestResolver_ReferenceDay_NoOccurrenceThatDay_Refuses(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t) // Monday 2026-09-21; Wednesday of that week is 2026-09-23
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{yoga}}}
+	r := Resolver{Readers: readers, Now: func() time.Time { return now }}
+	res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "Wednesday's yoga"}, session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeNone {
+		t.Fatalf("res = %+v, want OutcomeNone -- yoga does not recur on Wednesday", res)
+	}
+	if res.Refusal != "Yoga doesn't happen on Wednesday." {
+		t.Fatalf("Refusal = %q, want the specific \"Yoga doesn't happen on Wednesday.\" reason", res.Refusal)
+	}
+}
+
+// TestResolver_ReferenceDay_OccurrenceExists_StillResolves is the same
+// fixture's positive control: "cancel Friday's yoga" (a real occurrence)
+// must resolve normally, not be swept up by the new wrong-day exclusion.
+func TestResolver_ReferenceDay_OccurrenceExists_StillResolves(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{yoga}}}
+	r := Resolver{Readers: readers, Now: func() time.Time { return now }}
+	res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "Friday's yoga"}, session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeOne || res.Refusal != "" {
+		t.Fatalf("res = %+v, want a clean OutcomeOne match, no refusal", res)
+	}
+}
+
+// TestPipeline_CancelWednesdaysYoga_RefusesWithSpecificReason is the M1
+// resolver fix's end-to-end counterpart: the specific refusal text must
+// reach the user through resolveAndAct, not the generic "couldn't find"
+// fallback.
+func TestPipeline_CancelWednesdaysYoga_RefusesWithSpecificReason(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{yoga}}}
+	p := Pipeline{
+		Resolver: Resolver{Readers: readers, Now: func() time.Time { return now }},
+		Readers:  readers,
+		Now:      func() time.Time { return now },
+	}
+	st := &session.State{}
+	out, err := p.HandleAction(context.Background(),
+		Action{Kind: "calendar.cancel_happening", Reference: "Wednesday's yoga"}, st, "sp1")
+	if err != nil {
+		t.Fatalf("HandleAction: %v", err)
+	}
+	if out.Text != "Yoga doesn't happen on Wednesday." {
+		t.Fatalf("out.Text = %q, want the specific refusal", out.Text)
+	}
+}
+
 // TestResolver_OrdinalFiltersByKind covers m2: "2" after a happenings
 // choice list must not resolve to a todo reference.
 func TestResolver_OrdinalFiltersByKind(t *testing.T) {
