@@ -94,19 +94,23 @@ func (s *Splitter) Finish() (trailing string, action *Action, err error) {
 	return trailing, nil, nil
 }
 
+// parseAction parses one <sneat-action> block's raw JSON body. The product
+// convention is one block per turn AT THE END of the reply (coordinator
+// ruling SPLITTER): a model that emits more than one -- e.g. it reconsiders
+// mid-answer -- has its LAST block win, matching "the end of the reply is
+// the model's final answer" rather than silently keeping the first. A
+// successful later block also clears any error an earlier malformed block
+// left, for the same reason.
 func (s *Splitter) parseAction(raw string) {
-	if s.actionOK || s.err != nil {
-		// Only one action block per turn is part of the convention; a second
-		// one is ignored rather than overwriting the first silently.
-		return
-	}
 	var a Action
 	if err := json.Unmarshal([]byte(raw), &a); err != nil {
 		s.err = fmt.Errorf("pipeline: malformed %s block: %w", startTag, err)
+		s.actionOK = false
 		return
 	}
 	s.action = a
 	s.actionOK = true
+	s.err = nil
 }
 
 // partialTagSuffixLen returns the length of the longest suffix of s that is

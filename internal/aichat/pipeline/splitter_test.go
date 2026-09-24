@@ -112,6 +112,64 @@ func TestSplitter_MalformedJSONIsAnError(t *testing.T) {
 	}
 }
 
+// TestSplitter_LastActionBlockWins covers coordinator ruling SPLITTER: only
+// the block at the END of the reply counts. A model that emits two blocks
+// (e.g. it reconsiders mid-answer) must not have the FIRST one win.
+func TestSplitter_LastActionBlockWins(t *testing.T) {
+	s := &Splitter{}
+	visible := feedAll(s, []string{
+		`First guess. <sneat-action>{"kind":"todo.complete_todo","reference":"milk"}</sneat-action>`,
+		` Actually, <sneat-action>{"kind":"todo.complete_todo","reference":"bread"}</sneat-action>`,
+	})
+	trailing, action, err := s.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	if got := visible + trailing; got != "First guess.  Actually, " {
+		t.Fatalf("got %q", got)
+	}
+	if action == nil || action.Reference != "bread" {
+		t.Fatalf("action = %+v, want the LAST block (bread)", action)
+	}
+}
+
+// TestSplitter_LastBlockWinsOverEarlierMalformed covers the same ruling for
+// the error case: an earlier malformed block must not poison a later
+// well-formed one, since the well-formed one is the model's final answer.
+func TestSplitter_LastBlockWinsOverEarlierMalformed(t *testing.T) {
+	s := &Splitter{}
+	_ = feedAll(s, []string{
+		`<sneat-action>not json</sneat-action>`,
+		`<sneat-action>{"kind":"todo.complete_todo","reference":"bread"}</sneat-action>`,
+	})
+	_, action, err := s.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v, want the later well-formed block to clear the earlier error", err)
+	}
+	if action == nil || action.Reference != "bread" {
+		t.Fatalf("action = %+v, want the LAST (well-formed) block", action)
+	}
+}
+
+// TestSplitter_LaterMalformedBlockOverridesEarlierGood mirrors the above in
+// the other direction: a LATER malformed block still wins the "last block"
+// rule, reporting the error rather than silently keeping the earlier good
+// action.
+func TestSplitter_LaterMalformedBlockOverridesEarlierGood(t *testing.T) {
+	s := &Splitter{}
+	_ = feedAll(s, []string{
+		`<sneat-action>{"kind":"todo.complete_todo","reference":"bread"}</sneat-action>`,
+		`<sneat-action>not json</sneat-action>`,
+	})
+	_, action, err := s.Finish()
+	if err == nil {
+		t.Fatal("expected the later malformed block to win and report an error")
+	}
+	if action != nil {
+		t.Fatalf("expected no action once the last block is malformed, got %+v", action)
+	}
+}
+
 func TestSplitter_TagLookalikeIsNotConsumed(t *testing.T) {
 	s := &Splitter{}
 	visible := feedAll(s, []string{"Use <sneat-actio", "n-like> tags carefully."})
