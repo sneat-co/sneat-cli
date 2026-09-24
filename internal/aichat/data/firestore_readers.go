@@ -41,12 +41,17 @@ func containsFold(haystack, needleLower string) bool {
 // final report's "manual / not done" list.
 type firestoreHappenings struct {
 	session *firestoredb.Session
+	// loc is the "user zone" a slot with no TimeZone of its own decodes in
+	// (S5). Defaults to time.Local (the CLI's host zone) -- a real per-user
+	// configured zone (flag/env override) is a follow-up, not implemented by
+	// this MVP slice; see the final report.
+	loc *time.Location
 }
 
 // NewFirestoreHappenings builds a HappeningsReader over ONE lazily-opened,
 // reused Firestore client (m4) rather than a fresh client per call.
 func NewFirestoreHappenings(cfg config.Config, ts oauth2.TokenSource) HappeningsReader {
-	return &firestoreHappenings{session: firestoredb.NewSession(cfg, ts)}
+	return &firestoreHappenings{session: firestoredb.NewSession(cfg, ts), loc: time.Local}
 }
 
 // Close releases the reader's Firestore client, if one was ever opened.
@@ -99,19 +104,40 @@ func (r *firestoreHappenings) list(ctx context.Context, spaceID string) ([]calen
 	return dbos, ids, nil
 }
 
-// firstSlotWindow returns the earliest slot's start/end as time.Time in the
-// happening's own stated timezone-less local wall time (calendarius stores
-// date+time as separate strings; this MVP slice treats them as UTC, which is
-// wrong for a user in another timezone -- a follow-up, not silently ignored:
-// see the final report).
-func firstSlotWindow(h calendariusdbo.HappeningDbo) (start, end time.Time, slotID string, recurring bool, slot *calendariusdbo.HappeningSlot) {
+// parseSlotDateTime interprets a calendarius DateTime in the slot's own
+// TimeZone when it has one, else fallback (S5 ruling: "the slot's
+// TimeZone/UTCOffset when present else user zone"). A prior version always
+// used time.Parse's implicit UTC, which was silently wrong for both a slot
+// with an explicit TimeZone and a user whose local zone isn't UTC.
+func parseSlotDateTime(dt calendariusdbo.DateTime, tz string, fallback *time.Location) (time.Time, bool) {
+	loc := fallback
+	if loc == nil {
+		loc = time.UTC
+	}
+	if tz != "" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		}
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04", dt.Date+" "+dt.Time, loc)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// firstSlotWindow returns the earliest slot's start/end as time.Time,
+// interpreted per parseSlotDateTime's rule. fallback is the reader's
+// configured "user zone" (see firestoreHappenings.loc), used only for a slot
+// that has no TimeZone of its own.
+func firstSlotWindow(h calendariusdbo.HappeningDbo, fallback *time.Location) (start, end time.Time, slotID string, recurring bool, slot *calendariusdbo.HappeningSlot) {
 	for id, s := range h.Slots {
 		if s == nil {
 			continue
 		}
 		recurring = recurring || s.Repeats != "" && s.Repeats != calendariusdbo.RepeatPeriodOnce
-		st, sErr := time.Parse("2006-01-02 15:04", s.Start.Date+" "+s.Start.Time)
-		if sErr != nil {
+		st, ok := parseSlotDateTime(s.Start, s.TimeZone, fallback)
+		if !ok {
 			continue
 		}
 		if start.IsZero() || st.Before(start) {
@@ -122,8 +148,9 @@ func firstSlotWindow(h calendariusdbo.HappeningDbo) (start, end time.Time, slotI
 			// h.Slots, which a caller may still hold/reuse.
 			cp := *s
 			slot = &cp
+			end = time.Time{}
 			if s.End.Time != "" {
-				if et, eErr := time.Parse("2006-01-02 15:04", s.End.Date+" "+s.End.Time); eErr == nil {
+				if et, ok := parseSlotDateTime(s.End, s.TimeZone, fallback); ok {
 					end = et
 				}
 			}
@@ -132,8 +159,8 @@ func firstSlotWindow(h calendariusdbo.HappeningDbo) (start, end time.Time, slotI
 	return start, end, slotID, recurring, slot
 }
 
-func toHappening(spaceID, id string, h calendariusdbo.HappeningDbo) Happening {
-	start, end, slotID, recurring, slot := firstSlotWindow(h)
+func toHappening(spaceID, id string, h calendariusdbo.HappeningDbo, fallback *time.Location) Happening {
+	start, end, slotID, recurring, slot := firstSlotWindow(h, fallback)
 	return Happening{ID: id, SpaceID: spaceID, Title: h.Title, Start: start, End: end, SlotID: slotID, Recurring: recurring, Slot: slot}
 }
 
@@ -144,7 +171,7 @@ func (r *firestoreHappenings) Window(ctx context.Context, spaceID string, from, 
 	}
 	var out []Happening
 	for i, dbo := range dbos {
-		h := toHappening(spaceID, ids[i], dbo)
+		h := toHappening(spaceID, ids[i], dbo, r.loc)
 		if h.Recurring || (!h.Start.IsZero() && !h.Start.Before(from) && h.Start.Before(to)) {
 			out = append(out, h)
 		}
@@ -161,7 +188,7 @@ func (r *firestoreHappenings) FindByTitle(ctx context.Context, spaceID, query st
 	var out []Happening
 	for i, dbo := range dbos {
 		if containsFold(dbo.Title, q) {
-			out = append(out, toHappening(spaceID, ids[i], dbo))
+			out = append(out, toHappening(spaceID, ids[i], dbo, r.loc))
 		}
 	}
 	return out, nil
@@ -185,7 +212,7 @@ func (r *firestoreHappenings) Get(ctx context.Context, spaceID, happeningID stri
 	if err != nil {
 		return Happening{}, err
 	}
-	return toHappening(spaceID, happeningID, dbo), nil
+	return toHappening(spaceID, happeningID, dbo, r.loc), nil
 }
 
 // firestoreTodos reads listus list documents directly from Firestore. Like

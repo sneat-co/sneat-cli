@@ -67,7 +67,7 @@ func TestToHappening_RealDbo(t *testing.T) {
 			},
 		},
 	}
-	h := toHappening("sp1", "h1", dbo)
+	h := toHappening("sp1", "h1", dbo, time.UTC)
 	if h.Title != "Dentist appointment" {
 		t.Errorf("Title = %q", h.Title)
 	}
@@ -107,7 +107,7 @@ func TestToHappening_RealDbo_Recurring(t *testing.T) {
 			},
 		},
 	}
-	h := toHappening("sp1", "h2", dbo)
+	h := toHappening("sp1", "h2", dbo, time.UTC)
 	if !h.Recurring {
 		t.Error("Recurring = false, want true for repeats=weekly (documented limitation: Start is the template slot, not a resolved next-occurrence)")
 	}
@@ -131,7 +131,7 @@ func TestToHappening_MultipleSlotsPicksEarliest(t *testing.T) {
 			},
 		},
 	}
-	h := toHappening("sp1", "h3", dbo)
+	h := toHappening("sp1", "h3", dbo, time.UTC)
 	if h.SlotID != "earlier" {
 		t.Errorf("SlotID = %q, want the earlier slot", h.SlotID)
 	}
@@ -158,6 +158,67 @@ func TestToTodo_NotDone(t *testing.T) {
 	td := toTodo("sp1", ListKindDo, it)
 	if td.Done {
 		t.Error("Done = true, want false when Status is not \"done\"")
+	}
+}
+
+// TestToHappening_UsesSlotTimeZoneOverFallback is S5: a slot with its own
+// TimeZone decodes in THAT zone regardless of the reader's configured
+// fallback ("user zone"); a slot with none falls back.
+func TestToHappening_UsesSlotTimeZoneOverFallback(t *testing.T) {
+	dbo := calendariusdbo.HappeningDbo{
+		HappeningBase: calendariusdbo.HappeningBase{
+			Type: calendariusdbo.HappeningTypeSingle, Status: "active", Title: "Flight",
+			Slots: map[string]*calendariusdbo.HappeningSlot{
+				"s1": {HappeningSlotTiming: calendariusdbo.HappeningSlotTiming{
+					Timing: calendariusdbo.Timing{
+						Start:    calendariusdbo.DateTime{Date: "2026-09-25", Time: "09:00"},
+						End:      calendariusdbo.DateTime{Date: "2026-09-25", Time: "11:00"},
+						TimeZone: "America/New_York",
+					},
+					Repeats: calendariusdbo.RepeatPeriodOnce,
+				}},
+			},
+		},
+	}
+	// Fallback is UTC, but the slot names America/New_York -- the slot must
+	// win: 09:00 America/New_York is 13:00 UTC.
+	h := toHappening("sp1", "h1", dbo, time.UTC)
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	want := time.Date(2026, 9, 25, 9, 0, 0, 0, nyc)
+	if !h.Start.Equal(want) {
+		t.Errorf("Start = %v, want %v (%v UTC)", h.Start, want, want.UTC())
+	}
+	if h.Start.UTC().Hour() != 13 {
+		t.Errorf("Start in UTC = %v, want 13:00 UTC (09:00 America/New_York)", h.Start.UTC())
+	}
+}
+
+// TestToHappening_FallsBackToReaderLocation is S5's "else user zone": a slot
+// with no TimeZone of its own decodes in the reader's configured fallback,
+// not an implicit UTC.
+func TestToHappening_FallsBackToReaderLocation(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	dbo := calendariusdbo.HappeningDbo{
+		HappeningBase: calendariusdbo.HappeningBase{
+			Type: calendariusdbo.HappeningTypeSingle, Status: "active", Title: "Lunch",
+			Slots: map[string]*calendariusdbo.HappeningSlot{
+				"s1": {HappeningSlotTiming: calendariusdbo.HappeningSlotTiming{
+					Timing:  calendariusdbo.Timing{Start: calendariusdbo.DateTime{Date: "2026-09-25", Time: "12:00"}},
+					Repeats: calendariusdbo.RepeatPeriodOnce,
+				}},
+			},
+		},
+	}
+	h := toHappening("sp1", "h1", dbo, tokyo)
+	want := time.Date(2026, 9, 25, 12, 0, 0, 0, tokyo)
+	if !h.Start.Equal(want) {
+		t.Errorf("Start = %v, want %v (decoded in the reader's fallback zone)", h.Start, want)
 	}
 }
 
