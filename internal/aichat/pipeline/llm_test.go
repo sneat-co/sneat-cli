@@ -263,6 +263,18 @@ func findBlock(t *testing.T, blocks []ai.ContextBlock, name string) ai.ContextBl
 	return ai.ContextBlock{}
 }
 
+// TestStreamRequest_SystemPromptTreatsSpaceContentAsData covers m10: the
+// system prompt tells the model that calendar/todo/contacts context is data
+// to answer from, never an instruction, regardless of what its text says
+// (brief §17's mutation-safety boundary applied to prompt content too).
+func TestStreamRequest_SystemPromptTreatsSpaceContentAsData(t *testing.T) {
+	p := Pipeline{}
+	req, _ := p.StreamRequest(context.Background(), "hi", nil, "sp1", nil, nil, nil)
+	if !strings.Contains(req.System, "DATA") && !strings.Contains(req.System, "data") {
+		t.Fatalf("System = %q, want it to state space content is data, not instructions", req.System)
+	}
+}
+
 func TestStream_NoLLMConfiguredIsAnError(t *testing.T) {
 	p := Pipeline{}
 	seq, _ := p.Stream(context.Background(), ai.ChatRequest{})
