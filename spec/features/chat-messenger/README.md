@@ -155,7 +155,9 @@ A type resolving to zero or several spaces is answered, never guessed: picking o
 
 #### REQ: card-edit
 
-A `Reply` with its `Edit` flag set, returned from a press, replaces the message the pressed button belonged to instead of appending a new one. This is the primitive behind a card: pressing a button re-renders the same message with new text and new buttons, so a space's detail and its contacts occupy one message the user navigates rather than a growing stack of them. A renderer carries this out (chat-tui#req:card-edit-in-place); the processor's part is to set `Edit` on the replies that are card re-renders.
+A `Reply` with its `Edit` flag set, returned from a press, replaces the message the pressed button belonged to instead of appending a new one. This is the primitive behind a card: pressing a button re-renders the same message with new text and new buttons, so a space's detail and its contacts occupy one message the user navigates rather than a growing stack of them. The processor's part is to set `Edit` on the replies that are card re-renders (this seam MUST keep doing so regardless of what a given renderer does with the flag).
+
+`chat-tui` (deprecated) carried this out in place (`chat-tui#req:card-edit-in-place`). Its replacement, `chat-ai`'s `internal/chatapp` renderer over `strongo/aichat`'s `tui/chatshell`, does **not** yet honour `Edit`: `strongo/aichat/tui/chatshell` has no in-place transcript-entry replacement API this MVP round, so `chatapp.appendReplies` always APPENDS the re-rendered card as a new transcript entry instead of replacing the pressed message. This is a known, documented MVP limitation (see `chat-ai#req:card-edit-appends-not-replaces`) — a space→contacts→back navigation still works, it just grows the transcript by one entry per hop rather than staying a single message.
 
 #### REQ: active-space-selection
 

@@ -1,12 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
-status: Draft
+status: Implementing
 ---
 
 # Feature: Chat AI Pipeline
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-ai?op=explore) | [Edit](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-ai?op=edit) | [Ask question](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-ai?op=ask) | [Request change](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-ai?op=request-change) |
-**Status:** Draft
+**Status:** Implementing
 **Source Ideas:** —
 
 ## Summary
@@ -98,6 +98,10 @@ Every action `pipeline.SneatExecutor` executes MUST go through a sneat-go HTTP e
 #### REQ: controls-are-transcript-blocks
 
 A presentation MUST render as a `tui/transcript.Block`: `ContactsGrid` MUST reuse `tui/grid` directly (the same generic grid DataTug uses) rather than a competing grid, except that a search narrowed to exactly one contact MUST render as a `controls.CardBlock` instead of a one-row grid. Every other list-shaped presentation (`day_calendar`, `week_calendar`, `happenings_list`, `todo_list`, `buy_list`) MUST render as `controls.ListBlock`. Both `ListBlock` and `CardBlock` expose `Current()` (`transcript.EntityBlock`) so the focused item can be pinned to the sidebar or resolved by a later pronoun.
+
+#### REQ: card-edit-appends-not-replaces
+
+`chat.Reply.Edit` (chat-messenger#req:card-edit) is a known, documented MVP limitation of the chatshell renderer: `strongo/aichat/tui/chatshell` has no in-place transcript-entry replacement API this round, so `chatapp.appendReplies` renders every reply -- `Edit` set or not -- as a new transcript block rather than replacing the pressed message's own block. A space→Contacts→← Spaces navigation therefore still works (each press still runs `chat.Processor.PressButton` and renders its reply), it just grows the transcript by one entry per hop instead of staying one message, unlike `chat-tui`'s (deprecated) in-place renderer. Replacing this with real in-place editing needs a chatshell API this Feature does not currently have; it is out of scope for the sneat-chat MVP.
 
 #### REQ: sidebar-and-focus-feed-session-state
 
@@ -194,13 +198,17 @@ Deferred to follow-on work (m11: kept honest against the current code, not the s
 - **Firestore-backed happenings/todos/contacts readers' collection paths.** `internal/aichat/data`'s Firestore readers mirror `internal/firestoredb`'s existing contact-reading convention and are unit-tested against real `dbo4calendarius`/`dbo4listus` structs, but the collection PATH itself was not verified against a live or emulated space.
 - **Recurring happening occurrence expansion is partial, not general.** A day/week view now excludes a recurring happening on a day its rule does not hit (S6), but only for a WEEKLY rule with explicit `Weekdays` — daily/monthly/yearly recurrence still falls back to being excluded rather than computed, and `HappeningsReader.Get`/`FindByTitle` still return the stored template slot, not a resolved next-occurrence; see `internal/aichat/data`'s and `controls.filterRecurringToWindow`'s doc comments.
 - **Contact relationship-word resolution ("my mum", "my wife") never actually matches.** `contacts.find_contact`/`show_contact` resolve through `sneat-ai-backend/resolve.Resolve`, which supports relationship words, but `internal/aichat/data.Contact` carries only ID/Name (no roles/gender/relations), so that path always degrades to `OutcomeUnknown` and falls back to a plain name search; see `pipeline.findOrShowContact`'s doc comment.
-- **A bot-keyboard button press always appends a new transcript entry.** `chat.Reply.Edit` (re-render the pressed card in place — e.g. a space card's own buttons replacing themselves) has no `chatshell` equivalent yet; see `chatapp.appendReplies`'s doc comment.
-- **A `HappeningCard`/reschedule-confirmation card does not yet carry a richer field set.** `chatapp.cardFor`'s fallback (used for a happening, still) shows only the entity's raw `Keys` as label/value pairs; only a contact card (`controls.NewContactCard`) and the calendar/todo LIST presentations (`controls.NewDayCalendar`/`NewWeekCalendar`/`NewHappeningsList`/`NewTodoList`/`NewBuyList`, all wired through `pipeline.Output.HappeningRows`/`TodoRows`) carry real data beyond a title.
+- **A bot-keyboard button press always appends a new transcript entry.** `chat.Reply.Edit` (re-render the pressed card in place — e.g. a space card's own buttons replacing themselves) has no `chatshell` equivalent yet; see REQ: card-edit-appends-not-replaces above and `chatapp.appendReplies`'s doc comment.
+- **`internal/aichat/data`'s three Firestore readers (Happenings/Todos/Contacts) each open their own `firestoredb.Session`/client, not one shared per chat session (m6).** `NewFirestoreHappenings`/`NewFirestoreTodos`/`NewFirestoreContacts` each call `firestoredb.NewSession(cfg, ts)` independently; `data.Readers.Close()` closes all three, but they were never sharing one lazily-opened client to begin with. Fixing this needs a constructor change in `internal/aichat/data` (accept an already-open session/client rather than opening its own) — out of scope for this fix round's cross-lane file ownership split.
+- **Per-day adjustments and cancellations on a recurring happening are not reflected in any presentation.** `HappeningsReader`/`happeningRowsInWindow`/`DynamicBlocks` all project a recurring happening's UNMODIFIED rule (see the recurring-occurrence-expansion bullet above); a single occurrence individually rescheduled or cancelled via `dbo4calendarius`'s per-date Adjustments still shows at its original rule-computed time in a day/week/upcoming view and in the LLM's dynamic context, until `internal/aichat/data`/`sneatexecutor.go` read and apply Adjustments during projection.
 
 Now DONE, no longer deferred (kept here only as history — see the requirements above for the current behaviour):
 
 - Timezone handling: a slot's own `TimeZone`/`UTCOffset` is honoured when present, else the session's IANA zone (`Pipeline.TZ`, `--tz`/env override).
 - A `/space` picker for the aichat pipeline: `chatapp.Submit` syncs the pipeline's active space from the slash-command `Processor.ActiveSpace()` on every turn, so `/space`/`/spaces` and the pipeline never disagree about which space is active.
+- A reschedule/cancel confirmation and an ambiguous HAPPENING reference's choice list now render `controls.NewHappeningCard`/time-bearing `HappeningRow`s (the fully resolved new time/occurrence, computed before asking), not a raw-key card or a title-only list; an ambiguous TODO/CONTACT reference gets its own kind-appropriate presentation instead of always being labelled "Happenings".
+- The LLM's dynamic todo context now includes the buy list alongside the do list (combined, capped together, sorted not-done first), and the calendar context projects a recurring happening's real upcoming occurrence date via the same projection a calendar presentation uses, not its stored template date.
+- Switching the active space (`/space` or a space button) now clears `Focused`/`Selection`/`LastShown`/`Pending`/`Previous` so a bare pronoun or "undo" can never resolve against an entity from the space just left; sidebar pins are kept (not dropped) and are never actable across spaces because `Resolver`/`SneatExecutor` refuse a cross-space target defensively.
 
 ## Open Questions
 
