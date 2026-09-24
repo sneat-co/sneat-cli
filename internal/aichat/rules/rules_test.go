@@ -93,6 +93,30 @@ func TestRejectRequiresPending(t *testing.T) {
 	}
 }
 
+// TestRejectRequiresPending_NormalizesCasingAndPunctuation is m7 (from
+// fix round r2, verified in fix round r4's review): rejectRule's
+// interaction-kind branch does `text == "cancel that"` -- a LITERAL
+// comparison that would silently fall through to the plain
+// InteractionRejection branch (or, if rejectWords itself failed to match,
+// abstain entirely) for anything but that exact lowercase phrase, unless
+// the text reaching Match is ALREADY normalized. It is: Provider.Decide
+// (strongo/aichat/ai/decision/rules) calls Normalize(req.Text) before ever
+// invoking a Rule's Match -- lowercasing, collapsing whitespace, and
+// trimming trailing ".!?" -- so "Cancel that!" (capitalized, with the
+// trailing "!" a real chat message plausibly has) reaches rejectRule as
+// "cancel that" and is still recognised as a CANCELLATION specifically,
+// not just a generic rejection.
+func TestRejectRequiresPending_NormalizesCasingAndPunctuation(t *testing.T) {
+	pending := &session.Action{Kind: "calendar.cancel_happening"}
+	d, ok := decide(t, "Cancel that!", session.State{Pending: pending})
+	if !ok {
+		t.Fatal("\"Cancel that!\" with a Pending action must not abstain")
+	}
+	if d.Interaction != decision.InteractionCancellation {
+		t.Fatalf("Interaction = %v, want InteractionCancellation (normalization must reduce \"Cancel that!\" to \"cancel that\")", d.Interaction)
+	}
+}
+
 func TestUndoRequiresPrevious(t *testing.T) {
 	if _, ok := decide(t, "undo", session.State{}); ok {
 		t.Fatal("\"undo\" without a Previous action must abstain")
