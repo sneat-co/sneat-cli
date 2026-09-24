@@ -109,6 +109,19 @@ type handler struct {
 	// current turn. Pipeline itself is a stateless value (rebuilt per call),
 	// so this is where the session's history actually lives.
 	history []ai.Message
+	// pendingAction maps a stream id to its action phase's own cancel func,
+	// for exactly as long as OnStreamEvent's EventCompleted background work
+	// (Splitter.Finish + HandleAction) has been dispatched but its result
+	// has not yet reached OnMsg (fix round r5 review, M2). chatshell's own
+	// handleStreamDone unconditionally clears busy (and streamCancel) the
+	// instant a stream's DoneMsg arrives -- which fires right after
+	// EventCompleted, typically before the action work has even started,
+	// let alone finished a network call -- so OnStreamDone must check this
+	// map and RE-ASSERT busy (with THIS action's own cancel, not the
+	// finished stream's) whenever an entry is still present. OnMsg's
+	// actionMsg case deletes the entry once the result lands, whether
+	// current or stale.
+	pendingAction map[string]context.CancelFunc
 }
 
 // appendHistory records one user/assistant exchange and trims history to
@@ -222,6 +235,20 @@ func (h *handler) applyStateDelta(from session.State) {
 	h.state.PreviousAt = from.PreviousAt
 }
 
+// applyUndoDelta applies only Previous/PreviousAt from a STALE actionMsg
+// result whose action nonetheless actually ran (fix round r5 review): a
+// real HandleAction call already happened -- possibly a destructive
+// calendar/todo mutation -- by the time this message lands, even if a
+// newer turn has since started. That is not something a "stale, drop it"
+// rule may ever silently discard, or "undo" stops working for a turn that
+// genuinely executed. Focused/Selection/LastShown/Pending are deliberately
+// NOT applied here (unlike applyStateDelta) since a newer, current turn may
+// already hold its own fresher values for those.
+func (h *handler) applyUndoDelta(from session.State) {
+	h.state.Previous = from.Previous
+	h.state.PreviousAt = from.PreviousAt
+}
+
 // applySpaceChange is B3's session-side half (coordinator ruling B3): when
 // the Processor's active space differs from h.spaceID -- i.e. the user
 // pressed a space button or ran /space -- every piece of working context
@@ -320,19 +347,26 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 	}
 	spaceID := h.spaceID
 	pl := h.pipeline // m2: captured here too, not read live inside work below
-	// M2 (fix round r4 review): the stream itself has already finished by
-	// the time this tea.Cmd runs (that is what EventCompleted means), so
-	// chatshell's own stream-tied busy state has already cleared -- but
-	// HandleAction below still has to run (possibly executing a destructive
-	// calendar/todo mutation) on a worker goroutine. Without owning busy
-	// itself, the composer re-enables the instant the STREAM ends, letting
-	// the user submit a new turn while this action is still in flight
-	// (racing h.state via applyStateDelta, or double-executing something).
-	// Same convention as Submit's own background work: derive a cancellable
-	// ctx from the turn's own (so Esc during the action phase still works),
-	// SetBusy(true) for its duration, and clear it in OnMsg's actionMsg case
-	// below once the result lands (or is dropped as stale).
+	// M2 (fix round r4/r5 review): the stream itself has already finished by
+	// the time this tea.Cmd runs (that is what EventCompleted means), and
+	// chatshell's tui/stream driver delivers this id's DoneMsg right after
+	// EventCompleted -- its own handleStreamDone unconditionally clears busy
+	// (and streamCancel) the instant that DoneMsg is handled, typically
+	// BEFORE the work below has even started, let alone finished
+	// HandleAction's network I/O. SetBusy(true) here is necessary but not
+	// sufficient by itself: OnStreamDone (below) checks h.pendingAction[id],
+	// set here, and RE-ASSERTS busy+SetBusyCancel for as long as this
+	// action's result hasn't landed yet -- see its own doc comment. Same
+	// convention as Submit's own background work otherwise: derive a
+	// cancellable ctx from the turn's own (so Esc during the action phase
+	// still works, whichever of these two call sites re-armed it last), and
+	// clear h.pendingAction[id] in OnMsg's actionMsg case once the result
+	// lands (current or stale).
 	actionCtx, cancel := context.WithCancel(ctx)
+	if h.pendingAction == nil {
+		h.pendingAction = map[string]context.CancelFunc{}
+	}
+	h.pendingAction[id] = cancel
 	busyCmd := h.model.SetBusy(true)
 	h.model.SetBusyCancel(cancel)
 	work := func() tea.Msg {
@@ -341,17 +375,17 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 			// Splitter contract: a malformed/unterminated block is surfaced,
 			// never silently dropped, and whatever text was already held
 			// back is still shown (coordinator ruling SPLITTER).
-			return actionMsg{parseErr: err, trailing: trailing, seq: turnSeq}
+			return actionMsg{parseErr: err, trailing: trailing, seq: turnSeq, id: id}
 		}
 		if action == nil {
 			// A plain text-only answer: still an actionMsg (not a bare nil)
 			// so OnMsg's stale-seq-checked actionMsg case runs and clears
 			// busy -- a bare nil never reaches OnMsg at all (bubbletea drops
 			// a nil Msg outright), which would leave busy stuck true.
-			return actionMsg{seq: turnSeq}
+			return actionMsg{seq: turnSeq, id: id}
 		}
 		out, err := pl.HandleAction(actionCtx, *action, &snapshot, spaceID)
-		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq}
+		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq, id: id}
 	}
 	if busyCmd == nil {
 		return work
@@ -362,7 +396,25 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 // OnStreamDone fires exactly once per StartStream call (success, fatal
 // error, or cancellation) -- this is where the splitter entry for id is
 // retired and the LLM-leg diagnostics are logged, regardless of outcome.
+//
+// M2 (fix round r5 review): chatshell's own handleStreamDone (tui/chatshell)
+// already ran by the time this method is called -- it set m.busy=false
+// UNCONDITIONALLY for the current stream, before ever invoking this
+// StreamObserver callback. If OnStreamEvent's EventCompleted branch
+// dispatched this id's action work and it has not resolved yet
+// (h.pendingAction[id] still set), that busy=false is wrong: the action
+// (possibly a destructive calendar/todo mutation, still doing network I/O)
+// is still running. Re-assert SetBusy(true) + SetBusyCancel(the ACTION's
+// own cancel, not the finished stream's) right here, synchronously, before
+// returning -- chatshell's Update dispatches messages one at a time, so
+// this runs in the same UI-loop turn as handleStreamDone's own busy=false,
+// leaving busy correctly true by the time Update returns.
 func (h *handler) OnStreamDone(id string, err error) tea.Cmd {
+	var busyCmd tea.Cmd
+	if cancel, ok := h.pendingAction[id]; ok {
+		busyCmd = h.model.SetBusy(true)
+		h.model.SetBusyCancel(cancel)
+	}
 	delete(h.splitters, id)
 	if b := h.streamText[id]; b != nil && err == nil {
 		h.appendHistory(h.streamUser[id], b.String())
@@ -395,7 +447,7 @@ func (h *handler) OnStreamDone(id string, err error) tea.Cmd {
 	delete(h.streamModel, id)
 	delete(h.streamProvider, id)
 	delete(h.streamDecided, id)
-	return nil
+	return busyCmd
 }
 
 // --- chatshell.MsgHandler ----------------------------------------------------
@@ -420,17 +472,35 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 		h.model.SetBusy(false) // clears the "building the request" phase; StartStream sets busy again
 		return h.startLLMStream(m)
 	case actionMsg:
+		// M2 (fix round r5 review): this stream's action has now resolved
+		// (current or stale) -- OnStreamDone must stop re-asserting busy for
+		// it.
+		delete(h.pendingAction, m.id)
 		if atomic.LoadInt64(&h.turnSeq) != m.seq {
-			// S1 coordinator ruling: a stale result -- the turn it belongs to
-			// is no longer the current one -- is dropped outright: no render,
-			// no state write, no SetBusy(false) (a newer turn is already
-			// driving busy and will clear it itself).
+			// S1/M2 (fix round r5 review): a stale result -- the turn it
+			// belongs to is no longer current -- but if an action was
+			// actually dispatched to HandleAction (m.parseErr == nil), it
+			// already ran for real (possibly a destructive mutation) and
+			// must never be silently dropped: record Previous/undo and
+			// render it (applyUndoDelta's own doc comment), same as a
+			// current result would, just without touching
+			// Focused/Selection/LastShown/Pending (a newer, current turn
+			// may already hold its own fresher values there) or busy (the
+			// newer turn already owns it and will clear it itself). A parse
+			// error means nothing ever reached HandleAction -- there is
+			// nothing real to preserve, so that case is still dropped
+			// outright.
+			if m.parseErr == nil {
+				h.applyUndoDelta(m.state)
+				h.render(m.output, m.err)
+			}
 			return nil
 		}
 		// M2 (fix round r4 review): the action phase (OnStreamEvent's
-		// EventCompleted branch) owns busy for its own duration -- clear it
-		// here, the same way handleTurn/llmRequestReadyMsg clear the phase
-		// THEY own, now that this result is confirmed current (not stale).
+		// EventCompleted branch, re-armed if needed by OnStreamDone) owns
+		// busy for its own duration -- clear it here, the same way
+		// handleTurn/llmRequestReadyMsg clear the phase THEY own, now that
+		// this result is confirmed current (not stale).
 		h.model.SetBusy(false)
 		if m.parseErr != nil {
 			if m.trailing != "" {
@@ -936,4 +1006,9 @@ type actionMsg struct {
 	// the message outright (no render, no state write) if h.turnSeq has
 	// since moved on to a newer turn.
 	seq int64
+	// id is the stream this action's background work was dispatched for
+	// (fix round r5, M2): OnMsg uses it to release h.pendingAction[id], so
+	// OnStreamDone stops re-asserting busy for a stream whose action has
+	// already resolved.
+	id string
 }

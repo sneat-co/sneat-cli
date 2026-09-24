@@ -3,6 +3,7 @@ package chatapp
 import (
 	"context"
 	"io"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/strongo/aichat/ai/openaicompat"
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
+	"github.com/strongo/aichat/tui/stream"
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/data"
 	"github.com/sneat-co/sneat-cli/internal/aichat/pipeline"
@@ -722,28 +724,194 @@ func TestS1_ActionRunsOnSnapshot_SidebarPinDuringItSurvives(t *testing.T) {
 	}
 }
 
+// TestProbeR4_M2_BusySurvivesStreamDone_AndSubmitIsRefused is the reviewer's
+// real-runtime M2 regression from fix round r5 (adapted from
+// zz_m2_probe_test.go): chatshell's OWN handleStreamDone (tui/chatshell)
+// unconditionally clears busy the moment a stream's DoneMsg is handled --
+// which fires right after EventCompleted, well before OnStreamEvent's
+// background HandleAction work has even started, let alone finished. Fix
+// round r4's SetBusy(true) inside OnStreamEvent was necessary but not
+// sufficient: this test drives a REAL chatshell.Model through
+// EventCompleted then DoneMsg (via m.Update, matching how the real runtime
+// delivers them) and asserts busy survives DoneMsg, AND that the composer
+// actually refuses a submit attempt while the action is still running
+// (handleInputKey's own busy gate short-circuits before ever calling
+// h.Submit -- verified here by h.turnSeq staying put, since Submit's first
+// action is always atomic.AddInt64(&h.turnSeq, 1)). It then releases the
+// held-open action and drains it to prove busy is eventually cleared and
+// the action's result (Executed, Previous/undo) is still recorded once it
+// resolves.
+func TestProbeR4_M2_BusySurvivesStreamDone_AndSubmitIsRefused(t *testing.T) {
+	h, model := testHandler(t)
+	slow := &slowExecutor{FakeExecutor: &pipeline.FakeExecutor{}, entered: make(chan struct{}), release: make(chan struct{})}
+	h.pipeline.Executor = slow
+	todoRef := session.EntityRef{Type: sneatdomain.EntityTodo, Title: "Buy milk", Keys: map[string]string{"spaceID": "sp1", "list": "do", "itemID": "t1"}}
+	h.state.Focus(&todoRef)
+
+	const id = "turn-1"
+	seq := h.turnSeq + 1
+	h.turnSeq = seq
+	// StartStream (a real chatshell.Model method) sets m.streamID/m.busy the
+	// same way a real turn would; the empty iterator is never actually
+	// drained -- EventCompleted/DoneMsg are fed by hand below, exactly like
+	// a real SSE stream delivers them, without drain's 5ms-per-command
+	// budget (incompatible with this test's deliberately-held-open action;
+	// see TestS1_ActionRunsOnSnapshot_SidebarPinDuringItSurvives's own doc
+	// comment for why).
+	_ = h.model.StartStream(id, func(ctx context.Context) iter.Seq2[ai.Event, error] {
+		return func(yield func(ai.Event, error) bool) {}
+	})
+	sp := &pipeline.Splitter{}
+	sp.Feed(`Done. <sneat-action>{"kind":"todo.complete_todo","pronoun":true}</sneat-action>`)
+	h.splitters = map[string]*pipeline.Splitter{id: sp}
+	snapshot := *h.state
+	h.streamState = map[string]*session.State{id: &snapshot}
+	h.streamCtx = map[string]context.Context{id: context.Background()}
+	h.streamTurnSeq = map[string]int64{id: seq}
+
+	var m tea.Model = model
+	var cmd tea.Cmd
+	m, cmd = m.Update(stream.EventMsg{ID: id, Event: ai.Event{Type: ai.EventCompleted}})
+	h.model = m.(*chatshell.Model)
+	if !h.model.Busy() {
+		t.Fatal("model not busy right after EventCompleted")
+	}
+	if cmd == nil {
+		t.Fatal("EventCompleted produced a nil cmd -- the splitter/action setup above is wrong")
+	}
+
+	// Dispatch the action work (as a real tea.Program would) without
+	// blocking this goroutine -- slowExecutor holds it open until release.
+	done := make(chan tea.Msg, 1)
+	var dispatch func(tea.Cmd)
+	dispatch = func(c tea.Cmd) {
+		msg := c()
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, sub := range batch {
+				if sub != nil {
+					go dispatch(sub)
+				}
+			}
+			return
+		}
+		if _, ok := msg.(actionMsg); ok {
+			done <- msg
+		}
+	}
+	go dispatch(cmd)
+
+	select {
+	case <-slow.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleAction never reached the (blocked) executor")
+	}
+
+	// THE core regression: chatshell's real handleStreamDone runs BEFORE
+	// this method sees the message, so calling Update at all exercises its
+	// own unconditional busy=false -- our OnStreamDone must win the race by
+	// re-asserting busy synchronously, in the SAME Update call.
+	m, _ = m.Update(stream.DoneMsg{ID: id})
+	h.model = m.(*chatshell.Model)
+	if !h.model.Busy() {
+		t.Fatal("PROBE R4 M2: busy cleared by DoneMsg while HandleAction is still running -- composer would re-enable mid-action")
+	}
+
+	// A submit attempt while busy must be refused outright: handleInputKey
+	// returns before ever calling h.Submit, so turnSeq never advances.
+	seqBeforeSubmitAttempt := h.turnSeq
+	m, _ = m.Update(tea.KeyPressMsg{Text: "x", Code: 'x'})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	h.model = m.(*chatshell.Model)
+	if h.turnSeq != seqBeforeSubmitAttempt {
+		t.Fatalf("turnSeq advanced from %d to %d -- a submit attempt while busy must be refused, not start a new turn", seqBeforeSubmitAttempt, h.turnSeq)
+	}
+
+	close(slow.release)
+	var actionResult tea.Msg
+	select {
+	case actionResult = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the background HandleAction closure did not finish after releasing the executor")
+	}
+	m, _ = m.Update(actionResult)
+	h.model = m.(*chatshell.Model)
+
+	if len(slow.Executed) != 1 || slow.Executed[0].Kind != "todo.complete_todo" {
+		t.Fatalf("Executed = %+v, want exactly 1 todo.complete_todo", slow.Executed)
+	}
+	if h.model.Busy() {
+		t.Fatal("model still busy after the actionMsg was applied")
+	}
+	if h.state.Previous == nil || h.state.Previous.Kind != "todo.complete_todo" {
+		t.Fatalf("Previous = %+v, want the resolved action recorded once it actually resolved", h.state.Previous)
+	}
+}
+
 // TestOnMsg_ActionMsg_StaleSeqDropped_NoRenderNoStateWrite is S1's other
 // half: an actionMsg tagged with an OLD turn seq (a newer turn already
 // started -- e.g. Esc cancelled the one that produced it) must be dropped
 // outright, never rendered and never allowed to write its state snapshot
 // onto live state.
-func TestOnMsg_ActionMsg_StaleSeqDropped_NoRenderNoStateWrite(t *testing.T) {
+// TestOnMsg_ActionMsg_StaleSeq_StillRendersAndRecordsUndo_ButNotFocus is
+// S1's other half, UPDATED for fix round r5's review correction: a stale
+// actionMsg (an older turn's result, superseded by a newer one already in
+// flight) whose action nonetheless actually ran (m.parseErr == nil --
+// Splitter.Finish parsed fine, so HandleAction WAS called, for real) must
+// never be silently dropped outright the way a genuinely parse-failed one
+// still is -- whatever it did (or the error it hit) already happened, so it
+// is rendered and its Previous/undo recorded regardless of staleness (or
+// "undo" would stop working for a turn that genuinely executed). What it
+// must NOT do is let its OWN stale Focused/Selection/LastShown/Pending
+// snapshot overwrite live state a newer, current turn may already have
+// moved on from -- exactly the field-level split applyUndoDelta (vs.
+// applyStateDelta) makes.
+func TestOnMsg_ActionMsg_StaleSeq_StillRendersAndRecordsUndo_ButNotFocus(t *testing.T) {
 	h, model := testHandler(t)
 	h.turnSeq = 5 // simulate a newer turn already in flight
 
 	liveFocused := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Live", Keys: map[string]string{"spaceID": "sp1", "happeningID": "live"}}
 	h.state.Focus(&liveFocused)
 
-	staleState := session.State{Focused: &session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Stale", Keys: map[string]string{"spaceID": "sp1", "happeningID": "stale"}}}
+	staleTarget := session.EntityRef{Type: sneatdomain.EntityTodo, Title: "Stale todo", Keys: map[string]string{"spaceID": "sp1", "list": "do", "itemID": "stale"}}
+	staleState := session.State{
+		Focused:  &session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Stale", Keys: map[string]string{"spaceID": "sp1", "happeningID": "stale"}},
+		Previous: &session.Action{Kind: "todo.complete_todo", Target: &staleTarget, Undo: &session.Action{Kind: "todo.reopen_todo", Target: &staleTarget}},
+	}
 	var m tea.Model = model
 	m, _ = m.Update(actionMsg{output: pipeline.Output{Text: "Done."}, state: staleState, seq: 4})
 	h.model = m.(*chatshell.Model)
 
-	if strings.Contains(h.model.View().Content, "Done.") {
-		t.Fatal("a stale actionMsg (seq 4, current turnSeq 5) must not render its Output")
+	if !strings.Contains(h.model.View().Content, "Done.") {
+		t.Fatal("a stale-but-EXECUTED actionMsg (m.parseErr == nil: HandleAction actually ran) must still render its Output")
 	}
 	if h.state.Focused == nil || !h.state.Focused.Same(liveFocused) {
-		t.Fatalf("Focused = %+v, want the live value untouched by a dropped stale actionMsg", h.state.Focused)
+		t.Fatalf("Focused = %+v, want the live value untouched by a stale actionMsg's own Focused snapshot", h.state.Focused)
+	}
+	if h.state.Previous == nil || h.state.Previous.Kind != "todo.complete_todo" || h.state.Previous.Undo == nil {
+		t.Fatalf("Previous = %+v, want the stale-but-executed action's Previous/undo recorded regardless of staleness", h.state.Previous)
+	}
+}
+
+// TestOnMsg_ActionMsg_StaleSeq_ParseErr_StillDropped covers the OTHER stale
+// case: a parse error (Splitter.Finish itself failed) means HandleAction
+// was NEVER called -- nothing real happened, so a stale result here is
+// still dropped outright, exactly as before fix round r5's correction.
+func TestOnMsg_ActionMsg_StaleSeq_ParseErr_StillDropped(t *testing.T) {
+	h, model := testHandler(t)
+	h.turnSeq = 5
+
+	liveFocused := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Live", Keys: map[string]string{"spaceID": "sp1", "happeningID": "live"}}
+	h.state.Focus(&liveFocused)
+
+	var m tea.Model = model
+	m, _ = m.Update(actionMsg{parseErr: pipeline.ErrActionNotTrailing, seq: 4})
+	h.model = m.(*chatshell.Model)
+
+	if strings.Contains(h.model.View().Content, "couldn't parse") || strings.Contains(h.model.View().Content, "no action taken") {
+		t.Fatal("a stale actionMsg with a parse error (nothing ever executed) must still be dropped outright")
+	}
+	if h.state.Previous != nil {
+		t.Fatalf("Previous = %+v, want nil -- nothing executed for a parse-error result", h.state.Previous)
 	}
 }
 
