@@ -10,6 +10,8 @@ package data
 import (
 	"context"
 	"time"
+
+	calendariusdbo "github.com/sneat-co/calendarius/backend/dbo4calendarius"
 )
 
 // Happening is the sliver of a calendarius happening the pipeline needs to
@@ -34,6 +36,14 @@ type Happening struct {
 	// not a resolved next-occurrence -- callers must not treat it as "the next
 	// occurrence" for scheduling decisions.
 	Recurring bool
+	// Slot is the full calendarius slot Start/End/SlotID/Recurring were
+	// derived from (B2): a mutation that changes only the time MUST send back
+	// every other slot field (Weekdays/Locations/pricing/participants/TZ)
+	// unchanged -- calendarius's update_slot and adjust_slot both replace the
+	// slot wholesale, so an executor that reconstructs a bare
+	// HappeningSlotTiming silently drops everything else. Nil when the
+	// happening has no slots (see SlotID).
+	Slot *calendariusdbo.HappeningSlot
 }
 
 // Todo is one listus list item, on either the "do" (todo) or "buy"

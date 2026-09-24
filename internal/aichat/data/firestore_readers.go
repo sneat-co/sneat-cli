@@ -10,6 +10,7 @@ import (
 	"github.com/dal-go/record"
 	"github.com/sneat-co/calendarius/backend/const4calendarius"
 	calendariusdbo "github.com/sneat-co/calendarius/backend/dbo4calendarius"
+	"github.com/sneat-co/listus/backend/dal4listus"
 	listusdbo "github.com/sneat-co/listus/backend/dbo4listus"
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
@@ -96,32 +97,37 @@ func (r *firestoreHappenings) list(ctx context.Context, spaceID string) ([]calen
 // date+time as separate strings; this MVP slice treats them as UTC, which is
 // wrong for a user in another timezone -- a follow-up, not silently ignored:
 // see the final report).
-func firstSlotWindow(h calendariusdbo.HappeningDbo) (start, end time.Time, slotID string, recurring bool) {
-	for id, slot := range h.Slots {
-		if slot == nil {
+func firstSlotWindow(h calendariusdbo.HappeningDbo) (start, end time.Time, slotID string, recurring bool, slot *calendariusdbo.HappeningSlot) {
+	for id, s := range h.Slots {
+		if s == nil {
 			continue
 		}
-		recurring = recurring || slot.Repeats != "" && slot.Repeats != calendariusdbo.RepeatPeriodOnce
-		st, sErr := time.Parse("2006-01-02 15:04", slot.Start.Date+" "+slot.Start.Time)
+		recurring = recurring || s.Repeats != "" && s.Repeats != calendariusdbo.RepeatPeriodOnce
+		st, sErr := time.Parse("2006-01-02 15:04", s.Start.Date+" "+s.Start.Time)
 		if sErr != nil {
 			continue
 		}
 		if start.IsZero() || st.Before(start) {
 			start = st
 			slotID = id
-			if slot.End.Time != "" {
-				if et, eErr := time.Parse("2006-01-02 15:04", slot.End.Date+" "+slot.End.Time); eErr == nil {
+			// Copy, not the map's own pointer: a later mutation on Happening's
+			// Slot (e.g. changing Timing for a reschedule) must never alias
+			// h.Slots, which a caller may still hold/reuse.
+			cp := *s
+			slot = &cp
+			if s.End.Time != "" {
+				if et, eErr := time.Parse("2006-01-02 15:04", s.End.Date+" "+s.End.Time); eErr == nil {
 					end = et
 				}
 			}
 		}
 	}
-	return start, end, slotID, recurring
+	return start, end, slotID, recurring, slot
 }
 
 func toHappening(spaceID, id string, h calendariusdbo.HappeningDbo) Happening {
-	start, end, slotID, recurring := firstSlotWindow(h)
-	return Happening{ID: id, SpaceID: spaceID, Title: h.Title, Start: start, End: end, SlotID: slotID, Recurring: recurring}
+	start, end, slotID, recurring, slot := firstSlotWindow(h)
+	return Happening{ID: id, SpaceID: spaceID, Title: h.Title, Start: start, End: end, SlotID: slotID, Recurring: recurring, Slot: slot}
 }
 
 func (r *firestoreHappenings) Window(ctx context.Context, spaceID string, from, to time.Time) ([]Happening, error) {
@@ -207,10 +213,12 @@ func (r *firestoreTodos) getList(ctx context.Context, spaceID, listKey string) (
 	}
 	defer func() { _ = db.Close() }()
 
-	spaceKey := record.NewKeyWithID("spaces", spaceID)
-	moduleKey := record.NewKeyWithParentAndID(spaceKey, "ext", "listus")
+	// m2: reuse listus's own key helper (dal4listus.NewListKey) rather than a
+	// hand-rolled spaces/{id}/ext/listus/lists/{key} path -- the same fix B1
+	// applied to calendarius's happening key.
 	var l listusdbo.ListDbo
-	rec := record.NewRecordWithData(record.NewKeyWithParentAndID(moduleKey, "lists", listKey), &l)
+	key := dal4listus.NewListKey(coretypes.SpaceID(spaceID), listusdbo.ListKey(listKey))
+	rec := record.NewRecordWithData(key, &l)
 	err = db.DAL().RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 		return tx.Get(ctx, rec)
 	})
