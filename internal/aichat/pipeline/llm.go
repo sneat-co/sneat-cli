@@ -177,7 +177,7 @@ func (p Pipeline) DynamicBlocks(ctx context.Context, spaceID string, scopes []st
 // LLM was actually told, not just what Sneat's resolver later works out from
 // Keys alone. st may be nil (no session yet); a nil/empty state still yields
 // the "now" line.
-func (p Pipeline) sessionBlock(st *session.State) ai.ContextBlock {
+func (p Pipeline) sessionBlock(st *session.State, spaceID string) ai.ContextBlock {
 	now := p.now()
 	tz := p.TZ
 	if tz == "" {
@@ -193,10 +193,31 @@ func (p Pipeline) sessionBlock(st *session.State) ai.ContextBlock {
 	if len(st.Selection) > 0 {
 		text += "Selected: " + entityTitles(st.Selection) + "\n"
 	}
-	if len(st.Sidebar) > 0 {
-		text += "Sidebar (pinned): " + entityTitles(st.Sidebar) + "\n"
+	if pins := currentSpacePins(st.Sidebar, spaceID); len(pins) > 0 {
+		// m3 (fix round r4 review): an OTHER-space pin is never told to the
+		// LLM as something "pinned" in THIS session -- applySpaceChange
+		// deliberately leaves Sidebar pins in place across a space switch
+		// (so switching back doesn't lose them), so without this filter the
+		// model could be handed a title from a space that isn't even the
+		// one this turn is running against, and might reference it as if it
+		// were resolvable ("move it") when it silently is not (Resolver's
+		// own resolvePronoun now excludes it too).
+		text += "Sidebar (pinned): " + entityTitles(pins) + "\n"
 	}
 	return ai.ContextBlock{Scope: sneatdomain.ModuleGeneral, Kind: ai.ContextDynamic, Name: "session", Text: text}
+}
+
+// currentSpacePins filters refs to the ones belonging to spaceID (or
+// carrying no spaceID key at all, e.g. a test double) -- see sessionBlock's
+// doc comment.
+func currentSpacePins(refs []session.EntityRef, spaceID string) []session.EntityRef {
+	out := make([]session.EntityRef, 0, len(refs))
+	for _, r := range refs {
+		if pinSpace := r.Keys["spaceID"]; pinSpace == "" || pinSpace == spaceID {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func entityTitles(refs []session.EntityRef) string {
@@ -250,7 +271,7 @@ func mentionsPerson(text string) bool {
 // itself is a stateless value with nowhere to keep it between turns.
 func (p Pipeline) StreamRequest(ctx context.Context, text string, st *session.State, spaceID string, d *decision.Decision, focusedScopes []string, history []ai.Message) (ai.ChatRequest, ctxmgr.Report) {
 	available := append([]ai.ContextBlock{}, StaticBlocks()...)
-	available = append(available, p.sessionBlock(st))
+	available = append(available, p.sessionBlock(st, spaceID))
 
 	// The SelectAll (no-decision) path defaults to calendar+todo as its
 	// REQUIRED scopes -- contacts is never assumed required just because Jev

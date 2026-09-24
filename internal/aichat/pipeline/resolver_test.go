@@ -108,6 +108,25 @@ func TestResolver_PronounFallsBackToSidebar(t *testing.T) {
 	}
 }
 
+// TestResolver_PronounExcludesOtherSpaceSidebarPin is m3 (fix round r4
+// review): applySpaceChange deliberately leaves Sidebar pins in place
+// across a space switch (so switching back doesn't lose them) -- a pin from
+// a space the session has since left must never become "it" just because
+// nothing else in the tiered fallback matched.
+func TestResolver_PronounExcludesOtherSpaceSidebarPin(t *testing.T) {
+	otherSpacePin := session.EntityRef{Type: sneatdomain.EntityTodo, Title: "Old space item", Keys: map[string]string{"spaceID": "spOLD", "itemID": "t1"}}
+	st := session.State{}
+	st.Pin(otherSpacePin)
+	r := Resolver{Readers: testReaders()}
+	res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityTodo, Pronoun: true}, st, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeNone {
+		t.Fatalf("res = %+v, want OutcomeNone -- the only sidebar pin belongs to another space (spOLD, not sp1)", res)
+	}
+}
+
 // TestResolver_PronounFocusedWinsOverSidebarAmbiguity is the S3 regression:
 // a flat merge of session.State.Candidates() would make this ambiguous
 // (focused happening + a DIFFERENT happening pinned to the sidebar, same

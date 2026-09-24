@@ -81,7 +81,7 @@ type Result struct {
 // Any other expression reference searches the matching reader by title/name.
 func (r Resolver) Resolve(ctx context.Context, ref decision.Reference, st session.State, spaceID string) (Result, error) {
 	if ref.Pronoun {
-		return resolvePronoun(ref.Kind, st), nil
+		return resolvePronoun(ref.Kind, st, spaceID), nil
 	}
 	if pos, ok := parseOrdinal(ref.Expression); ok {
 		// m2: only pick a LastShown item of the KIND this reference actually
@@ -160,7 +160,17 @@ func (r Resolver) Resolve(ctx context.Context, ref decision.Reference, st sessio
 }
 
 // resolvePronoun implements the tiered rank order documented on Resolve.
-func resolvePronoun(kind string, st session.State) Result {
+// spaceID (m3, fix round r4 review) excludes an OTHER-space sidebar pin
+// from ever being a pronoun candidate: applySpaceChange (chatapp) clears
+// Focused/Selection/LastShown/Previous on a space switch, but deliberately
+// leaves Sidebar pins in place (so switching back doesn't lose them) --
+// meaning a pin from a space the session has since left could otherwise
+// silently become "it" the moment nothing else in the tiered fallback
+// matches, letting a bare pronoun resolve (and, without SneatExecutor's own
+// defense-in-depth check, potentially act) against the WRONG space's
+// entity. Focused/Selection/LastShown/Previous need no such filter -- they
+// are already current-space by construction.
+func resolvePronoun(kind string, st session.State, spaceID string) Result {
 	if st.Focused != nil && st.Focused.Type == kind {
 		return Result{Outcome: OutcomeOne, Candidates: []session.EntityRef{*st.Focused}}
 	}
@@ -191,7 +201,11 @@ func resolvePronoun(kind string, st session.State) Result {
 		add(*st.Previous.Target)
 	}
 	for i := len(st.Sidebar) - 1; i >= 0; i-- {
-		add(st.Sidebar[i])
+		pin := st.Sidebar[i]
+		if pinSpace := pin.Keys["spaceID"]; pinSpace != "" && pinSpace != spaceID {
+			continue // m3: another space's pin is never a pronoun candidate
+		}
+		add(pin)
 	}
 	return classify(rest)
 }

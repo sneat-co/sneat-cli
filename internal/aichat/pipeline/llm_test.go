@@ -192,6 +192,31 @@ func TestStreamRequest_SessionBlockCarriesFocusSelectionSidebarTitles(t *testing
 	}
 }
 
+// TestStreamRequest_SessionBlockExcludesOtherSpaceSidebarPin is m3 (fix
+// round r4 review): a sidebar pin tagged with a DIFFERENT space's ID must
+// never be named to the LLM as something pinned in THIS session -- Resolver
+// already refuses to resolve a pronoun against it (see
+// TestResolver_PronounExcludesOtherSpaceSidebarPin), and the LLM context
+// must agree, or the model could reference a title that isn't actually
+// resolvable in the space this turn is running against.
+func TestStreamRequest_SessionBlockExcludesOtherSpaceSidebarPin(t *testing.T) {
+	p := Pipeline{Now: func() time.Time { return time.Date(2026, 9, 24, 15, 30, 0, 0, time.UTC) }, TZ: "Europe/Paris"}
+	st := &session.State{
+		Sidebar: []session.EntityRef{
+			{Type: "contact", Title: "Alice", Keys: map[string]string{"spaceID": "sp1"}},
+			{Type: "contact", Title: "Bob (other space)", Keys: map[string]string{"spaceID": "spOLD"}},
+		},
+	}
+	req, _ := p.StreamRequest(context.Background(), "hi", st, "sp1", nil, nil, nil)
+	block := findBlock(t, req.Context, "session")
+	if !strings.Contains(block.Text, "Alice") {
+		t.Fatalf("session block = %q, want the CURRENT-space pin (Alice)", block.Text)
+	}
+	if strings.Contains(block.Text, "Bob") {
+		t.Fatalf("session block = %q, must not name the OTHER-space pin (Bob)", block.Text)
+	}
+}
+
 // TestStreamRequest_ContactsCountOnlyUnlessMentionedOrRequired covers S7's
 // contacts cap: a turn that neither requires the contacts scope nor
 // plausibly mentions a person gets a count, not the full name list; naming
