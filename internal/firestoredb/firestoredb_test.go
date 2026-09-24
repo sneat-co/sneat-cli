@@ -34,6 +34,19 @@ func TestOpen_RealConstructor(t *testing.T) {
 	}
 }
 
+// TestOpen_RealConstructor_ClientError exercises newFirestoreConn's real
+// body's own error branch (firestore.NewClient failing) directly, not via
+// an overridden seam: an empty Project ID is rejected synchronously by the
+// SDK itself ("projectID was empty"), with no network or credentials
+// needed, closing the one gap TestOpen_RealConstructor's happy-path calls
+// leave (they never make firestore.NewClient itself fail).
+func TestOpen_RealConstructor_ClientError(t *testing.T) {
+	_, err := Open(context.Background(), config.Config{Project: ""}, nil)
+	if err == nil {
+		t.Fatal("Open() with an empty Project = nil error, want the SDK's own validation error")
+	}
+}
+
 // TestOpen_ConstructorError propagates a seam failure straight through Open.
 func TestOpen_ConstructorError(t *testing.T) {
 	wantErr := errors.New("boom")
