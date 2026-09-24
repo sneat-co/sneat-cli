@@ -150,17 +150,23 @@ const calendarCancelAdjustmentKind = sneatdomain.ModuleCalendar + ".cancel_adjus
 //     rewrite the template every future occurrence inherits. adjust_slot's
 //     Date identifies the calendar day the ORIGINAL occurrence being
 //     deviated lives on (facade4calendarius/happening_slot_adjust.go stores
-//     the adjustment keyed by that date), NOT the new date the occurrence is
-//     moving to -- the Slot payload's own Start/End carries the new time,
-//     which MAY be on a different date entirely, and calendarius's
-//     adjustment mechanism is explicitly documented for exactly this ("time
-//     changed for a specific date, or first class has been canceled"), so a
-//     move-to-another-day is a single adjust_slot call with Date=original,
-//     Slot.Start=new. This executor does not implement calendarius's
-//     alternative (cancel the original occurrence + adjust a new one) --
-//     it is not needed for the mechanism to work and would double the
-//     mutations and undo surface for no benefit this MVP slice can verify.
-//     Moving the WHOLE series is out of MVP scope.
+//     the adjustment keyed by that date) -- a SAME-DAY retime (a new time of
+//     day, same calendar day) is exactly this: Date=that day, the Slot
+//     payload's own Start/End carries the new time.
+//
+// BLOCKER ruling (fix round r3b review): a recurring occurrence CANNOT be
+// moved to a DIFFERENT calendar day via adjust_slot, despite the mechanism
+// LOOKING like it should support it (Date=original, Slot.Start=new day) --
+// calendarius's real read paths never honour a cross-day Slot.Start:
+// calendar-day.ts's joinRecurringsWithSinglesAndEmit attaches a deviation to
+// its Date (the ORIGINAL day) regardless of what the deviation's own
+// Slot.Start date says, and its timing badge reads only start/end TIME;
+// dbo4calendarius.Occurrences ignores the Date field entirely too. The
+// mutation would silently "succeed" while doing nothing a user can observe.
+// So this executor now REFUSES a cross-day move outright (see
+// crossDayMoveRefusal) rather than sending a request that looks correct and
+// isn't -- same-day retime is unaffected. Moving the WHOLE series remains
+// separately out of MVP scope.
 //
 // Both paths re-read the happening's current state. Undo for a single
 // happening re-runs this same action with the original "when" (so it too
@@ -184,15 +190,22 @@ func (e SneatExecutor) rescheduleHappening(ctx context.Context, spaceID string, 
 	// anchor is the ORIGINAL occurrence being modified: for a single
 	// happening that is simply its stored date; for a recurring one,
 	// current.Start is the stored TEMPLATE date (documented HappeningsReader
-	// limitation), so recurringAnchor resolves the actual next/current real
-	// occurrence date from the recurrence rule instead. parseWhen resolves
-	// the NEW time relative to this same anchor (a bare "4" keeps anchor's
-	// date; an explicit "Wednesday 16:00" moves to a different day/time
-	// entirely, still anchored off the ORIGINAL occurrence being moved).
-	anchor := recurringAnchor(e.now(), current)
+	// limitation), so occurrenceAnchor resolves the actual occurrence date --
+	// M1: preferring action.Target.Keys["date"] (the occurrence the REFERENCE
+	// itself named, e.g. "Friday's yoga") when set, else falling back to
+	// recurringAnchor's "next/current occurrence from now" guess. parseWhen
+	// resolves the NEW time relative to this same anchor (a bare "4" keeps
+	// anchor's date -- now the REFERENCED occurrence's date, not whichever
+	// one recurringAnchor happened to guess; an explicit "Wednesday 16:00"
+	// still names its own day/time entirely, still anchored off the ORIGINAL
+	// occurrence being moved for the cross-day-refusal comparison below).
+	anchor := occurrenceAnchor(e.now(), current, action.Target.Keys["date"])
 	newStart, ok := parseWhen(e.now(), anchor, when)
 	if !ok {
 		return nil, fmt.Errorf("pipeline: could not understand the new time %q", when)
+	}
+	if current.Recurring && !sameCalendarDay(anchor, newStart) {
+		return nil, fmt.Errorf("pipeline: %s", crossDayMoveRefusal)
 	}
 	duration := time.Hour
 	if !current.Start.IsZero() && !current.End.IsZero() && current.End.After(current.Start) {
@@ -347,6 +360,41 @@ func weekdayCodeMatches(codes []dbo4calendarius.WeekdayCode, wd time.Weekday) bo
 	return false
 }
 
+// crossDayMoveRefusal is the BLOCKER ruling's fixed refusal text (fix round
+// r3b review): moving a recurring happening's single occurrence to a
+// DIFFERENT calendar day via one adjust_slot call (Date=original occurrence,
+// Slot.Start=new day) looks correct in this MVP's own data model, but
+// calendarius's real read paths never honour it -- the web calendar's day
+// grouping (calendar-day.ts's joinRecurringsWithSinglesAndEmit) attaches a
+// deviation to the ORIGINAL day regardless of what the deviation's own
+// Slot.Start date says, and its timing badge reads only the deviation's
+// start/end TIME, not its date; dbo4calendarius.Occurrences ignores the
+// Date field entirely too. A cross-day move via adjust_slot therefore
+// silently does nothing a user can observe: the occurrence still renders on
+// its original day, just at the (wrong, because never actually applied
+// there) new time. Until calendarius itself supports moving one occurrence
+// to another day, this MVP slice refuses the request outright -- both here
+// (the executor, a hard backstop) and in rescheduleSummary (so the refusal
+// is shown BEFORE asking to confirm, not after) -- rather than silently
+// failing to move it. Same-day retime (a new time, same calendar day) is
+// unaffected; moving the WHOLE series remains separately out of scope.
+const crossDayMoveRefusal = "I can only retime this occurrence on the same day (moving one occurrence to another day isn't supported yet)."
+
+// sameCalendarDay reports whether a and b fall on the same Y-M-D, comparing
+// in a's own location: a recurring happening's anchor is already decoded in
+// the slot's own zone, and b (a newly parsed "when") is converted into that
+// same zone before comparing, so a same-day retime that merely crosses a
+// DST boundary, or a bare time-of-day answer, is never mistaken for a
+// cross-day move.
+func sameCalendarDay(a, b time.Time) bool {
+	if loc := a.Location(); loc != nil {
+		b = b.In(loc)
+	}
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
 // parseWhen resolves a slot's free-text "when" ("Friday 16:00", "Friday",
 // "4", "tomorrow 4pm") to an absolute time.Time, reusing sneat-ai-backend's
 // temporal package (per the reuse-existing-sneat-code rule) rather than a
@@ -404,16 +452,48 @@ func dateTimeOf(start, end time.Time) dbo4calendarius.Timing {
 	}
 }
 
+// occurrenceAnchor resolves the ORIGINAL-occurrence baseline cancel/
+// reschedule both anchor off, overriding recurringAnchor's own "next/current
+// occurrence from now" guess with refDate when one is given (M1, fix round
+// r3b review): refDate is the occurrence date the RESOLVER already matched
+// straight from the reference text itself ("cancel Friday's yoga", "move
+// Friday's yoga to 16:00" -- significantTerms' day window, carried on
+// session.EntityRef.Keys["date"] by Resolver.Resolve) or from a week-view
+// row's own focused occurrence (chatapp's blockFor sets the same key when a
+// user picks a recurring row). Without this, "move Friday's yoga to 16:00"
+// silently retimed WHATEVER occurrence recurringAnchor happened to guess
+// (typically the next one from "now", e.g. Monday's, not Friday's) because
+// a bare time-only "when" carries no date of its own for parseWhen/
+// resolveOccurrenceDate to fall back on. Only recurringAnchor's
+// time-of-day is kept; refDate supplies the calendar day. An unparseable or
+// empty refDate leaves recurringAnchor's own guess untouched.
+func occurrenceAnchor(now time.Time, current data.Happening, refDate string) time.Time {
+	anchor := recurringAnchor(now, current)
+	if refDate == "" {
+		return anchor
+	}
+	d, err := time.Parse("2006-01-02", refDate)
+	if err != nil {
+		return anchor
+	}
+	loc := anchor.Location()
+	if loc == nil {
+		loc = now.Location()
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(), anchor.Hour(), anchor.Minute(), 0, 0, loc)
+}
+
 // resolveOccurrenceDate resolves WHICH occurrence of a recurring happening
 // an action names, for cancelHappening (and available to the confirmation
 // builder in pipeline.go, which must compute the identical date BEFORE
 // asking -- B1 ruling). An explicit date/weekday word in when ("Friday",
-// "Friday's yoga") wins over the default "next/current occurrence from now"
-// (recurringAnchor); a prior version ignored when entirely and always
-// cancelled recurringAnchor's occurrence, silently cancelling the wrong day
-// whenever the user named one explicitly.
-func resolveOccurrenceDate(now time.Time, current data.Happening, when string) time.Time {
-	anchor := recurringAnchor(now, current)
+// "Friday's yoga") wins over refDate (M1's reference-carried occurrence
+// date), which in turn wins over occurrenceAnchor's own
+// recurringAnchor-based default; a prior version ignored when (and refDate)
+// entirely and always cancelled recurringAnchor's occurrence, silently
+// cancelling the wrong day whenever the user named one explicitly.
+func resolveOccurrenceDate(now time.Time, current data.Happening, when, refDate string) time.Time {
+	anchor := occurrenceAnchor(now, current, refDate)
 	d, ok := parseTemporalPhrase(now, when)
 	if !ok {
 		return anchor
@@ -471,7 +551,7 @@ func (e SneatExecutor) cancelHappening(ctx context.Context, spaceID string, acti
 	}
 	undoArgs := map[string]string{}
 	if current.Recurring {
-		occ := resolveOccurrenceDate(e.now(), current, action.Args["when"])
+		occ := resolveOccurrenceDate(e.now(), current, action.Args["when"], action.Target.Keys["date"])
 		req.Date = occ.Format("2006-01-02")
 		req.SlotID = current.SlotID
 		undoArgs["date"] = req.Date

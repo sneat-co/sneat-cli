@@ -314,13 +314,24 @@ func happeningRowsInWindow(hs []data.Happening, from, to time.Time, onlyNextOccu
 	var refs []session.EntityRef
 	var rows []controls.HappeningRow
 	for _, h := range hs {
-		ref := session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title,
-			Keys: map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}}
 		occs := projectOccurrences(h, from, to)
 		if onlyNextOccurrence && len(occs) > 1 {
 			occs = occs[:1] // projectOccurrences returns them chronologically
 		}
 		for _, occ := range occs {
+			// M1 (fix round r3b review): a PER-OCCURRENCE ref, not one shared
+			// ref for every occurrence a recurring happening contributes to
+			// this window -- picking a row must focus THAT occurrence
+			// (Keys["date"]), not an occurrence-less reference that a later
+			// "cancel it"/"move it to 16:00" can only guess at via
+			// recurringAnchor's "next from now", which need not be the row
+			// the user actually picked (e.g. picking Friday's row while
+			// today is Monday).
+			keys := map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}
+			if h.Recurring {
+				keys["date"] = occ.start.Format("2006-01-02")
+			}
+			ref := session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title, Keys: keys}
 			refs = append(refs, ref)
 			rows = append(rows, controls.HappeningRow{Ref: ref, Title: h.Title, Start: occ.start, End: occ.end, Recurring: h.Recurring})
 		}
@@ -516,7 +527,14 @@ func (p Pipeline) resolveAndAct(ctx context.Context, kind string, ref decision.R
 	var confirmRow *controls.HappeningRow
 	switch kind {
 	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening:
-		if resolved, row, ok := p.rescheduleSummary(ctx, spaceID, target, slots["when"]); ok {
+		resolved, row, ok, refusal := p.rescheduleSummary(ctx, spaceID, target, slots["when"])
+		// BLOCKER ruling (fix round r3b review): refuse a recurring cross-day
+		// move BEFORE asking -- no Pending confirmation staged at all, so
+		// there is nothing to say "yes" to that would silently do nothing.
+		if refusal != "" {
+			return Output{Text: refusal}, nil
+		}
+		if ok {
 			summary = resolved
 			confirmRow = &row
 		}
@@ -654,7 +672,7 @@ func (p Pipeline) cancelSummary(ctx context.Context, spaceID string, target sess
 		row := controls.HappeningRow{Ref: target, Title: title, Start: current.Start, End: current.End}
 		return fmt.Sprintf("Cancel %q?", title), row, true
 	}
-	occ := resolveOccurrenceDate(p.now(), current, when)
+	occ := resolveOccurrenceDate(p.now(), current, when, target.Keys["date"])
 	end := occ
 	if !current.End.IsZero() && !current.Start.IsZero() {
 		end = occ.Add(current.End.Sub(current.Start))
@@ -708,22 +726,30 @@ func (p Pipeline) pickFromLastShown(text string, st *session.State) (Output, boo
 // and the eventual mutation resolve the anchor date/timezone identically.
 // ok is false when the happening can't be read or "when" can't be parsed;
 // the caller falls back to the plain summaryFor text and no card rather
-// than a blank confirmation. It also returns the resolved new time as a
+// than a blank confirmation. refusal is non-empty when the move must be
+// REFUSED outright -- a cross-day move of a recurring occurrence (BLOCKER
+// ruling, fix round r3b review; see sneatexecutor.go's crossDayMoveRefusal
+// doc comment) -- so the caller shows the refusal text and stages NO
+// Pending confirmation at all, rather than asking "yes/no" for a move that
+// would silently do nothing. It also returns the resolved new time as a
 // controls.HappeningRow (S5: the confirmation card shows it, not just
 // prose) -- End is shifted by the SAME duration the happening already had,
 // since "move it to Friday" only ever changes the start.
-func (p Pipeline) rescheduleSummary(ctx context.Context, spaceID string, target session.EntityRef, when string) (string, controls.HappeningRow, bool) {
+func (p Pipeline) rescheduleSummary(ctx context.Context, spaceID string, target session.EntityRef, when string) (text string, row controls.HappeningRow, ok bool, refusal string) {
 	if p.Readers.Happenings == nil || when == "" {
-		return "", controls.HappeningRow{}, false
+		return "", controls.HappeningRow{}, false, ""
 	}
 	current, err := p.Readers.Happenings.Get(ctx, spaceID, target.Keys["happeningID"])
 	if err != nil || current.Slot == nil {
-		return "", controls.HappeningRow{}, false
+		return "", controls.HappeningRow{}, false, ""
 	}
-	anchor := recurringAnchor(p.now(), current)
+	anchor := occurrenceAnchor(p.now(), current, target.Keys["date"])
 	newStart, ok := parseWhen(p.now(), anchor, when)
 	if !ok {
-		return "", controls.HappeningRow{}, false
+		return "", controls.HappeningRow{}, false, ""
+	}
+	if current.Recurring && !sameCalendarDay(anchor, newStart) {
+		return "", controls.HappeningRow{}, false, crossDayMoveRefusal
 	}
 	loc := newStart.Location()
 	if current.Slot.TimeZone != "" {
@@ -744,8 +770,8 @@ func (p Pipeline) rescheduleSummary(ctx context.Context, spaceID string, target 
 	if current.Recurring {
 		occurrence = " (this occurrence only, not the whole series)"
 	}
-	row := controls.HappeningRow{Ref: target, Title: title, Start: newStart, End: newEnd, Recurring: current.Recurring}
-	return fmt.Sprintf("Move %q to %s%s?", title, newStart.Format("Mon Jan 2 15:04 MST"), occurrence), row, true
+	row = controls.HappeningRow{Ref: target, Title: title, Start: newStart, End: newEnd, Recurring: current.Recurring}
+	return fmt.Sprintf("Move %q to %s%s?", title, newStart.Format("Mon Jan 2 15:04 MST"), occurrence), row, true, ""
 }
 
 func (p Pipeline) runAction(ctx context.Context, spaceID string, action session.Action, st *session.State) (Output, error) {

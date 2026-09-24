@@ -244,6 +244,51 @@ func TestResolver_PossessiveWeekday(t *testing.T) {
 	if res.Outcome != OutcomeOne || res.Candidates[0].Keys["happeningID"] != "fri" {
 		t.Fatalf("res = %+v, want ONLY the Friday yoga (possessive weekday narrowed the window)", res)
 	}
+	if res.Candidates[0].Keys["date"] != "2026-09-25" {
+		t.Fatalf("Keys[date] = %q, want 2026-09-25 -- M1: the occurrence the reference itself named must be carried", res.Candidates[0].Keys["date"])
+	}
+}
+
+// TestResolver_ExpressionNarrowedByTemporalWord_CarriesOccurrenceDate is M1
+// (fix round r3b review): a reference's temporal word doesn't just narrow
+// the search window, it names WHICH occurrence the user means -- resolved
+// on Keys["date"] so cancel/reschedule use THIS occurrence via
+// occurrenceAnchor, not recurringAnchor's own "next from now" guess.
+func TestResolver_ExpressionNarrowedByTemporalWord_CarriesOccurrenceDate(t *testing.T) {
+	now := time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC) // h1 (Sep 26) is "tomorrow"
+	r := Resolver{Readers: testReaders(), Now: func() time.Time { return now }}
+	res, err := r.Resolve(context.Background(),
+		decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "my dentist appointment tomorrow"},
+		session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeOne {
+		t.Fatalf("res = %+v", res)
+	}
+	if res.Candidates[0].Keys["date"] != "2026-09-26" {
+		t.Fatalf("Keys[date] = %q, want 2026-09-26 (\"tomorrow\")", res.Candidates[0].Keys["date"])
+	}
+}
+
+// TestResolver_ExpressionNoTemporalWord_NoDateKey covers the other half: a
+// reference naming no day at all ("the dentist appointment") carries no
+// Keys["date"] -- occurrenceAnchor must fall back to recurringAnchor's own
+// guess for it, not a spuriously-set empty/wrong date.
+func TestResolver_ExpressionNoTemporalWord_NoDateKey(t *testing.T) {
+	r := Resolver{Readers: testReaders(), Now: func() time.Time { return time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC) }}
+	res, err := r.Resolve(context.Background(),
+		decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "standup"},
+		session.State{}, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeOne {
+		t.Fatalf("res = %+v", res)
+	}
+	if _, ok := res.Candidates[0].Keys["date"]; ok {
+		t.Fatalf("Keys = %+v, want no \"date\" key -- the reference named no day", res.Candidates[0].Keys)
+	}
 }
 
 // TestResolver_OrdinalFiltersByKind covers m2: "2" after a happenings

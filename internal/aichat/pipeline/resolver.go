@@ -117,8 +117,18 @@ func (r Resolver) Resolve(ctx context.Context, ref decision.Reference, st sessio
 		hs = filterByWordSet(hs, terms)
 		hs = filterByWindow(hs, window)
 		return classify(toEntityRefs(hs, func(h data.Happening) session.EntityRef {
-			return session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title,
-				Keys: map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}}
+			keys := map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}
+			// M1 (fix round r3b review): a temporal word in the reference
+			// ("Friday's yoga") names WHICH occurrence the user means, not
+			// just a search window -- carry it on Keys["date"] so
+			// cancel/reschedule use THIS occurrence (via occurrenceAnchor)
+			// instead of recurringAnchor's own "next/current from now" guess,
+			// which a bare "move it to 16:00" (no date of its own) would
+			// otherwise silently fall back to.
+			if window != nil {
+				keys["date"] = window.from.Format("2006-01-02")
+			}
+			return session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title, Keys: keys}
 		})), nil
 	case sneatdomain.EntityTodo:
 		if r.Readers.Todos == nil {

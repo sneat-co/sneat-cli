@@ -399,15 +399,45 @@ func TestCancelSummary_ShowsResolvedOccurrenceBeforeAsking(t *testing.T) {
 	}
 }
 
-// TestSneatExecutor_RecurringMoveToOtherDay_DateIsOriginalOccurrence is B2:
-// moving Monday's yoga to Wednesday sends adjust_slot with Date = the
-// ORIGINAL occurrence (Monday, today), not the new Wednesday date -- the
-// slot payload itself carries the new date/time.
-func TestSneatExecutor_RecurringMoveToOtherDay_DateIsOriginalOccurrence(t *testing.T) {
+// TestSneatExecutor_RecurringMoveToOtherDay_Refused is the BLOCKER ruling
+// from fix round r3b's review: moving Monday's yoga to Wednesday via one
+// adjust_slot (Date=Monday, Slot.Start=Wednesday) LOOKS like it should work,
+// but calendarius's real read paths never honour a cross-day Slot.Start (see
+// crossDayMoveRefusal's doc comment) -- so the executor must refuse the
+// request outright, calling the API zero times, rather than silently
+// sending a mutation that does nothing a user can observe. This replaces
+// the prior TestSneatExecutor_RecurringMoveToOtherDay_DateIsOriginalOccurrence,
+// which asserted the now-known-broken adjust_slot(Date=original,
+// Slot.Start=new day) request actually got sent.
+func TestSneatExecutor_RecurringMoveToOtherDay_Refused(t *testing.T) {
 	yoga, _ := monFriYoga(t)
 	now := mondayNoon(t)
-	var gotDate string
-	var gotStartDate string
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {})
+	hs := &data.FakeHappenings{Items: []data.Happening{yoga}}
+	exec := SneatExecutor{Calendar: api, Happenings: hs, Now: func() time.Time { return now }}
+	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "yoga"}}
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "Wednesday 16:00"},
+	})
+	if err == nil {
+		t.Fatal("Execute: err = nil, want a refusal for a cross-day move of a recurring occurrence")
+	}
+	if !strings.Contains(err.Error(), crossDayMoveRefusal) {
+		t.Errorf("err = %q, want it to contain the fixed refusal text %q", err.Error(), crossDayMoveRefusal)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("calls = %v, want NO API call for a refused move", *calls)
+	}
+}
+
+// TestSneatExecutor_RecurringSameDayRetime_StillWorks proves the BLOCKER
+// ruling's refusal is scoped to a DIFFERENT calendar day only -- retiming
+// Monday's yoga to a later time still THE SAME Monday must keep working
+// exactly as before, via one adjust_slot call.
+func TestSneatExecutor_RecurringSameDayRetime_StillWorks(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	var gotDate, gotStartDate string
 	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
 		gotDate, _ = body["date"].(string)
 		slot, _ := body["slot"].(map[string]any)
@@ -418,24 +448,24 @@ func TestSneatExecutor_RecurringMoveToOtherDay_DateIsOriginalOccurrence(t *testi
 	exec := SneatExecutor{Calendar: api, Happenings: hs, Now: func() time.Time { return now }}
 	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "yoga"}}
 	if _, err := exec.Execute(context.Background(), "sp1", session.Action{
-		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "Wednesday 16:00"},
+		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "20:00"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if len(*calls) != 1 || (*calls)[0] != "POST /v0/happenings/adjust_slot" {
 		t.Fatalf("calls = %v", *calls)
 	}
-	if gotDate != "2026-09-21" {
-		t.Errorf("adjust_slot date = %q, want 2026-09-21 (Monday, the ORIGINAL occurrence being moved)", gotDate)
-	}
-	if gotStartDate != "2026-09-23" {
-		t.Errorf("slot.start.date = %q, want 2026-09-23 (Wednesday, the NEW date)", gotStartDate)
+	if gotDate != "2026-09-21" || gotStartDate != "2026-09-21" {
+		t.Errorf("adjust_slot date = %q, slot.start.date = %q, want both 2026-09-21 (same-day retime)", gotDate, gotStartDate)
 	}
 }
 
 // TestSneatExecutor_RecurringReschedule_UndoUsesCancelAdjustment is B2's
 // undo half: undo calls cancel_adjustment (not another adjust_slot) with
-// the SAME date+slotID the move used.
+// the SAME date+slotID the move used. Uses a SAME-DAY retime ("20:00" on
+// the Monday occurrence the test's "now" anchors to) -- a cross-day move is
+// refused outright since the BLOCKER fix above, so it can no longer stand
+// in here for "any recurring reschedule".
 func TestSneatExecutor_RecurringReschedule_UndoUsesCancelAdjustment(t *testing.T) {
 	yoga, _ := monFriYoga(t)
 	now := mondayNoon(t)
@@ -451,7 +481,7 @@ func TestSneatExecutor_RecurringReschedule_UndoUsesCancelAdjustment(t *testing.T
 	exec := SneatExecutor{Calendar: api, Happenings: hs, Now: func() time.Time { return now }}
 	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "yoga"}}
 	undo, err := exec.Execute(context.Background(), "sp1", session.Action{
-		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "Friday 16:00"},
+		Kind: "calendar.reschedule_happening", Target: &target, Args: map[string]string{"when": "20:00"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -467,6 +497,106 @@ func TestSneatExecutor_RecurringReschedule_UndoUsesCancelAdjustment(t *testing.T
 	}
 	if len(dates) != 2 || dates[0] != dates[1] {
 		t.Errorf("dates = %v, want undo to cancel the adjustment for the SAME date the move used", dates)
+	}
+}
+
+// r3Pipeline wires a full Pipeline (Resolver + real SneatExecutor over an
+// httptest sneatapi server) over hs, for the M1 end-to-end reference tests
+// below (fix round r3b review; adapted from the coordinator's probe:
+// zz_probe3_test.go). log records every HTTP call's path+JSON body.
+func r3Pipeline(t *testing.T, hs *data.FakeHappenings, now func() time.Time, log *[]string) (Pipeline, *session.State) {
+	t.Helper()
+	api, _ := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		b, _ := json.Marshal(body)
+		*log = append(*log, r.URL.Path+" "+string(b))
+	})
+	readers := data.Readers{Happenings: hs}
+	p := Pipeline{Resolver: Resolver{Readers: readers, Now: now}, Readers: readers,
+		Executor: SneatExecutor{Calendar: api, Happenings: hs, Now: now}, Now: now}
+	return p, &session.State{}
+}
+
+// TestPipeline_RescheduleFridayByReference_MovesFridayNotMonday is M1's
+// core end-to-end scenario: "move Friday's yoga to 16:00" from a Monday
+// "now" must retime FRIDAY's occurrence, not whichever occurrence
+// recurringAnchor would otherwise guess (the next one from "now", i.e.
+// Monday's own, today's). The reference's own "Friday's yoga" carries the
+// resolved date (Resolver, Keys["date"]) through to rescheduleSummary's
+// confirmation and the executor's adjust_slot call alike.
+func TestPipeline_RescheduleFridayByReference_MovesFridayNotMonday(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	var log []string
+	p, st := r3Pipeline(t, &data.FakeHappenings{Items: []data.Happening{yoga}}, func() time.Time { return now }, &log)
+	out, err := p.HandleAction(context.Background(),
+		Action{Kind: "calendar.reschedule_happening", Reference: "Friday's yoga", Slots: map[string]string{"when": "16:00"}}, st, "sp1")
+	if err != nil {
+		t.Fatalf("HandleAction: %v", err)
+	}
+	if !strings.Contains(out.Text, "Sep 25") {
+		t.Fatalf("confirmation text = %q, want it to name Friday Sep 25 (not Monday Sep 21)", out.Text)
+	}
+	if _, err := p.confirmPending(context.Background(), "sp1", st); err != nil {
+		t.Fatalf("confirmPending: %v", err)
+	}
+	if len(log) != 1 || !strings.HasPrefix(log[0], "/v0/happenings/adjust_slot ") {
+		t.Fatalf("log = %v, want exactly one adjust_slot call", log)
+	}
+	if !strings.Contains(log[0], `"date":"2026-09-25"`) {
+		t.Errorf("log[0] = %q, want adjust_slot's date = 2026-09-25 (Friday, the REFERENCED occurrence), not Monday", log[0])
+	}
+}
+
+// TestPipeline_CancelFridayByReference_CancelsFridayNotMonday is M1's
+// cancel counterpart: "cancel Friday's yoga" must cancel FRIDAY's
+// occurrence via the reference's own resolved date, not recurringAnchor's
+// "next from now" default.
+func TestPipeline_CancelFridayByReference_CancelsFridayNotMonday(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t)
+	var log []string
+	p, st := r3Pipeline(t, &data.FakeHappenings{Items: []data.Happening{yoga}}, func() time.Time { return now }, &log)
+	out, err := p.HandleAction(context.Background(),
+		Action{Kind: "calendar.cancel_happening", Reference: "Friday's yoga"}, st, "sp1")
+	if err != nil {
+		t.Fatalf("HandleAction: %v", err)
+	}
+	if !strings.Contains(out.Text, "Sep 25") {
+		t.Fatalf("confirmation text = %q, want it to name Friday Sep 25", out.Text)
+	}
+	if _, err := p.confirmPending(context.Background(), "sp1", st); err != nil {
+		t.Fatalf("confirmPending: %v", err)
+	}
+	if len(log) != 1 || !strings.HasPrefix(log[0], "/v0/happenings/cancel_happening ") {
+		t.Fatalf("log = %v, want exactly one cancel_happening call", log)
+	}
+	if !strings.Contains(log[0], `"date":"2026-09-25"`) {
+		t.Errorf("log[0] = %q, want cancel_happening's date = 2026-09-25 (Friday, the REFERENCED occurrence)", log[0])
+	}
+}
+
+// TestHappeningRowsInWindow_RecurringOccurrences_CarryDistinctDateKeys is
+// M1's week-view half: picking Monday's row vs Friday's row for the SAME
+// recurring happening must resolve to DIFFERENT occurrences -- a prior
+// version built one shared session.EntityRef (no date) for every occurrence
+// a recurring happening contributed to the window, so every row picked the
+// same, occurrence-less reference.
+func TestHappeningRowsInWindow_RecurringOccurrences_CarryDistinctDateKeys(t *testing.T) {
+	yoga, loc := monFriYoga(t)
+	from := time.Date(2026, 9, 21, 0, 0, 0, 0, loc) // Monday
+	to := from.AddDate(0, 0, 7)
+	refs, rows := happeningRowsInWindow([]data.Happening{yoga}, from, to, false)
+	if len(refs) != 2 || len(rows) != 2 {
+		t.Fatalf("refs/rows = %d/%d, want 2 (Monday + Friday)", len(refs), len(rows))
+	}
+	if refs[0].Keys["date"] != "2026-09-21" {
+		t.Errorf("refs[0].Keys[date] = %q, want 2026-09-21 (Monday)", refs[0].Keys["date"])
+	}
+	if refs[1].Keys["date"] != "2026-09-25" {
+		t.Errorf("refs[1].Keys[date] = %q, want 2026-09-25 (Friday)", refs[1].Keys["date"])
+	}
+	if refs[0].Keys["date"] == refs[1].Keys["date"] {
+		t.Fatal("refs[0] and refs[1] carry the SAME date -- picking either row would resolve identically")
 	}
 }
 
