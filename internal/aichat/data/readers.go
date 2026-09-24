@@ -65,10 +65,41 @@ const (
 
 // Contact is the sliver of a contactus contact the pipeline needs to list,
 // render and resolve.
+//
+// m11: carries the human-readable fields dbo4contactus.ContactDbo actually
+// has (names, DoB, gender, emails/phones, and the flat "relatedAs" label),
+// reused verbatim rather than re-invented, so ContactCard rendering can show
+// something other than a bare name and resolve.Resolve's RelatedAs-label
+// relationship fallback ("my wife" -> a contact with RelatedAs=="spouse")
+// has real data to match against. OUT OF SCOPE: dbo4linkage's deeper
+// cross-contact Related graph (relatedAs/relatesAs edges between two OTHER
+// contacts, keyed by space/ext/collection/contactID) -- resolve.Resolve's
+// RelationsOf-based path stays unwired; only its RelatedAs-label fallback
+// works. See spec/features/chat-ai/README.md's Out of Scope section.
 type Contact struct {
 	ID      string
 	SpaceID string
 	Name    string
+	// FirstName/LastName/NickName/FullName mirror person.NameFields; any may
+	// be empty depending on what the contact record actually has set.
+	FirstName string
+	LastName  string
+	NickName  string
+	FullName  string
+	// Gender is "male"/"female"/"" (dbmodels.Gender, itself a plain string
+	// alias) -- empty when unknown or not applicable (e.g. a company).
+	Gender string
+	// DoB is "date of birth", formatted YYYY-MM-DD, empty when unknown.
+	DoB string
+	// RelatedAs is the contact's flat relationship label (e.g. "spouse",
+	// "parent", "child") -- dbo4contactus's WithOptionalRelatedAs field, not
+	// the deeper Related graph (see the type doc comment above).
+	RelatedAs string
+	// Emails/Phones are display-only communication channels (the map keys
+	// dbo4contactus itself uses -- an email address or phone number string),
+	// primary channel first when one is marked, then insertion order.
+	Emails []string
+	Phones []string
 }
 
 // HappeningsReader reads a space's happenings for calendar presentations and
@@ -107,6 +138,10 @@ type TodosReader interface {
 type ContactsReader interface {
 	List(ctx context.Context, spaceID string) ([]Contact, error)
 	FindByName(ctx context.Context, spaceID, query string) ([]Contact, error)
+	// Get returns one contact by ID (m11: needed to enrich an ambiguous
+	// contact-choice list's candidates with real fields, matching
+	// HappeningsReader.Get's existing role for candidateHappeningRows).
+	Get(ctx context.Context, spaceID, contactID string) (Contact, error)
 }
 
 // Readers bundles the three module readers the pipeline depends on.

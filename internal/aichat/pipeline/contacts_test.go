@@ -102,6 +102,81 @@ func TestTurn_FindContact_UnknownName_FallsBackToTitleSearch(t *testing.T) {
 	}
 }
 
+// TestTurn_FindContact_RelationshipWord_MatchesViaRelatedAsLabel is m11: once
+// data.Contact carries RelatedAs/Gender, resolve.Resolve's RelatedAs-label
+// fallback (no RelationsOf graph needed) can actually resolve a relationship
+// word like "my wife" -- previously documented as a known MVP limitation
+// (data.Contact had no roles/gender at all) that always fell through to a
+// plain, unmatched name search instead.
+func TestTurn_FindContact_RelationshipWord_MatchesViaRelatedAsLabel(t *testing.T) {
+	readers := data.Readers{Contacts: &data.FakeContacts{Items: []data.Contact{
+		{ID: "c1", SpaceID: "sp1", Name: "Dana Lee", FirstName: "Dana", Gender: "female", RelatedAs: "spouse"},
+		{ID: "c2", SpaceID: "sp1", Name: "Sam Lee", FirstName: "Sam", Gender: "male", RelatedAs: "child"},
+	}}}
+	p := Pipeline{
+		Chain:    decision.Chain{Providers: []decision.Provider{rules.New()}},
+		Resolver: Resolver{Readers: readers},
+		Readers:  readers,
+		Now:      fixedNow,
+	}
+	st := &session.State{}
+	out, err := p.Turn(context.Background(), "find contact my wife", st, "sp1")
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if len(out.Entities) != 1 || out.Entities[0].Keys["contactID"] != "c1" {
+		t.Fatalf("Entities = %+v, want exactly Dana Lee (c1), resolved via RelatedAs=\"spouse\"+Gender=\"female\"", out.Entities)
+	}
+	if len(out.ContactRows) != 1 || out.ContactRows[0].RelatedAs != "spouse" {
+		t.Fatalf("ContactRows = %+v, want the resolved contact's RelatedAs carried through for card rendering", out.ContactRows)
+	}
+}
+
+// TestTurn_FindContact_OneMatch_ContactRowsCarriesFields is m11: the single-
+// match path also populates Output.ContactRows (relationship/DoB/emails/
+// phones), not just Entities, so cardFor can render more than a bare name.
+func TestTurn_FindContact_OneMatch_ContactRowsCarriesFields(t *testing.T) {
+	readers := data.Readers{Contacts: &data.FakeContacts{Items: []data.Contact{
+		{ID: "c1", SpaceID: "sp1", Name: "Bob", DoB: "1990-01-02", Emails: []string{"bob@example.com"}},
+	}}}
+	p := Pipeline{
+		Chain:    decision.Chain{Providers: []decision.Provider{rules.New()}},
+		Resolver: Resolver{Readers: readers},
+		Readers:  readers,
+		Now:      fixedNow,
+	}
+	st := &session.State{}
+	out, err := p.Turn(context.Background(), "find contact bob", st, "sp1")
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if len(out.ContactRows) != 1 || out.ContactRows[0].DoB != "1990-01-02" || len(out.ContactRows[0].Emails) != 1 {
+		t.Fatalf("ContactRows = %+v, want Bob's DoB/Emails carried through", out.ContactRows)
+	}
+}
+
+// TestTurn_ListContacts_ContactRowsCarriesFields covers listContacts's own
+// producer path (m11), separate from find_contact's resolve.Resolve path.
+func TestTurn_ListContacts_ContactRowsCarriesFields(t *testing.T) {
+	readers := data.Readers{Contacts: &data.FakeContacts{Items: []data.Contact{
+		{ID: "c1", SpaceID: "sp1", Name: "Alice", RelatedAs: "parent"},
+	}}}
+	p := Pipeline{
+		Chain:    decision.Chain{Providers: []decision.Provider{rules.New()}},
+		Resolver: Resolver{Readers: readers},
+		Readers:  readers,
+		Now:      fixedNow,
+	}
+	st := &session.State{}
+	out, err := p.Turn(context.Background(), "list contacts", st, "sp1")
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if len(out.ContactRows) != 1 || out.ContactRows[0].RelatedAs != "parent" {
+		t.Fatalf("ContactRows = %+v, want Alice's RelatedAs carried through", out.ContactRows)
+	}
+}
+
 // TestHandleAction_FindContact_ViaLLM covers the LLM-action-block path
 // (HandleAction), the equivalent of the main LLM emitting
 // <sneat-action>{"kind":"contacts.find_contact","reference":"bob"}</sneat-action>.

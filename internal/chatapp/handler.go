@@ -647,7 +647,7 @@ func blockFor(out pipeline.Output) transcript.Block {
 	// contact -> contact card"), a real search result as the grid -- the
 	// same distinction a card/grid pair always makes.
 	if presentation == sneatdomain.PresentationContactsGrid && len(entities) == 1 {
-		return cardFor(entities[0])
+		return cardFor(entities[0], out.ContactRows)
 	}
 	if presentation == sneatdomain.PresentationContactsGrid {
 		contacts := make([]controls.Contact, 0, len(entities))
@@ -690,15 +690,24 @@ func blockFor(out pipeline.Output) transcript.Block {
 
 // cardFor builds the single-contact card for a ContactsGrid presentation
 // narrowed to exactly one match (blockFor's only caller). S8/S9: it shows
-// only the display name -- no raw entity keys (controls.NewContactCard's own
-// doc comment). A happening's single-result/confirmation card is a separate
-// path (blockFor's PresentationHappeningCard case, controls.NewHappeningCard)
-// since it needs the richer HappeningRow (Start/End/Recurring), which a bare
-// session.EntityRef never carries -- there is no longer a generic raw-key
-// fallback card for other entity kinds (S5 coordinator ruling: it leaked
-// internal keys like happeningID/contactID straight into the transcript).
-func cardFor(ref session.EntityRef) *controls.CardBlock {
-	return controls.NewContactCard(ref.Title, ref)
+// only human-readable fields -- no raw entity keys (controls.NewContactCard's
+// own doc comment). m11: rows is out.ContactRows, the producer's optional
+// per-ref enrichment (relationship/DoB/emails/phones); when it doesn't cover
+// ref (nil, or a producer that couldn't build it), the card falls back to
+// name-only, same as before m11. A happening's single-result/confirmation
+// card is a separate path (blockFor's PresentationHappeningCard case,
+// controls.NewHappeningCard) since it needs the richer HappeningRow (Start/
+// End/Recurring), which a bare session.EntityRef never carries -- there is
+// no longer a generic raw-key fallback card for other entity kinds (S5
+// coordinator ruling: it leaked internal keys like happeningID/contactID
+// straight into the transcript).
+func cardFor(ref session.EntityRef, rows []controls.ContactRow) *controls.CardBlock {
+	for _, row := range rows {
+		if row.Ref.Same(ref) {
+			return controls.NewContactCard(row)
+		}
+	}
+	return controls.NewContactCard(controls.ContactRow{Ref: ref, Name: ref.Title})
 }
 
 func headingFor(presentation string) string {

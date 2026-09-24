@@ -56,6 +56,14 @@ type Output struct {
 	// HappeningRows/TodoRows are presentation-only, additive detail.
 	HappeningRows []controls.HappeningRow
 	TodoRows      []controls.TodoRow
+	// ContactRows is the same kind of additive, presentation-only detail for
+	// a contacts_grid presentation (m11 follow-up to S9's HappeningRows/
+	// TodoRows pattern): relationship/DoB/emails/phones behind each Entities
+	// ref, when the producer had real data.Contact/ports.Contact to build it
+	// from (see pipeline/contacts.go's contactRow). May be nil even when
+	// Entities/Presentation are set -- callers must fall back to Entities[i]
+	// .Title-only rendering in that case.
+	ContactRows []controls.ContactRow
 	// WeekStart is the Monday a WeekCalendar presentation's week begins on,
 	// needed by controls.NewWeekCalendar to build its Mon..Sun day sections.
 	WeekStart time.Time
@@ -453,12 +461,15 @@ func (p Pipeline) listContacts(ctx context.Context, st *session.State, spaceID s
 		return Output{Text: "That space has no contacts.", Presentation: sneatdomain.PresentationContactsGrid}, nil
 	}
 	refs := make([]session.EntityRef, 0, len(cs))
+	rows := make([]controls.ContactRow, 0, len(cs))
 	for _, c := range cs {
-		refs = append(refs, session.EntityRef{Type: sneatdomain.EntityContact, Title: c.Name,
-			Keys: map[string]string{"spaceID": c.SpaceID, "contactID": c.ID}})
+		ref := session.EntityRef{Type: sneatdomain.EntityContact, Title: c.Name,
+			Keys: map[string]string{"spaceID": c.SpaceID, "contactID": c.ID}}
+		refs = append(refs, ref)
+		rows = append(rows, contactRow(ref, c))
 	}
 	st.LastShown = refs
-	return Output{Text: fmt.Sprintf("%d contact(s).", len(cs)), Presentation: sneatdomain.PresentationContactsGrid, Entities: refs}, nil
+	return Output{Text: fmt.Sprintf("%d contact(s).", len(cs)), Presentation: sneatdomain.PresentationContactsGrid, Entities: refs, ContactRows: rows}, nil
 }
 
 // resolveAndAct resolves ref, then either stages a Pending confirmation
@@ -556,7 +567,9 @@ func (p Pipeline) ambiguousChoiceOutput(ctx context.Context, spaceID, kind strin
 		}
 		return Output{Text: text, Presentation: presentation, Entities: candidates}
 	case sneatdomain.EntityContact:
-		return Output{Text: text, Presentation: sneatdomain.PresentationContactsGrid, Entities: candidates}
+		out := Output{Text: text, Presentation: sneatdomain.PresentationContactsGrid, Entities: candidates}
+		out.ContactRows = p.candidateContactRows(ctx, spaceID, candidates)
+		return out
 	default:
 		return Output{Text: text, Presentation: sneatdomain.PresentationHappeningsList, Entities: candidates}
 	}
@@ -591,6 +604,26 @@ func (p Pipeline) candidateHappeningRows(ctx context.Context, spaceID string, ca
 			}
 		}
 		rows = append(rows, controls.HappeningRow{Ref: ref, Title: h.Title, Start: start, End: end, Recurring: h.Recurring})
+	}
+	return rows
+}
+
+// candidateContactRows is candidateHappeningRows's m11 counterpart for an
+// ambiguous contacts choice list: one Get per candidate to enrich it with
+// real relationship/DoB/emails/phones, degrading to nil (name-only
+// rendering, same as before m11) on any error or a missing reader, exactly
+// like candidateHappeningRows does.
+func (p Pipeline) candidateContactRows(ctx context.Context, spaceID string, candidates []session.EntityRef) []controls.ContactRow {
+	if p.Readers.Contacts == nil {
+		return nil
+	}
+	rows := make([]controls.ContactRow, 0, len(candidates))
+	for _, ref := range candidates {
+		c, err := p.Readers.Contacts.Get(ctx, spaceID, ref.Keys["contactID"])
+		if err != nil {
+			return nil
+		}
+		rows = append(rows, contactRow(ref, c))
 	}
 	return rows
 }

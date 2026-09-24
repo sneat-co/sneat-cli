@@ -97,3 +97,12 @@ func (f *FakeContacts) FindByName(_ context.Context, spaceID, query string) ([]C
 	}
 	return out, nil
 }
+
+func (f *FakeContacts) Get(_ context.Context, spaceID, contactID string) (Contact, error) {
+	for _, c := range f.Items {
+		if c.SpaceID == spaceID && c.ID == contactID {
+			return c, nil
+		}
+	}
+	return Contact{}, fmt.Errorf("contact %q not found", contactID)
+}
