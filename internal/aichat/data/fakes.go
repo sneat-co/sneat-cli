@@ -57,6 +57,7 @@ func (f *FakeTodos) List(_ context.Context, spaceID, list string) ([]Todo, error
 			out = append(out, it)
 		}
 	}
+	sortNotDoneFirst(out)
 	return out, nil
 }
 

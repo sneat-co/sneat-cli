@@ -39,7 +39,8 @@ func (c *Client) RevokeHappeningCancellation(ctx context.Context, req dto4calend
 	return c.do(ctx, http.MethodPost, calendariusPath("/v0/happenings/revoke_happening_cancellation"), req, nil)
 }
 
-// DeleteHappening calls DELETE happenings/delete_happening.
-func (c *Client) DeleteHappening(ctx context.Context, req dto4calendarius.HappeningRequest) error {
-	return c.do(ctx, http.MethodDelete, calendariusPath("/v0/happenings/delete_happening"), req, nil)
-}
+// m9: DeleteHappening (permanent delete, as opposed to CancelHappening) was
+// dead code -- no taxonomy intent or CalendarAPI case ever called it, and
+// the MVP's only calendar-removal action is cancel/revoke-cancel. Removed
+// rather than kept unused; re-add alongside a delete_happening intent if a
+// later slice needs permanent deletion.

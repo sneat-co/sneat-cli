@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -244,7 +245,16 @@ func (r *firestoreTodos) List(ctx context.Context, spaceID, list string) ([]Todo
 	for _, it := range l.Items {
 		out = append(out, toTodo(spaceID, list, it))
 	}
+	sortNotDoneFirst(out)
 	return out, nil
+}
+
+// sortNotDoneFirst orders not-done items before done ones (m5), preserving
+// each group's original relative order (a stable sort) rather than
+// re-sorting by title/date -- listus does not define an item ordering this
+// MVP slice should second-guess beyond done-state grouping.
+func sortNotDoneFirst(items []Todo) {
+	sort.SliceStable(items, func(i, j int) bool { return !items[i].Done && items[j].Done })
 }
 
 func (r *firestoreTodos) FindByTitle(ctx context.Context, spaceID, query string) ([]Todo, error) {

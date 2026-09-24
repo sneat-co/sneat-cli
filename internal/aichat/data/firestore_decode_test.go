@@ -161,6 +161,24 @@ func TestToTodo_NotDone(t *testing.T) {
 	}
 }
 
+// TestSortNotDoneFirst is m5: TodosReader.List must return not-done items
+// first, without reordering within either group (a stable sort).
+func TestSortNotDoneFirst(t *testing.T) {
+	items := []Todo{
+		{ID: "a", Title: "Done first", Done: true},
+		{ID: "b", Title: "Not done first", Done: false},
+		{ID: "c", Title: "Not done second", Done: false},
+		{ID: "d", Title: "Done second", Done: true},
+	}
+	sortNotDoneFirst(items)
+	want := []string{"b", "c", "a", "d"}
+	for i, id := range want {
+		if items[i].ID != id {
+			t.Fatalf("order = %v, want IDs %v", items, want)
+		}
+	}
+}
+
 func TestListKeyFor(t *testing.T) {
 	if listKeyFor(ListKindBuy) != listusdbo.BuyGroceriesListID {
 		t.Errorf("listKeyFor(buy) = %q", listKeyFor(ListKindBuy))
