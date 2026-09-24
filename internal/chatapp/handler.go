@@ -520,6 +520,13 @@ func blockFor(out pipeline.Output) transcript.Block {
 		}
 		return controls.NewContactsGrid("Contacts", contacts)
 	}
+	// S5 coordinator ruling: a single happening -- a find_happening result or
+	// a reschedule/cancel confirmation (pipeline.resolveAndAct's confirmRow)
+	// -- renders as a card showing its real (resolved) time, not a one-row
+	// list or a bare title.
+	if presentation == sneatdomain.PresentationHappeningCard && len(out.HappeningRows) == 1 {
+		return controls.NewHappeningCard(out.HappeningRows[0])
+	}
 	if len(out.HappeningRows) > 0 {
 		switch presentation {
 		case sneatdomain.PresentationDayCalendar:
@@ -545,30 +552,17 @@ func blockFor(out pipeline.Output) transcript.Block {
 	return controls.NewListBlock(headingFor(presentation), items)
 }
 
-// cardFor builds the single-entity card for a happening or contact -- the
-// fields available are only what session.EntityRef carries (Title and Keys);
-// a richer card (address, time, attendees, ...) needs the resolved
-// data.Happening/data.Contact record, which is a follow-up once a
-// presentation asks for a card explicitly rather than this len==1 inference.
+// cardFor builds the single-contact card for a ContactsGrid presentation
+// narrowed to exactly one match (blockFor's only caller). S8/S9: it shows
+// only the display name -- no raw entity keys (controls.NewContactCard's own
+// doc comment). A happening's single-result/confirmation card is a separate
+// path (blockFor's PresentationHappeningCard case, controls.NewHappeningCard)
+// since it needs the richer HappeningRow (Start/End/Recurring), which a bare
+// session.EntityRef never carries -- there is no longer a generic raw-key
+// fallback card for other entity kinds (S5 coordinator ruling: it leaked
+// internal keys like happeningID/contactID straight into the transcript).
 func cardFor(ref session.EntityRef) *controls.CardBlock {
-	// S8/S9: a contact card shows only its display name -- no raw entity
-	// keys (controls.NewContactCard's doc comment). Every other entity kind
-	// still falls back to the generic key dump below until a dedicated card
-	// (e.g. a richer HappeningCard) replaces it.
-	if ref.Type == sneatdomain.EntityContact {
-		return controls.NewContactCard(ref.Title, ref)
-	}
-	title := ref.Title
-	if title == "" {
-		title = ref.Type
-	}
-	var fields [][2]string
-	for _, k := range []string{"spaceID", "happeningID", "contactID", "itemID", "list"} {
-		if v := ref.Keys[k]; v != "" {
-			fields = append(fields, [2]string{k, v})
-		}
-	}
-	return controls.NewCardBlock(title, ref, fields...)
+	return controls.NewContactCard(ref.Title, ref)
 }
 
 func headingFor(presentation string) string {

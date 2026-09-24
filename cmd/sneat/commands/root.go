@@ -97,6 +97,10 @@ type RunChatArgs struct {
 	// pipeline starts in unless the user switches space mid-session
 	// (coordinator ruling SPACE). Empty when the session has none set yet.
 	CurrentSpace string
+	// TZ is the IANA zone day/week windows and slot times resolve in
+	// (coordinator ruling TIMEZONES): --tz if passed, else SNEAT_TZ, else
+	// time.Local's own name (tzFromCmd's resolution order). Never empty.
+	TZ string
 }
 
 // ContactDeleter deletes a contact by space and id. It is the id-based view of

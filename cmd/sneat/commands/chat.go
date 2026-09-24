@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -43,6 +44,7 @@ func Chat(env Env) *cobra.Command {
 	cmd.Flags().String("byok-model", "", "BYOK: the model id")
 	cmd.Flags().String("byok-protocol", "", "BYOK: openai-compatible (default) or anthropic")
 	cmd.Flags().String("byok-api-key-env", "", "BYOK: env var holding the API key")
+	cmd.Flags().String("tz", "", "IANA timezone day/week windows and slot times resolve in (default: $SNEAT_TZ, else the system's local zone)")
 	return cmd
 }
 
@@ -71,6 +73,23 @@ func aiChatConfigFromCmd(cmd *cobra.Command, base aiconfig.Config) aiconfig.Conf
 		cfg.BYOK.APIKeyEnv = v
 	}
 	return cfg
+}
+
+// tzFromCmd resolves the IANA zone the chat session's day/week windows and
+// slot times work in (coordinator ruling TIMEZONES): --tz wins when passed;
+// else SNEAT_TZ; else the system's own local zone name. time.Local.String()
+// returns "Local" (not an IANA name) when the system zone could not be
+// determined (e.g. no /etc/localtime, common in a minimal container) -- that
+// is still a usable, honest value for the readers/decision Request to carry,
+// never treated as an error here.
+func tzFromCmd(cmd *cobra.Command, getenv func(string) string) string {
+	if v, _ := cmd.Flags().GetString("tz"); v != "" {
+		return v
+	}
+	if v := getenv("SNEAT_TZ"); v != "" {
+		return v
+	}
+	return time.Local.String()
 }
 
 // noJevFromCmd reports whether --no-jev was passed, for
@@ -112,5 +131,6 @@ func runChat(env Env, cmd *cobra.Command) error {
 		Spaces: spaces, Contacts: contacts, UID: sess.UID, Email: sess.Email,
 		AIConfig: aiCfg, NoJev: noJevFromCmd(cmd), Cfg: cfg,
 		CurrentSpace: sess.CurrentSpace,
+		TZ:           tzFromCmd(cmd, env.Getenv),
 	})
 }

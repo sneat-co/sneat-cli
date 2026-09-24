@@ -249,6 +249,62 @@ func TestDynamicBlocks_CapsHappeningsAndTodos(t *testing.T) {
 	}
 }
 
+// TestDynamicBlocks_TodoContextIncludesBuyList_NotDoneFirst covers m10: the
+// LLM's todo context must include the buy list too (otherwise "get milk" has
+// nothing to resolve against), sorted not-done first so a done item -- far
+// less likely to be what a follow-up means -- doesn't crowd out live ones
+// under the shared cap.
+func TestDynamicBlocks_TodoContextIncludesBuyList_NotDoneFirst(t *testing.T) {
+	p := Pipeline{
+		Readers: data.Readers{Todos: &data.FakeTodos{Items: []data.Todo{
+			{ID: "t1", SpaceID: "sp1", List: data.ListKindDo, Title: "Finish report", Done: true},
+			{ID: "t2", SpaceID: "sp1", List: data.ListKindDo, Title: "Call dentist"},
+			{ID: "b1", SpaceID: "sp1", List: data.ListKindBuy, Title: "Milk"},
+			{ID: "b2", SpaceID: "sp1", List: data.ListKindBuy, Title: "Eggs", Done: true},
+		}}},
+	}
+	blocks := p.DynamicBlocks(context.Background(), "sp1", []string{sneatdomain.ModuleTodo}, false)
+	block := findBlock(t, blocks, "todos")
+	if !strings.Contains(block.Text, "Milk") {
+		t.Fatalf("todo context = %q, want the buy list included", block.Text)
+	}
+	callIdx := strings.Index(block.Text, "Call dentist")
+	milkIdx := strings.Index(block.Text, "Milk")
+	reportIdx := strings.Index(block.Text, "Finish report")
+	eggsIdx := strings.Index(block.Text, "Eggs")
+	if callIdx < 0 || milkIdx < 0 || reportIdx < 0 || eggsIdx < 0 {
+		t.Fatalf("todo context missing an item: %q", block.Text)
+	}
+	if !(callIdx < reportIdx && milkIdx < reportIdx && callIdx < eggsIdx && milkIdx < eggsIdx) {
+		t.Fatalf("todo context = %q, want both not-done items before both done items", block.Text)
+	}
+}
+
+// TestDynamicBlocks_Calendar_ProjectsRecurringOccurrence_NotTemplateDate is
+// the calendar lane's own r3 handoff: DynamicBlocks must tell the LLM a
+// recurring happening's real upcoming occurrence date, via
+// happeningRowsInWindow (the same projection a calendar presentation uses),
+// not HappeningsReader.Window's raw Start/End, which is the recurring
+// happening's stored TEMPLATE date (2026-01-02 here) -- reporting that every
+// day would make the LLM think a weekly Monday/Friday class is always "next
+// Friday Jan 2".
+func TestDynamicBlocks_Calendar_ProjectsRecurringOccurrence_NotTemplateDate(t *testing.T) {
+	yoga, _ := monFriYoga(t)
+	now := mondayNoon(t) // Monday 2026-09-21
+	p := Pipeline{
+		Now:     func() time.Time { return now },
+		Readers: data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{yoga}}},
+	}
+	blocks := p.DynamicBlocks(context.Background(), "sp1", []string{sneatdomain.ModuleCalendar}, false)
+	block := findBlock(t, blocks, "relevant_happenings")
+	if strings.Contains(block.Text, "2026-01-02") || strings.Contains(block.Text, "Jan 02") {
+		t.Fatalf("relevant_happenings = %q, leaked the recurring happening's stored template date", block.Text)
+	}
+	if !strings.Contains(block.Text, "Mon 2026-09-21") {
+		t.Fatalf("relevant_happenings = %q, want this week's real Monday occurrence (2026-09-21)", block.Text)
+	}
+}
+
 func contactsReaders(t *testing.T) data.Readers {
 	t.Helper()
 	return data.Readers{Contacts: &data.FakeContacts{Items: []data.Contact{{ID: "c1", SpaceID: "sp1", Name: "Alice"}}}}

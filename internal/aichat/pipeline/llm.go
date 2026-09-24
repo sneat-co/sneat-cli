@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -13,8 +14,18 @@ import (
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
 
+	"github.com/sneat-co/sneat-cli/internal/aichat/data"
 	"github.com/sneat-co/sneat-cli/internal/aichat/sneatdomain"
 )
+
+// dynamicTodoItem tags a data.Todo with which list it came from ("todo" or
+// "buy"), so DynamicBlocks's combined, capped todo context (m10 coordinator
+// ruling) can tell the LLM which list an item belongs to without a second
+// pass over the reader results.
+type dynamicTodoItem struct {
+	data.Todo
+	kind string
+}
 
 // maxDynamicItems caps how many happenings/todos a dynamic context block
 // lists (brief §7/S7 coordinator ruling): the LLM needs enough to answer
@@ -72,17 +83,26 @@ func (p Pipeline) DynamicBlocks(ctx context.Context, spaceID string, scopes []st
 			if p.Readers.Happenings == nil {
 				continue
 			}
-			hs, err := p.Readers.Happenings.Window(ctx, spaceID, now.AddDate(0, 0, -1), now.AddDate(0, 0, 14))
+			from, to := now.AddDate(0, 0, -1), now.AddDate(0, 0, 14)
+			hs, err := p.Readers.Happenings.Window(ctx, spaceID, from, to)
 			if err != nil {
 				continue
 			}
-			truncated := len(hs) > maxDynamicItems
+			// Calendar-lane handoff: project real occurrence dates the same
+			// way a calendar presentation does (happeningRowsInWindow, via
+			// filterRecurringToWindow first) rather than reading a recurring
+			// happening's raw Window() Start/End, which is its stored
+			// TEMPLATE date -- telling the LLM a weekly happening is "next
+			// Monday" every day would be simply wrong.
+			hs = filterRecurringToWindow(hs, from, to)
+			_, rows := happeningRowsInWindow(hs, from, to, false)
+			truncated := len(rows) > maxDynamicItems
 			if truncated {
-				hs = hs[:maxDynamicItems]
+				rows = rows[:maxDynamicItems]
 			}
 			text := "Upcoming happenings:\n"
-			for _, h := range hs {
-				text += fmt.Sprintf("- %s (%s)\n", h.Title, h.Start.Format("Mon 2006-01-02 15:04"))
+			for _, r := range rows {
+				text += fmt.Sprintf("- %s (%s)\n", r.Title, r.Start.Format("Mon 2006-01-02 15:04"))
 			}
 			if truncated {
 				text += fmt.Sprintf("(showing the first %d)\n", maxDynamicItems)
@@ -92,18 +112,39 @@ func (p Pipeline) DynamicBlocks(ctx context.Context, spaceID string, scopes []st
 			if p.Readers.Todos == nil {
 				continue
 			}
-			text := "Todos:\n"
-			if items, err := p.Readers.Todos.List(ctx, spaceID, "do"); err == nil {
-				truncated := len(items) > maxDynamicItems
-				if truncated {
-					items = items[:maxDynamicItems]
+			// m10 coordinator ruling: the todo context must include the buy
+			// list too (a "get milk" ask otherwise has no context to resolve
+			// against), sorted not-done first -- a done item is far less
+			// likely to be what "it" or a follow-up refers to -- then due.
+			// data.Todo carries no due date in this MVP data model (see its
+			// doc comment), so "then due" is a documented no-op: items keep
+			// their reader-returned relative order within each done/not-done
+			// group, which is itself stable (sort.SliceStable). Both lists
+			// are combined and capped together, not one-per-list, so a
+			// space with many buy items doesn't starve the todo list's own
+			// slice of the cap or vice versa.
+			var items []dynamicTodoItem
+			if do, err := p.Readers.Todos.List(ctx, spaceID, "do"); err == nil {
+				for _, it := range do {
+					items = append(items, dynamicTodoItem{it, "todo"})
 				}
-				for _, it := range items {
-					text += fmt.Sprintf("- %s [done=%v]\n", it.Title, it.Done)
+			}
+			if buy, err := p.Readers.Todos.List(ctx, spaceID, "buy"); err == nil {
+				for _, it := range buy {
+					items = append(items, dynamicTodoItem{it, "buy"})
 				}
-				if truncated {
-					text += fmt.Sprintf("(showing the first %d)\n", maxDynamicItems)
-				}
+			}
+			sort.SliceStable(items, func(i, j int) bool { return !items[i].Done && items[j].Done })
+			truncated := len(items) > maxDynamicItems
+			if truncated {
+				items = items[:maxDynamicItems]
+			}
+			text := "Todos and to-buy items:\n"
+			for _, it := range items {
+				text += fmt.Sprintf("- [%s] %s [done=%v]\n", it.kind, it.Title, it.Done)
+			}
+			if truncated {
+				text += fmt.Sprintf("(showing the first %d)\n", maxDynamicItems)
 			}
 			out = append(out, ai.ContextBlock{Scope: scope, Kind: ai.ContextDynamic, Name: "todos", Text: text})
 		case sneatdomain.ModuleContacts:

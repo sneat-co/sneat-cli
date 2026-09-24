@@ -301,6 +301,18 @@ func TestResolveAndAct_Reschedule_ConfirmationShowsResolvedDateTimeTZ(t *testing
 			t.Errorf("confirmation text = %q, want it to contain %q (resolved date/time/TZ before asking)", out.Text, want)
 		}
 	}
+	// S5 coordinator ruling: the confirmation also carries a HappeningCard
+	// (PresentationHappeningCard + a single HappeningRow) showing the SAME
+	// resolved new time as the text, not just prose.
+	if out.Presentation != sneatdomain.PresentationHappeningCard {
+		t.Errorf("Presentation = %q, want PresentationHappeningCard", out.Presentation)
+	}
+	if len(out.HappeningRows) != 1 {
+		t.Fatalf("HappeningRows = %+v, want exactly 1 (the resolved new time)", out.HappeningRows)
+	}
+	if row := out.HappeningRows[0]; row.Start.Hour() != 16 || row.Start.Day() != 26 {
+		t.Errorf("confirmation row Start = %v, want Sep 26 16:00", row.Start)
+	}
 
 	out, err = p.Turn(context.Background(), "yes", st, "sp1")
 	if err != nil {
@@ -362,6 +374,18 @@ func TestTurn_AmbiguousReferenceOffersChoice(t *testing.T) {
 	}
 	if len(st.LastShown) != 2 {
 		t.Fatalf("LastShown = %+v, want the 2 ambiguous candidates so a later \"2\" can pick one (S3)", st.LastShown)
+	}
+	// S5/m3 coordinator ruling: an ambiguous HAPPENING reference's choice
+	// list shows each candidate's real time (HappeningRows), not just a bare
+	// title -- otherwise two "dentist" candidates would be indistinguishable
+	// in the choice list itself.
+	if len(out.HappeningRows) != 2 {
+		t.Fatalf("HappeningRows = %+v, want a time-bearing row per candidate", out.HappeningRows)
+	}
+	for _, row := range out.HappeningRows {
+		if row.Start.IsZero() {
+			t.Errorf("candidate row %+v has a zero Start", row)
+		}
 	}
 }
 

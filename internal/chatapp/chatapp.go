@@ -83,8 +83,16 @@ func Run(deps Deps) (err error) {
 		CurrentSpace: spaceID,
 	})
 
+	// S4/TIMEZONES coordinator ruling: deps.TZ (--tz > SNEAT_TZ >
+	// time.Local's name, resolved once at the CLI's composition root -- see
+	// cmd/sneat/commands/chat.go's tzFromCmd) is the single zone every part
+	// of one session resolves "today"/"this week"/slot times in. An
+	// unparseable zone name falls back to time.Local rather than failing the
+	// whole session over a typo'd --tz.
+	loc := locationFromName(deps.TZ)
+
 	readers := data.Readers{
-		Happenings: data.NewFirestoreHappenings(deps.Cfg, deps.TokenSource),
+		Happenings: data.NewFirestoreHappenings(deps.Cfg, deps.TokenSource, data.WithLocation(loc)),
 		Todos:      data.NewFirestoreTodos(deps.Cfg, deps.TokenSource),
 		Contacts:   data.NewFirestoreContacts(deps.Cfg, deps.TokenSource),
 	}
@@ -130,6 +138,7 @@ func Run(deps Deps) (err error) {
 		Executor: executor,
 		Readers:  readers,
 		Now:      time.Now,
+		TZ:       loc.String(),
 		LLM:      providers.LLM,
 		CtxMgr:   ctxmgr.NewManager(ctxmgr.Policy{}),
 		Product:  Product,
@@ -180,6 +189,21 @@ func defaultSpaceID(ctx context.Context, spaces chat.SpacesReader, uid, currentS
 	}
 	slices.Sort(ids)
 	return ids[0]
+}
+
+// locationFromName resolves name (an IANA zone, e.g. "Europe/Berlin", or
+// time.Local's own "Local"/short-form string) to a *time.Location, falling
+// back to time.Local for an empty or unparseable name (S4/TIMEZONES: a
+// typo'd --tz or SNEAT_TZ must not fail the whole chat session).
+func locationFromName(name string) *time.Location {
+	if name == "" || name == time.Local.String() {
+		return time.Local
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return time.Local
+	}
+	return loc
 }
 
 // isFamilySpace reports whether a space-list entry is the user's family

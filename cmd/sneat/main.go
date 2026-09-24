@@ -125,6 +125,7 @@ func main() {
 				TokenSource:  ts,
 				Debug:        os.Getenv("SNEAT_DEBUG") != "",
 				CurrentSpace: args.CurrentSpace,
+				TZ:           args.TZ,
 			})
 		},
 	}

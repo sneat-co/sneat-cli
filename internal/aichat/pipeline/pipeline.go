@@ -479,11 +479,7 @@ func (p Pipeline) resolveAndAct(ctx context.Context, kind string, ref decision.R
 		// this, presenting a choice and then answering it by number would
 		// silently fall through to the main LLM every time.
 		st.LastShown = res.Candidates
-		return Output{
-			Text:         fmt.Sprintf("I found %d matches -- which one did you mean?", len(res.Candidates)),
-			Presentation: sneatdomain.PresentationHappeningsList,
-			Entities:     res.Candidates,
-		}, nil
+		return p.ambiguousChoiceOutput(ctx, spaceID, kind, res.Candidates), nil
 	}
 
 	target := res.Candidates[0]
@@ -502,26 +498,101 @@ func (p Pipeline) resolveAndAct(ctx context.Context, kind string, ref decision.R
 	// any spaceID it supplied, same as HandleAction's no-reference branch.
 	args := spaceScopedArgs(slots, spaceID)
 	summary := summaryFor(kind, target, slots)
+	// S5 coordinator ruling: a reschedule/cancel confirmation shows the
+	// resolved new time/occurrence as a HappeningCard, not just prose -- so
+	// confirmRow, computed alongside the summary text below, is attached to
+	// the Pending confirmation's Output further down.
+	var confirmRow *controls.HappeningRow
 	switch kind {
 	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening:
-		if resolved, ok := p.rescheduleSummary(ctx, spaceID, target, slots["when"]); ok {
+		if resolved, row, ok := p.rescheduleSummary(ctx, spaceID, target, slots["when"]); ok {
 			summary = resolved
+			confirmRow = &row
 		}
 	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentCancelHappening:
 		// B1: the confirmation must show the RESOLVED occurrence, computed
 		// before asking, the same way rescheduleSummary does -- not a bare
 		// "Cancel it?" that never lets the user see which day they're about
 		// to cancel.
-		if resolved, ok := p.cancelSummary(ctx, spaceID, target, slots["when"]); ok {
+		if resolved, row, ok := p.cancelSummary(ctx, spaceID, target, slots["when"]); ok {
 			summary = resolved
+			confirmRow = &row
 		}
 	}
 	action := session.Action{Kind: kind, Target: &target, Args: args, Summary: summary}
 	if isDestructive(kind) {
 		st.Pending = &action
-		return Output{Text: action.Summary + " (yes/no)"}, nil
+		out := Output{Text: action.Summary + " (yes/no)"}
+		if confirmRow != nil {
+			// S5: chatapp's blockFor renders this as controls.NewHappeningCard
+			// (single-row PresentationHappeningCard) instead of prose-only.
+			out.Presentation = sneatdomain.PresentationHappeningCard
+			out.Entities = []session.EntityRef{target}
+			out.HappeningRows = []controls.HappeningRow{*confirmRow}
+		}
+		return out, nil
 	}
 	return p.runAction(ctx, spaceID, action, st)
+}
+
+// ambiguousChoiceOutput builds resolveAndAct's OutcomeMany "which one did
+// you mean?" reply (S5/m3 coordinator ruling): the presentation -- and so
+// chatapp's rendered heading -- matches the CANDIDATES' own kind rather than
+// always reading "Happenings" regardless of what was actually ambiguous, and
+// a happening ambiguity shows each candidate's real time (HappeningRows) so
+// two happenings sharing a title ("Team Sync" at 9am and at 2pm) are
+// actually distinguishable in the choice list, not just duplicated text.
+func (p Pipeline) ambiguousChoiceOutput(ctx context.Context, spaceID, kind string, candidates []session.EntityRef) Output {
+	text := fmt.Sprintf("I found %d matches -- which one did you mean?", len(candidates))
+	switch entityKindFor(kind) {
+	case sneatdomain.EntityHappening:
+		out := Output{Text: text, Presentation: sneatdomain.PresentationHappeningsList, Entities: candidates}
+		out.HappeningRows = p.candidateHappeningRows(ctx, spaceID, candidates)
+		return out
+	case sneatdomain.EntityTodo:
+		presentation := sneatdomain.PresentationTodoList
+		if len(candidates) > 0 && candidates[0].Keys["list"] == data.ListKindBuy {
+			presentation = sneatdomain.PresentationBuyList
+		}
+		return Output{Text: text, Presentation: presentation, Entities: candidates}
+	case sneatdomain.EntityContact:
+		return Output{Text: text, Presentation: sneatdomain.PresentationContactsGrid, Entities: candidates}
+	default:
+		return Output{Text: text, Presentation: sneatdomain.PresentationHappeningsList, Entities: candidates}
+	}
+}
+
+// candidateHappeningRows resolves each ambiguous candidate's real
+// Start/End/Recurring by re-reading it (S5: the choice list must show
+// actual times, which a bare session.EntityRef never carries). A recurring
+// candidate is shown at its next anchor occurrence -- the same "next
+// occurrence" a day/week/upcoming presentation would compute -- not its
+// stored template date. Any read failure (a candidate deleted between
+// resolve and render, or no reader configured) drops the rows entirely
+// rather than half-fill them: blockFor's fallback (a bare title list) is a
+// safer choice list than one missing times for only some rows.
+func (p Pipeline) candidateHappeningRows(ctx context.Context, spaceID string, candidates []session.EntityRef) []controls.HappeningRow {
+	if p.Readers.Happenings == nil {
+		return nil
+	}
+	rows := make([]controls.HappeningRow, 0, len(candidates))
+	for _, ref := range candidates {
+		h, err := p.Readers.Happenings.Get(ctx, spaceID, ref.Keys["happeningID"])
+		if err != nil {
+			return nil
+		}
+		start, end := h.Start, h.End
+		if h.Recurring {
+			if anchor := recurringAnchor(p.now(), h); !anchor.IsZero() {
+				start = anchor
+				if !h.End.IsZero() && !h.Start.IsZero() {
+					end = anchor.Add(h.End.Sub(h.Start))
+				}
+			}
+		}
+		rows = append(rows, controls.HappeningRow{Ref: ref, Title: h.Title, Start: start, End: end, Recurring: h.Recurring})
+	}
+	return rows
 }
 
 // cancelSummary builds cancelHappening's confirmation text with the FULLY
@@ -529,25 +600,34 @@ func (p Pipeline) resolveAndAct(ctx context.Context, kind string, ref decision.R
 // computed BEFORE asking"), e.g. 'Cancel Fri Sep 25 "Yoga" (this occurrence
 // only)?' for a recurring happening -- a single (non-recurring) happening
 // has no occurrence distinct from itself, so it keeps the plain "Cancel
-// %q?" text. ok is false when the happening can't be read; the caller
-// falls back to summaryFor's plain text rather than a blank confirmation.
-func (p Pipeline) cancelSummary(ctx context.Context, spaceID string, target session.EntityRef, when string) (string, bool) {
+// %q?" text. It also returns the same resolved occurrence as a
+// controls.HappeningRow (S5: the confirmation card shows it, not just
+// prose). ok is false when the happening can't be read; the caller falls
+// back to summaryFor's plain text and no card rather than a blank
+// confirmation.
+func (p Pipeline) cancelSummary(ctx context.Context, spaceID string, target session.EntityRef, when string) (string, controls.HappeningRow, bool) {
 	if p.Readers.Happenings == nil {
-		return "", false
+		return "", controls.HappeningRow{}, false
 	}
 	current, err := p.Readers.Happenings.Get(ctx, spaceID, target.Keys["happeningID"])
 	if err != nil {
-		return "", false
+		return "", controls.HappeningRow{}, false
 	}
 	title := target.Title
 	if title == "" {
 		title = "it"
 	}
 	if !current.Recurring {
-		return fmt.Sprintf("Cancel %q?", title), true
+		row := controls.HappeningRow{Ref: target, Title: title, Start: current.Start, End: current.End}
+		return fmt.Sprintf("Cancel %q?", title), row, true
 	}
 	occ := resolveOccurrenceDate(p.now(), current, when)
-	return fmt.Sprintf("Cancel %s %q (this occurrence only)?", occ.Format("Mon Jan 2"), title), true
+	end := occ
+	if !current.End.IsZero() && !current.Start.IsZero() {
+		end = occ.Add(current.End.Sub(current.Start))
+	}
+	row := controls.HappeningRow{Ref: target, Title: title, Start: occ, End: end, Recurring: true}
+	return fmt.Sprintf("Cancel %s %q (this occurrence only)?", occ.Format("Mon Jan 2"), title), row, true
 }
 
 // pickFromLastShown handles a bare number/ordinal ("2", "the second one")
@@ -594,26 +674,34 @@ func (p Pipeline) pickFromLastShown(text string, st *session.State) (Output, boo
 // rescheduleHappening itself reads at execution time -- so the confirmation
 // and the eventual mutation resolve the anchor date/timezone identically.
 // ok is false when the happening can't be read or "when" can't be parsed;
-// the caller falls back to the plain summaryFor text rather than a blank
-// confirmation.
-func (p Pipeline) rescheduleSummary(ctx context.Context, spaceID string, target session.EntityRef, when string) (string, bool) {
+// the caller falls back to the plain summaryFor text and no card rather
+// than a blank confirmation. It also returns the resolved new time as a
+// controls.HappeningRow (S5: the confirmation card shows it, not just
+// prose) -- End is shifted by the SAME duration the happening already had,
+// since "move it to Friday" only ever changes the start.
+func (p Pipeline) rescheduleSummary(ctx context.Context, spaceID string, target session.EntityRef, when string) (string, controls.HappeningRow, bool) {
 	if p.Readers.Happenings == nil || when == "" {
-		return "", false
+		return "", controls.HappeningRow{}, false
 	}
 	current, err := p.Readers.Happenings.Get(ctx, spaceID, target.Keys["happeningID"])
 	if err != nil || current.Slot == nil {
-		return "", false
+		return "", controls.HappeningRow{}, false
 	}
 	anchor := recurringAnchor(p.now(), current)
 	newStart, ok := parseWhen(p.now(), anchor, when)
 	if !ok {
-		return "", false
+		return "", controls.HappeningRow{}, false
 	}
 	loc := newStart.Location()
 	if current.Slot.TimeZone != "" {
 		if l, lerr := time.LoadLocation(current.Slot.TimeZone); lerr == nil {
 			loc = l
 		}
+	}
+	newStart = newStart.In(loc)
+	newEnd := newStart
+	if !current.End.IsZero() && !current.Start.IsZero() {
+		newEnd = newStart.Add(current.End.Sub(current.Start))
 	}
 	title := target.Title
 	if title == "" {
@@ -623,7 +711,8 @@ func (p Pipeline) rescheduleSummary(ctx context.Context, spaceID string, target 
 	if current.Recurring {
 		occurrence = " (this occurrence only, not the whole series)"
 	}
-	return fmt.Sprintf("Move %q to %s%s?", title, newStart.In(loc).Format("Mon Jan 2 15:04 MST"), occurrence), true
+	row := controls.HappeningRow{Ref: target, Title: title, Start: newStart, End: newEnd, Recurring: current.Recurring}
+	return fmt.Sprintf("Move %q to %s%s?", title, newStart.Format("Mon Jan 2 15:04 MST"), occurrence), row, true
 }
 
 func (p Pipeline) runAction(ctx context.Context, spaceID string, action session.Action, st *session.State) (Output, error) {

@@ -390,7 +390,7 @@ func TestCancelSummary_ShowsResolvedOccurrenceBeforeAsking(t *testing.T) {
 	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{yoga}}}
 	p := Pipeline{Readers: readers, Now: func() time.Time { return now }}
 	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "yoga"}}
-	summary, ok := p.cancelSummary(context.Background(), "sp1", target, "Friday's")
+	summary, _, ok := p.cancelSummary(context.Background(), "sp1", target, "Friday's")
 	if !ok {
 		t.Fatal("cancelSummary: ok = false")
 	}
