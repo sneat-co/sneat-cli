@@ -2,7 +2,11 @@ package chatapp
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/strongo/aichat/ai/session"
 )
 
 type spaceIDFakeSpaces map[string]any
@@ -60,4 +64,24 @@ func TestDefaultSpaceID(t *testing.T) {
 			t.Fatalf("got %q, want empty", got)
 		}
 	})
+}
+
+// TestSidebarRender_TruncatesByDisplayWidthNotBytes covers m8: a title long
+// enough to need truncation must not be cut mid-rune (the icon prefix is a
+// multi-byte emoji, and len() counts bytes, not the runes lipgloss actually
+// renders).
+func TestSidebarRender_TruncatesByDisplayWidthNotBytes(t *testing.T) {
+	ref := session.EntityRef{Type: "happening", Title: "A very long happening title that will not fit"}
+	got := sidebarRender(ref, 10)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated line is not valid UTF-8: %q", got)
+	}
+	if strings.Contains(got, "�") {
+		t.Fatalf("truncated line contains a replacement rune (cut mid-rune): %q", got)
+	}
+	// Untruncated (width larger than the content) is returned as-is.
+	full := sidebarRender(ref, 200)
+	if !strings.Contains(full, "A very long happening title") {
+		t.Fatalf("untruncated render = %q, want the full title", full)
+	}
 }

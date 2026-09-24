@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/strongo/aichat/ai/decision"
+	aidiag "github.com/strongo/aichat/ai/diag"
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
 
@@ -18,6 +19,29 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/aichat/sneatdomain"
 	"github.com/sneat-co/sneat-cli/internal/chat"
 )
+
+// TestPathFor covers S11's path labelling: sneat-rules deciding is
+// "deterministic", any other decider (Jev/cloud-decision) is "decision",
+// and no decider at all is "deterministic" too (the LastShown numeric-pick
+// shortcut is the only way Turn returns !NeedsLLM with an empty
+// Trace.DecidedBy).
+func TestPathFor(t *testing.T) {
+	cases := []struct {
+		name      string
+		decidedBy string
+		want      aidiag.Path
+	}{
+		{"sneat-rules", sneatrules.Name, aidiag.PathDeterministic},
+		{"no decider (LastShown pick)", "", aidiag.PathDeterministic},
+		{"some other decider (Jev)", "jev", aidiag.PathDecision},
+	}
+	for _, c := range cases {
+		out := pipeline.Output{Trace: decision.Trace{DecidedBy: c.decidedBy}}
+		if got := pathFor(out); got != c.want {
+			t.Errorf("%s: pathFor = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
 
 // pressKey is a single non-printable/chorded key press (e.g. "shift+up",
 // "enter", "+") driven through the real chatshell.Model.Update, draining any

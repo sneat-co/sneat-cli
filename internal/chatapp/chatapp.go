@@ -17,6 +17,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/strongo/aichat/ai/aiconfig"
 	"github.com/strongo/aichat/ai/ctxmgr"
@@ -222,8 +223,12 @@ func sidebarRender(ref session.EntityRef, width int) string {
 		icon = "👤"
 	}
 	line := icon + " " + title
-	if len(line) > width && width > 1 {
-		line = line[:width]
+	// m8: truncate by lipgloss's DISPLAY width, not len() (bytes) -- byte
+	// truncation both cuts a multi-byte rune (icon, or any non-ASCII title)
+	// mid-sequence and, for a wide rune, allows more bytes than the sidebar
+	// column can actually display.
+	if width <= 0 {
+		return line
 	}
-	return line
+	return lipgloss.NewStyle().MaxWidth(width).Render(line)
 }

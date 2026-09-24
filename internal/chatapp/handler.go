@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -22,6 +23,7 @@ import (
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/controls"
 	"github.com/sneat-co/sneat-cli/internal/aichat/pipeline"
+	sneatrules "github.com/sneat-co/sneat-cli/internal/aichat/rules"
 	"github.com/sneat-co/sneat-cli/internal/aichat/sneatdomain"
 	"github.com/sneat-co/sneat-cli/internal/chat"
 )
@@ -58,6 +60,19 @@ type handler struct {
 	// "last N (8) turns of history" -- see pipeline.HistoryTurns).
 	streamText map[string]*strings.Builder
 	streamUser map[string]string
+	// streamStart/streamUsage/streamModel/streamProvider record what
+	// OnStreamDone needs for its S11 diagnostics line (LLM latency, token/
+	// cache/allowance usage, provider/model) -- an ai.Event carries these only
+	// on its own EventStarted/EventCompleted, not on OnStreamDone(id, err), so
+	// they are captured as they arrive and looked up by id at the end.
+	streamStart    map[string]time.Time
+	streamUsage    map[string]*ai.Usage
+	streamModel    map[string]string
+	streamProvider map[string]string
+	// streamDecided records whether the turn that started stream id had a
+	// decision.Decision at all (S11: distinguishes PathDecision from
+	// PathLLMFallback at OnStreamDone).
+	streamDecided map[string]bool
 	// history is the bounded exchange log StreamRequest sends ahead of the
 	// current turn. Pipeline itself is a stateless value (rebuilt per call),
 	// so this is where the session's history actually lives.
@@ -148,6 +163,19 @@ func (h *handler) OnSidebarChange(refs []session.EntityRef) {
 // --- chatshell.StreamObserver ------------------------------------------------
 
 func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
+	// S11: capture provider/model as soon as the stream announces them, and
+	// usage the moment it is known (EventCompleted) -- OnStreamDone(id, err)
+	// itself carries neither, only the terminal error, so this is the only
+	// place they are ever observed.
+	if ev.Provider != "" {
+		h.streamProvider[id] = ev.Provider
+	}
+	if ev.Model != "" {
+		h.streamModel[id] = ev.Model
+	}
+	if ev.Usage != nil {
+		h.streamUsage[id] = ev.Usage
+	}
 	if ev.Type == ai.EventTextDelta {
 		// Accumulate the visible (splitter-filtered) reply text for history
 		// (S7): OnStreamDone records it as the assistant side of this turn's
@@ -191,12 +219,28 @@ func (h *handler) OnStreamDone(id string, err error) tea.Cmd {
 	delete(h.streamText, id)
 	delete(h.streamUser, id)
 	if h.logger != nil {
-		t := aidiag.Turn{Path: aidiag.PathLLMFallback}
+		// S11: PathLLMFallback when nothing decided this turn at all (the
+		// StreamRequest that started it used SelectAll); PathDecision when a
+		// decision chose LLM handling (StreamRequest used Select) -- see
+		// startLLMStream, which records which one via streamDecided.
+		path := aidiag.PathLLMFallback
+		if h.streamDecided[id] {
+			path = aidiag.PathDecision
+		}
+		t := aidiag.Turn{Path: path, Provider: h.streamProvider[id], Model: h.streamModel[id], Usage: h.streamUsage[id]}
+		if start, ok := h.streamStart[id]; ok {
+			t.LLMLatency = time.Since(start)
+		}
 		if err != nil {
 			t.Errors = []string{aidiag.ErrorCode(err)}
 		}
 		aidiag.Log(h.ctx, h.logger, t)
 	}
+	delete(h.streamStart, id)
+	delete(h.streamUsage, id)
+	delete(h.streamModel, id)
+	delete(h.streamProvider, id)
+	delete(h.streamDecided, id)
 	return nil
 }
 
@@ -261,12 +305,12 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 	*h.state = m.state // apply the background work's result -- UI loop only
 	if m.err != nil {
 		h.model.AppendSystem("error: " + m.err.Error())
-		h.logTurn(aidiag.PathDeterministic, m.output, m.err)
+		h.logTurn(pathFor(m.output), m.output, m.err)
 		return nil
 	}
 	if !m.output.NeedsLLM {
 		h.render(m.output, nil)
-		h.logTurn(aidiag.PathDeterministic, m.output, nil)
+		h.logTurn(pathFor(m.output), m.output, nil)
 		h.appendHistory(m.text, m.output.Text)
 		return nil
 	}
@@ -288,9 +332,16 @@ func (h *handler) startLLMStream(text string, d *decision.Decision) tea.Cmd {
 	if h.streamText == nil {
 		h.streamText = map[string]*strings.Builder{}
 		h.streamUser = map[string]string{}
+		h.streamStart = map[string]time.Time{}
+		h.streamUsage = map[string]*ai.Usage{}
+		h.streamModel = map[string]string{}
+		h.streamProvider = map[string]string{}
+		h.streamDecided = map[string]bool{}
 	}
 	h.streamText[id] = &strings.Builder{}
 	h.streamUser[id] = text
+	h.streamStart[id] = time.Now()
+	h.streamDecided[id] = d != nil
 	open := func(ctx context.Context) iter.Seq2[ai.Event, error] {
 		req, report := h.pipeline.StreamRequest(ctx, text, &stateSnapshot, h.spaceID, d, focused, history)
 		h.logStreamRequest(d, report)
@@ -417,13 +468,38 @@ func moduleForEntityType(t string) string {
 	}
 }
 
+// pathFor labels a deterministically-answered turn's diagnostics path (S11
+// coordinator ruling DIAGNOSTICS): the sneat-rules provider deciding is
+// "deterministic"; some OTHER decider (Jev/cloud-decision, or any future
+// provider the chain gains) deciding is "decision" (the product's own logic
+// still ran, but a real inference produced the decision); no provider
+// deciding at all -- reached here only via the LastShown numeric-pick
+// shortcut, since every other no-decision case sets NeedsLLM -- is
+// "llm-fallback"'s deterministic sibling in spirit, so it is logged as
+// PathDeterministic too (it never touches the main LLM), while the Trace
+// itself (attached below) still shows DecidedBy=="" for anyone reading the
+// full record.
+func pathFor(out pipeline.Output) aidiag.Path {
+	switch out.Trace.DecidedBy {
+	case "":
+		return aidiag.PathDeterministic
+	case sneatrules.Name:
+		return aidiag.PathDeterministic
+	default:
+		return aidiag.PathDecision
+	}
+}
+
 // logTurn/logStreamRequest emit ai/diag.Turn records at Debug -- never user
-// text.
+// text. logTurn also emits the FULL decision.Trace (S11: every provider's
+// outcome/latency, not just aidiag.Log's own decidedBy+count summary) as a
+// separate structured line, since aidiag.Turn/aidiag.Log (a shared
+// strongo/aichat contract) does not itself expand Attempts.
 func (h *handler) logTurn(path aidiag.Path, out pipeline.Output, err error) {
 	if h.logger == nil {
 		return
 	}
-	t := aidiag.Turn{Path: path, LLMSkipped: true}
+	t := aidiag.Turn{Path: path, LLMSkipped: true, Decision: &out.Trace}
 	if out.Decision != nil {
 		t.Module, t.Intent = out.Decision.Module.Value, out.Decision.Intent.Value
 	}
@@ -431,6 +507,20 @@ func (h *handler) logTurn(path aidiag.Path, out pipeline.Output, err error) {
 		t.Errors = []string{aidiag.ErrorCode(err)}
 	}
 	aidiag.Log(h.ctx, h.logger, t)
+	h.logDecisionTrace(out.Trace)
+}
+
+// logDecisionTrace logs every decision.Attempt in trace -- provider,
+// outcome, latency -- never req.Text/user content (a decision.Attempt never
+// carries it in the first place).
+func (h *handler) logDecisionTrace(trace decision.Trace) {
+	if h.logger == nil || len(trace.Attempts) == 0 {
+		return
+	}
+	for _, a := range trace.Attempts {
+		h.logger.DebugContext(h.ctx, "aichat.decision.attempt",
+			"provider", a.Provider, "outcome", a.Outcome, "latency", a.Latency)
+	}
 }
 
 func (h *handler) logStreamRequest(d *decision.Decision, report ctxmgr.Report) {
