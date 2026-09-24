@@ -51,6 +51,18 @@ func (d *DB) Close() error { return d.client.Close() }
 // (capable of read-write transactions too, an escape hatch wider than any
 // caller outside this package needs) with the narrowest capability an
 // external read-only caller actually uses.
+//
+// COVERAGE NOTE: only reachable through a real *DB, which only Open builds
+// (a live Firestore client) -- there is no fake/seam here to unit-test
+// against without one. Covered by the existing emulator-gated suite
+// (firestoredb_emulator_test.go, `go test -tags emulator`, see its own doc
+// comment) whenever FIRESTORE_EMULATOR_HOST is set; every exerciser of this
+// package's *Session/*DB plumbing (internal/aichat/data's Firestore
+// readers, this package's own ListContacts/GetContact/spaces.go) shares
+// this same constraint -- it is the "Firestore collection paths aren't
+// verified against a live/emulated space" limitation already documented in
+// spec/features/chat-ai/README.md's Out of Scope section, not something
+// this line can fix in isolation.
 func (d *DB) RunReadonlyTransaction(ctx context.Context, fn func(ctx context.Context, tx dal.ReadTransaction) error) error {
 	return d.dal.RunReadonlyTransaction(ctx, fn)
 }
@@ -86,6 +98,12 @@ func NewSession(cfg config.Config, ts oauth2.TokenSource) *Session {
 }
 
 // DB returns the session's shared connection, opening it on first call.
+//
+// COVERAGE NOTE: the s.db != nil fast path is exercised indirectly by every
+// caller that reads twice in one session (e.g. TestReaders_ShareOneFirestoreSession);
+// the first-open path calls Open, which needs a real Firestore client -- see
+// RunReadonlyTransaction's own COVERAGE NOTE for why that is out of reach
+// for a pure unit test here.
 func (s *Session) DB(ctx context.Context) (*DB, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

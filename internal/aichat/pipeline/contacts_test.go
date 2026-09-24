@@ -177,6 +177,56 @@ func TestTurn_ListContacts_ContactRowsCarriesFields(t *testing.T) {
 	}
 }
 
+// TestCandidateContactRows_EnrichesEachCandidateViaGet covers
+// candidateContactRows directly (m11's counterpart to
+// candidateHappeningRows, for an ambiguous CONTACTS choice list -- reached
+// via ambiguousChoiceOutput's EntityContact case, an edge the current
+// taxonomy only exercises for an unusual pronoun/reference combination on a
+// non-find/show contacts action; testing the method directly is more
+// direct than contriving that routing). One ContactsReader.Get per
+// candidate enriches it with real fields.
+func TestCandidateContactRows_EnrichesEachCandidateViaGet(t *testing.T) {
+	readers := data.Readers{Contacts: &data.FakeContacts{Items: []data.Contact{
+		{ID: "c1", SpaceID: "sp1", Name: "Alice", RelatedAs: "parent", DoB: "1980-01-01"},
+		{ID: "c2", SpaceID: "sp1", Name: "Bob", RelatedAs: "spouse"},
+	}}}
+	p := Pipeline{Readers: readers}
+	candidates := []session.EntityRef{
+		{Type: sneatdomain.EntityContact, Title: "Alice", Keys: map[string]string{"spaceID": "sp1", "contactID": "c1"}},
+		{Type: sneatdomain.EntityContact, Title: "Bob", Keys: map[string]string{"spaceID": "sp1", "contactID": "c2"}},
+	}
+	rows := p.candidateContactRows(context.Background(), "sp1", candidates)
+	if len(rows) != 2 || rows[0].RelatedAs != "parent" || rows[0].DoB != "1980-01-01" || rows[1].RelatedAs != "spouse" {
+		t.Fatalf("rows = %+v, want both candidates enriched via Get", rows)
+	}
+}
+
+// TestCandidateContactRows_NilOnGetError degrades to nil (name-only
+// rendering upstream) rather than a partial/erroring result when any
+// candidate's Get fails -- matching candidateHappeningRows's own contract.
+func TestCandidateContactRows_NilOnGetError(t *testing.T) {
+	readers := data.Readers{Contacts: &data.FakeContacts{Items: []data.Contact{
+		{ID: "c1", SpaceID: "sp1", Name: "Alice"},
+	}}}
+	p := Pipeline{Readers: readers}
+	candidates := []session.EntityRef{
+		{Type: sneatdomain.EntityContact, Title: "Alice", Keys: map[string]string{"spaceID": "sp1", "contactID": "c1"}},
+		{Type: sneatdomain.EntityContact, Title: "Missing", Keys: map[string]string{"spaceID": "sp1", "contactID": "gone"}},
+	}
+	if rows := p.candidateContactRows(context.Background(), "sp1", candidates); rows != nil {
+		t.Fatalf("rows = %+v, want nil when a candidate's Get fails", rows)
+	}
+}
+
+// TestCandidateContactRows_NilWhenNoContactsReader covers the missing-
+// reader guard.
+func TestCandidateContactRows_NilWhenNoContactsReader(t *testing.T) {
+	p := Pipeline{}
+	if rows := p.candidateContactRows(context.Background(), "sp1", nil); rows != nil {
+		t.Fatalf("rows = %+v, want nil with no Contacts reader configured", rows)
+	}
+}
+
 // TestHandleAction_FindContact_ViaLLM covers the LLM-action-block path
 // (HandleAction), the equivalent of the main LLM emitting
 // <sneat-action>{"kind":"contacts.find_contact","reference":"bob"}</sneat-action>.

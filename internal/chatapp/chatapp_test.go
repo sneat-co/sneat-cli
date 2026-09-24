@@ -8,6 +8,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/strongo/aichat/ai/session"
+
+	"github.com/sneat-co/sneat-cli/internal/chat"
 )
 
 type spaceIDFakeSpaces map[string]any
@@ -41,6 +43,36 @@ func TestSessionClock_UsesGivenZone_NotProcessLocal(t *testing.T) {
 	// Same instant, just relocated -- not a frozen or offset clock.
 	if got.Before(before.Add(-time.Second)) || got.After(after.Add(time.Second)) {
 		t.Fatalf("got = %v, want within [%v, %v] (same instant as time.Now(), just in loc)", got, before, after)
+	}
+}
+
+// TestLocationFromName covers S4/TIMEZONES: a real IANA zone resolves to
+// itself, an unparseable/empty one falls back to time.Local rather than
+// failing the whole session over a typo'd --tz/SNEAT_TZ.
+func TestLocationFromName(t *testing.T) {
+	if got := locationFromName(""); got != time.Local {
+		t.Fatalf("locationFromName(\"\") = %v, want time.Local", got)
+	}
+	if got := locationFromName("not-a-real-zone"); got != time.Local {
+		t.Fatalf("locationFromName(garbage) = %v, want time.Local fallback", got)
+	}
+	loc := locationFromName("Pacific/Kiritimati")
+	if loc == nil || loc.String() != "Pacific/Kiritimati" {
+		t.Fatalf("locationFromName(\"Pacific/Kiritimati\") = %v, want that zone resolved", loc)
+	}
+}
+
+// TestSlashCommands_MapsNameAndSummary is a pure mapping regression: each
+// chat.CommandInfo becomes a chatshell.Command with the same Name and its
+// Summary as Help.
+func TestSlashCommands_MapsNameAndSummary(t *testing.T) {
+	in := []chat.CommandInfo{
+		{Name: "/space", Summary: "switch space"},
+		{Name: "/help", Summary: "show help"},
+	}
+	out := slashCommands(in)
+	if len(out) != 2 || out[0].Name != "/space" || out[0].Help != "switch space" || out[1].Name != "/help" || out[1].Help != "show help" {
+		t.Fatalf("slashCommands(%+v) = %+v", in, out)
 	}
 }
 

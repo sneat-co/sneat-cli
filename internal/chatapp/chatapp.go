@@ -69,6 +69,18 @@ const Product = "sneat"
 
 // Run builds the pipeline and launches the interactive chatshell. It blocks
 // until the user quits.
+//
+// COVERAGE NOTE: Run itself, and newDebugLogger/logDecisionTrace (--debug
+// diagnostics), are the composition root / real-I/O boundary -- a real
+// Firestore client, sneatapi HTTP client, and a blocking tea.NewProgram(
+// ).Run() reading the real terminal. Every piece of LOGIC Run wires up
+// (sessionClock, locationFromName, defaultSpaceID, isFamilySpace,
+// slashCommands, sidebarRender, and the whole internal/aichat/pipeline +
+// internal/chatapp/handler.go behaviour Run assembles) is unit-tested on
+// its own; Run's own body is glue, the same category as main() -- not
+// meaningfully unit-testable without either a real terminal/Firestore/API
+// or a test double for tea.NewProgram itself, which chatshell does not
+// expose a seam for.
 func Run(deps Deps) (err error) {
 	ctx := context.Background()
 	httpClient := http.DefaultClient

@@ -74,3 +74,25 @@ func TestToDataContact_NilContact_ReturnsIDOnly(t *testing.T) {
 		t.Fatalf("got = %+v, want ID/SpaceID only", got)
 	}
 }
+
+// TestNormalizeForSearch_LowercasesAndTrims and
+// TestContainsFold_CaseInsensitiveSubstring cover FindByTitle/FindByName's
+// two pure helpers directly -- both only ever run today as part of a real
+// Firestore-backed List/FindByName call (out of reach for a pure unit test;
+// see toDataContact's neighbouring tests and firestoredb's own COVERAGE
+// NOTE comments for why), so the matching LOGIC itself needs its own
+// direct coverage.
+func TestNormalizeForSearch_LowercasesAndTrims(t *testing.T) {
+	if got := normalizeForSearch("  Alice Smith  "); got != "alice smith" {
+		t.Fatalf("normalizeForSearch = %q, want %q", got, "alice smith")
+	}
+}
+
+func TestContainsFold_CaseInsensitiveSubstring(t *testing.T) {
+	if !containsFold("Alice Smith", "smith") {
+		t.Fatal("containsFold(\"Alice Smith\", \"smith\") = false, want true")
+	}
+	if containsFold("Alice Smith", "bob") {
+		t.Fatal("containsFold(\"Alice Smith\", \"bob\") = true, want false")
+	}
+}
