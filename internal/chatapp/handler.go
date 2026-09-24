@@ -129,6 +129,18 @@ type handler struct {
 // (e.g. a deterministic turn that only rendered a structured control) still
 // records the user's side, so a later pronoun/continuation still has it in
 // view even though there was no prose reply.
+// cmdOrWork combines a background work command with the SetBusy(true)
+// command chatshell's own SetBusy returns, shared by Submit/OnStreamEvent/
+// beginLLMStream: real chatshell.Model.SetBusy(true) always returns a
+// non-nil spinner-tick command today, but this stays correct if a future
+// chatshell version (or a product-supplied Model) ever returns nil for it.
+func cmdOrWork(work, busyCmd tea.Cmd) tea.Cmd {
+	if busyCmd == nil {
+		return work
+	}
+	return tea.Batch(work, busyCmd)
+}
+
 func (h *handler) appendHistory(user, assistant string) {
 	if user == "" {
 		return
@@ -211,10 +223,7 @@ func (h *handler) Submit(text string) tea.Cmd {
 		out, err := pl.Turn(ctx, trimmed, &snapshot, spaceID)
 		return turnMsg{text: trimmed, output: out, err: err, state: snapshot, seq: seq}
 	}
-	if busyCmd == nil {
-		return work
-	}
-	return tea.Batch(work, busyCmd)
+	return cmdOrWork(work, busyCmd)
 }
 
 // applyStateDelta copies the turn-owned fields of from onto the live
@@ -396,10 +405,7 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 		executed := err == nil && snapshot.Previous != prevBefore
 		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq, id: id, executed: executed}
 	}
-	if busyCmd == nil {
-		return work
-	}
-	return tea.Batch(work, busyCmd)
+	return cmdOrWork(work, busyCmd)
 }
 
 // OnStreamDone fires exactly once per StartStream call (success, fatal
@@ -687,10 +693,7 @@ func (h *handler) beginLLMStream(text string, d *decision.Decision, seq int64) t
 		req, report := pl.StreamRequest(ctx, text, &stateSnapshot, spaceID, d, focused, history)
 		return llmRequestReadyMsg{ctx: ctx, text: text, decision: d, req: req, report: report, state: stateSnapshot, seq: seq}
 	}
-	if busyCmd == nil {
-		return work
-	}
-	return tea.Batch(work, busyCmd)
+	return cmdOrWork(work, busyCmd)
 }
 
 // startLLMStream is beginLLMStream's second half, run once the request is

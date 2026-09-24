@@ -270,20 +270,31 @@ func isFamilySpace(info any) bool {
 	return strings.EqualFold(t, "family")
 }
 
+// userCacheDir/mkdirAll/openLogFile are newDebugLogger's own seams over the
+// os package, so a test can force each failure branch (a cache dir lookup
+// failing, a read-only/unwritable parent, a file that can't be opened)
+// without actually breaking the filesystem out from under the real
+// os.UserCacheDir/os.MkdirAll/os.OpenFile.
+var (
+	userCacheDir = os.UserCacheDir
+	mkdirAll     = os.MkdirAll
+	openLogFile  = os.OpenFile
+)
+
 // newDebugLogger writes ai/diag's Debug-level JSON logs to
 // <UserCacheDir>/sneat/chat-debug.log rather than stderr, which chatshell's
 // alt-screen owns exclusively while the program runs. A failure to open the
 // file falls back to a discarded logger rather than corrupting the screen.
 func newDebugLogger() *slog.Logger {
-	dir, err := os.UserCacheDir()
+	dir, err := userCacheDir()
 	if err != nil {
 		return slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
 	dir = filepath.Join(dir, "sneat")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := mkdirAll(dir, 0o755); err != nil {
 		return slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "chat-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := openLogFile(filepath.Join(dir, "chat-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}

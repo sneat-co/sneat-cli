@@ -35,6 +35,58 @@ func TestButtonsBlock_CurrentButton_OutOfBounds(t *testing.T) {
 	}
 }
 
+// TestButtonsBlock_ClampCol_NegativeCol covers clampCol's own col<0 clamp
+// branch directly (Update's own callers never leave col negative, so this
+// is reached only by a direct call).
+func TestButtonsBlock_ClampCol_NegativeCol(t *testing.T) {
+	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline, []botkb.Button{botkb.NewDataButton("A", "a")})
+	b := newButtonsBlock(kb)
+	b.col = -1
+	b.clampCol()
+	if b.col != 0 {
+		t.Fatalf("col = %d, want clamped to 0", b.col)
+	}
+}
+
+// TestButtonsBlock_Update_UpAndLeftSucceed cover the up-key and left-key
+// SUCCESS branches (moving), distinct from the package's existing
+// at-bounds no-op tests.
+func TestButtonsBlock_Update_UpAndLeftSucceed(t *testing.T) {
+	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewDataButton("A", "a")},
+		[]botkb.Button{botkb.NewDataButton("B", "b")},
+	)
+	b := newButtonsBlock(kb)
+	b.row = 1
+	b.Update(tea.KeyPressMsg{Code: 'k'})
+	if b.row != 0 {
+		t.Fatalf("row = %d, want 0 after up", b.row)
+	}
+
+	kb2 := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewDataButton("A", "a"), botkb.NewDataButton("B", "b")},
+	)
+	b2 := newButtonsBlock(kb2)
+	b2.col = 1
+	b2.Update(tea.KeyPressMsg{Code: 'h'})
+	if b2.col != 0 {
+		t.Fatalf("col = %d, want 0 after left", b2.col)
+	}
+}
+
+// TestButtonsBlock_View_MultiButtonRowSeparator covers View's own
+// space-separator branch between buttons in the same row.
+func TestButtonsBlock_View_MultiButtonRowSeparator(t *testing.T) {
+	kb := botkb.NewMessageKeyboard(botkb.KeyboardTypeInline,
+		[]botkb.Button{botkb.NewDataButton("A", "a"), botkb.NewDataButton("B", "b")},
+	)
+	b := newButtonsBlock(kb)
+	got := plain(b.View(80, false))
+	if !strings.Contains(got, "] [") {
+		t.Fatalf("View() = %q, want a space between same-row buttons", got)
+	}
+}
+
 // TestButtonsBlock_ClampCol_ShrinksOnShorterRow covers clampCol's own
 // shrink-to-fit branch: moving from a longer row to a shorter one clamps
 // col into range instead of leaving it dangling.
