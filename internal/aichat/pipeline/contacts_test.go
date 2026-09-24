@@ -90,6 +90,38 @@ func TestFindOrShowContact_ResolverError(t *testing.T) {
 	}
 }
 
+// TestTurn_FindContact_Ambiguous_ViaResolveResolve covers
+// resolve.Resolve's OWN OutcomeAmbiguous branch inside findOrShowContact --
+// distinct from TestTurn_FindContact_AmbiguousName_RendersChoices, which
+// (per resolve.Resolve's scoring) actually resolves via the ORDINARY
+// Resolver's fallback title search, never resolve.Resolve's own ambiguous
+// candidate list. Two contacts sharing the exact same first name force
+// resolve.Resolve's pick() to see two equally-scored (4, "exact") top
+// candidates.
+func TestTurn_FindContact_Ambiguous_ViaResolveResolve(t *testing.T) {
+	readers := data.Readers{Contacts: &data.FakeContacts{Items: []data.Contact{
+		{ID: "c1", SpaceID: "sp1", Name: "Alex Smith", FirstName: "Alex"},
+		{ID: "c2", SpaceID: "sp1", Name: "Alex Jones", FirstName: "Alex"},
+	}}}
+	p := Pipeline{
+		Chain:    decision.Chain{Providers: []decision.Provider{rules.New()}},
+		Resolver: Resolver{Readers: readers},
+		Readers:  readers,
+		Now:      fixedNow,
+	}
+	st := &session.State{}
+	out, err := p.Turn(context.Background(), "find contact alex", st, "sp1")
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if len(out.Entities) != 2 {
+		t.Fatalf("Entities = %+v, want both Alex candidates from resolve.Resolve's own ambiguous outcome", out.Entities)
+	}
+	if len(out.ContactRows) != 2 {
+		t.Fatalf("ContactRows = %+v, want both candidates enriched", out.ContactRows)
+	}
+}
+
 // TestTurn_FindContact_OneMatch_RendersContactCard covers S8's real,
 // end-to-end path: the deterministic "find contact ..." rule -> pipeline.Turn
 // -> findOrShowContact -> resolve.Resolve, through the actual decision

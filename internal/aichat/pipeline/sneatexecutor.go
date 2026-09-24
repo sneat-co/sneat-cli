@@ -310,9 +310,6 @@ func recurringAnchor(now time.Time, current data.Happening) time.Time {
 		return current.Start
 	}
 	loc := current.Start.Location()
-	if loc == nil {
-		loc = now.Location()
-	}
 	hour, minute := 0, 0
 	if !current.Start.IsZero() {
 		hour, minute = current.Start.Hour(), current.Start.Minute()
@@ -415,9 +412,6 @@ func parseWhen(now, current time.Time, text string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	loc := current.Location()
-	if loc == nil {
-		loc = now.Location()
-	}
 	fields := strings.Fields(text)
 	if len(fields) >= 2 {
 		timePart, datePart := fields[len(fields)-1], strings.Join(fields[:len(fields)-1], " ")
@@ -479,9 +473,6 @@ func occurrenceAnchor(now time.Time, current data.Happening, refDate string) tim
 		return anchor
 	}
 	loc := anchor.Location()
-	if loc == nil {
-		loc = now.Location()
-	}
 	return time.Date(d.Year(), d.Month(), d.Day(), anchor.Hour(), anchor.Minute(), 0, 0, loc)
 }
 
@@ -501,9 +492,6 @@ func resolveOccurrenceDate(now time.Time, current data.Happening, when, refDate 
 		return anchor
 	}
 	loc := anchor.Location()
-	if loc == nil {
-		loc = now.Location()
-	}
 	return time.Date(d.Year(), d.Month(), d.Day(), anchor.Hour(), anchor.Minute(), 0, 0, loc)
 }
 
