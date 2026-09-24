@@ -373,9 +373,6 @@ func projectOccurrences(h data.Happening, from, to time.Time) []occurrence {
 		return nil // filterRecurringToWindow should already have dropped these
 	}
 	loc := h.Start.Location()
-	if loc == nil {
-		loc = time.UTC
-	}
 	hour, minute := 0, 0
 	var duration time.Duration
 	if !h.Start.IsZero() {
@@ -708,10 +705,10 @@ func (p Pipeline) pickFromLastShown(text string, st *session.State) (Output, boo
 	if !ok {
 		return Output{}, false
 	}
-	res, handled := resolveByPosition(pos, "", *st) // "" = any kind: this fallback has no reference kind to filter by
-	if !handled {
-		return Output{}, false
-	}
+	// resolveByPosition's only handled=false case is an empty st.LastShown,
+	// already ruled out above, so its bool return is intentionally ignored
+	// here ("" = any kind: this fallback has no reference kind to filter by).
+	res, _ := resolveByPosition(pos, "", *st)
 	if res.Outcome != OutcomeOne {
 		return Output{Text: fmt.Sprintf("There's no %s option -- I showed %d.", text, len(st.LastShown))}, true
 	}

@@ -128,6 +128,44 @@ func TestUndoRequiresPrevious(t *testing.T) {
 	}
 }
 
+// TestFindContactRule is S8: each of findContactPrefixes' three prefixes
+// resolves to a find_contact decision carrying the remainder as the
+// Reference.Expression; a bare prefix with no name, and text matching none
+// of the prefixes, both abstain.
+func TestFindContactRule(t *testing.T) {
+	cases := []struct{ text, wantName string }{
+		{"find contact Alice", "alice"},
+		{"show contact Bob", "bob"},
+		{"contact Carol", "carol"},
+	}
+	for _, c := range cases {
+		d, ok := decide(t, c.text, session.State{})
+		if !ok {
+			t.Fatalf("%q: expected a decision, got abstain", c.text)
+		}
+		if d.Module.Value != sneatdomain.ModuleContacts || d.Intent.Value != sneatdomain.IntentFindContact {
+			t.Errorf("%q: module/intent = %s/%s, want contacts/find_contact", c.text, d.Module.Value, d.Intent.Value)
+		}
+		if d.Reference == nil || d.Reference.Expression != c.wantName {
+			t.Errorf("%q: Reference = %+v, want Expression %q", c.text, d.Reference, c.wantName)
+		}
+	}
+
+	if _, ok := decide(t, "something else entirely", session.State{}); ok {
+		t.Error("text matching no findContactPrefixes entry must abstain")
+	}
+
+	// A bare prefix with no name must abstain rather than decide with an
+	// empty Reference -- called directly against the rule's Match func
+	// (bypassing rules.Provider's own text normalization, which trims
+	// trailing whitespace and would otherwise strip the very space that
+	// makes "find contact " match the prefix at all) so this exact branch
+	// is exercised deterministically.
+	if _, ok := findContactRule().Match("find contact ", session.State{}); ok {
+		t.Error("a bare prefix with no name must abstain, not decide with an empty Reference")
+	}
+}
+
 // TestValidatesAgainstTaxonomy guards against a rule naming a module/intent
 // this package's own Taxonomy does not declare -- decision.Chain would
 // silently downgrade such a decision to "invalid" and fall through.

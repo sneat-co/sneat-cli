@@ -127,6 +127,50 @@ func TestDefaultSpaceID(t *testing.T) {
 	})
 }
 
+// TestIsFamilySpace covers the family-type match, a non-family type, and
+// the defensively-nil/wrong-shape info branches.
+func TestIsFamilySpace(t *testing.T) {
+	if !isFamilySpace(map[string]any{"type": "family"}) {
+		t.Error("type=family should be a family space")
+	}
+	if !isFamilySpace(map[string]any{"type": "FAMILY"}) {
+		t.Error("type match should be case-insensitive")
+	}
+	if isFamilySpace(map[string]any{"type": "private"}) {
+		t.Error("type=private should not be a family space")
+	}
+	if isFamilySpace(map[string]any{}) {
+		t.Error("a map with no type key should not be a family space")
+	}
+	if isFamilySpace("not a map") {
+		t.Error("a non-map info value should not be a family space")
+	}
+	if isFamilySpace(nil) {
+		t.Error("nil info should not be a family space")
+	}
+}
+
+// TestSidebarRender_IconsAndFallbacks covers every icon branch (todo,
+// contact, an unknown type's default bullet), the empty-title-falls-back-
+// to-type branch, and the width<=0 passthrough.
+func TestSidebarRender_IconsAndFallbacks(t *testing.T) {
+	if got := sidebarRender(session.EntityRef{Type: "todo", Title: "Buy milk"}, 200); !strings.Contains(got, "Buy milk") {
+		t.Fatalf("todo render = %q", got)
+	}
+	if got := sidebarRender(session.EntityRef{Type: "contact", Title: "Alice"}, 200); !strings.Contains(got, "Alice") {
+		t.Fatalf("contact render = %q", got)
+	}
+	if got := sidebarRender(session.EntityRef{Type: "unknown-kind", Title: "X"}, 200); !strings.Contains(got, "X") {
+		t.Fatalf("unknown-type render = %q", got)
+	}
+	if got := sidebarRender(session.EntityRef{Type: "happening"}, 200); !strings.Contains(got, "happening") {
+		t.Fatalf("empty-title render = %q, want it to fall back to the type", got)
+	}
+	if got := sidebarRender(session.EntityRef{Type: "happening", Title: "X"}, 0); !strings.Contains(got, "X") {
+		t.Fatalf("width<=0 render = %q, want the unclamped line", got)
+	}
+}
+
 // TestSidebarRender_TruncatesByDisplayWidthNotBytes covers m8: a title long
 // enough to need truncation must not be cut mid-rune (the icon prefix is a
 // multi-byte emoji, and len() counts bytes, not the runes lipgloss actually

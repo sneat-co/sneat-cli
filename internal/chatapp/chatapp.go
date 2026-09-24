@@ -67,20 +67,58 @@ type Deps struct {
 // X-AI-Product), per brief §11.
 const Product = "sneat"
 
+// runDeps are Run's own dependencies on the outside world: opening the
+// shared Firestore-backed readers, building the AI provider chain, and
+// driving the terminal program. Each is an unexported func var (a seam) so
+// a test can override every one of them with a fake and exercise Run's own
+// wiring/error/cleanup logic without a real Firestore project, cloud
+// credentials, or terminal. The real defaults below are what Run calls in
+// production; runDeps.reset (in export_test.go) restores them after a test
+// that overrides one.
+
+// newReaders opens the shared Firestore session Run's three readers use and
+// returns it as an io.Closer alongside them (m6: ONE Firestore client for
+// the whole chat session, shared by all three readers, instead of each
+// reader opening its own -- a prior version's Readers.Close() closed 3
+// separate clients that all conversed with the same Firestore project as
+// the same user; there was never a reason for more than one).
+var newReaders = func(cfg config.Config, ts oauth2.TokenSource, loc *time.Location) (data.Readers, io.Closer) {
+	fsSession := firestoredb.NewSession(cfg, ts)
+	return data.Readers{
+		Happenings: data.NewFirestoreHappenings(fsSession, data.WithLocation(loc)),
+		Todos:      data.NewFirestoreTodos(fsSession),
+		Contacts:   data.NewFirestoreContacts(fsSession),
+	}, fsSession
+}
+
+// buildAIConfig wraps aiconfig.Build as a seam.
+var buildAIConfig = aiconfig.Build
+
+// runProgram drives model to completion -- the real implementation blocks
+// on the actual terminal via tea.NewProgram(model).Run(); a test replaces
+// it to avoid opening one. AltScreen is set by chatshell's own View()
+// (tea.View.AltScreen), not a tea.NewProgram option, in bubbletea v2.
+var runProgram = func(model tea.Model) error {
+	_, err := tea.NewProgram(model).Run()
+	return err
+}
+
+// cloudTokenFunc builds aiconfig.Deps' CloudToken callback over ts, pulled
+// out of Run as its own named function so it has a direct unit test (both
+// the success and the TokenSource-error branch) independent of the rest of
+// Run's wiring.
+func cloudTokenFunc(ts oauth2.TokenSource) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) {
+		tok, err := ts.Token()
+		if err != nil {
+			return "", err
+		}
+		return tok.AccessToken, nil
+	}
+}
+
 // Run builds the pipeline and launches the interactive chatshell. It blocks
 // until the user quits.
-//
-// COVERAGE NOTE: Run itself, and newDebugLogger/logDecisionTrace (--debug
-// diagnostics), are the composition root / real-I/O boundary -- a real
-// Firestore client, sneatapi HTTP client, and a blocking tea.NewProgram(
-// ).Run() reading the real terminal. Every piece of LOGIC Run wires up
-// (sessionClock, locationFromName, defaultSpaceID, isFamilySpace,
-// slashCommands, sidebarRender, and the whole internal/aichat/pipeline +
-// internal/chatapp/handler.go behaviour Run assembles) is unit-tested on
-// its own; Run's own body is glue, the same category as main() -- not
-// meaningfully unit-testable without either a real terminal/Firestore/API
-// or a test double for tea.NewProgram itself, which chatshell does not
-// expose a seam for.
 func Run(deps Deps) (err error) {
 	ctx := context.Background()
 	httpClient := http.DefaultClient
@@ -105,26 +143,12 @@ func Run(deps Deps) (err error) {
 	loc := locationFromName(deps.TZ)
 	now := sessionClock(loc)
 
-	// m6: ONE Firestore client for the whole chat session, shared by all
-	// three readers, instead of each reader opening its own -- a prior
-	// version's Readers.Close() closed 3 separate clients (each reader had
-	// built its own Session from the same cfg/ts) that all conversed with
-	// the same Firestore project as the same user; there was never a reason
-	// for more than one.
-	fsSession := firestoredb.NewSession(deps.Cfg, deps.TokenSource)
-	readers := data.Readers{
-		Happenings: data.NewFirestoreHappenings(fsSession, data.WithLocation(loc)),
-		Todos:      data.NewFirestoreTodos(fsSession),
-		Contacts:   data.NewFirestoreContacts(fsSession),
-	}
+	readers, closer := newReaders(deps.Cfg, deps.TokenSource, loc)
 	// m4/m6: the session that wires a Readers (this Run call) owns closing
 	// the shared Firestore client on shutdown -- on every return path,
-	// including an early one from aiconfig.Build failing below.
-	// Readers.Close() still works (each reader forwards to the SAME
-	// fsSession, and Session.Close is idempotent), but closing fsSession
-	// directly says what is actually happening: one client, closed once.
+	// including an early one from buildAIConfig failing below.
 	defer func() {
-		if cerr := fsSession.Close(); cerr != nil && err == nil {
+		if cerr := closer.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("aichat: closing Firestore session: %w", cerr)
 		}
 	}()
@@ -132,16 +156,8 @@ func Run(deps Deps) (err error) {
 	api := sneatapi.New(deps.Cfg.APIBaseURL, deps.TokenSource, httpClient)
 	executor := pipeline.SneatExecutor{Calendar: api, Todo: api, Happenings: readers.Happenings, Now: now}
 
-	cloudToken := func(context.Context) (string, error) {
-		tok, err := deps.TokenSource.Token()
-		if err != nil {
-			return "", err
-		}
-		return tok.AccessToken, nil
-	}
-
-	providers, err := aiconfig.Build(deps.AIConfig, aiconfig.Deps{
-		Product: Product, CloudToken: cloudToken, CloudBaseURL: deps.Cfg.APIBaseURL,
+	providers, err := buildAIConfig(deps.AIConfig, aiconfig.Deps{
+		Product: Product, CloudToken: cloudTokenFunc(deps.TokenSource), CloudBaseURL: deps.Cfg.APIBaseURL,
 		EnvPrefix: "SNEAT_", HTTPClient: httpClient,
 		ExtraDecision:        []decision.Provider{sneatrules.New()},
 		DisableCloudDecision: deps.NoJev,
@@ -178,10 +194,7 @@ func Run(deps Deps) (err error) {
 	)
 	h.model = model
 
-	// AltScreen is set by chatshell's own View() (tea.View.AltScreen), not a
-	// tea.NewProgram option, in bubbletea v2.
-	_, err = tea.NewProgram(model).Run()
-	return err
+	return runProgram(model)
 }
 
 // defaultSpaceID chooses the pipeline's starting space (coordinator ruling
@@ -257,20 +270,31 @@ func isFamilySpace(info any) bool {
 	return strings.EqualFold(t, "family")
 }
 
+// userCacheDir/mkdirAll/openLogFile are newDebugLogger's own seams over the
+// os package, so a test can force each failure branch (a cache dir lookup
+// failing, a read-only/unwritable parent, a file that can't be opened)
+// without actually breaking the filesystem out from under the real
+// os.UserCacheDir/os.MkdirAll/os.OpenFile.
+var (
+	userCacheDir = os.UserCacheDir
+	mkdirAll     = os.MkdirAll
+	openLogFile  = os.OpenFile
+)
+
 // newDebugLogger writes ai/diag's Debug-level JSON logs to
 // <UserCacheDir>/sneat/chat-debug.log rather than stderr, which chatshell's
 // alt-screen owns exclusively while the program runs. A failure to open the
 // file falls back to a discarded logger rather than corrupting the screen.
 func newDebugLogger() *slog.Logger {
-	dir, err := os.UserCacheDir()
+	dir, err := userCacheDir()
 	if err != nil {
 		return slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
 	dir = filepath.Join(dir, "sneat")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := mkdirAll(dir, 0o755); err != nil {
 		return slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "chat-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := openLogFile(filepath.Join(dir, "chat-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}

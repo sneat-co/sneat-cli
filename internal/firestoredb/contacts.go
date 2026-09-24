@@ -51,6 +51,16 @@ func contactsCollectionRef(spaceID string) dal.CollectionRef {
 	return dal.NewCollectionRef("contacts", "", moduleKey)
 }
 
+// newContactRecord builds an empty, incomplete-key envelope for one query
+// result row. Named (rather than an inline closure in ListContacts) so it
+// has its own direct unit test: a real backend's query executor invokes it
+// per decoded document, but this package's own fake QueryExecutor (used in
+// unit tests) supplies already-built records and never calls it, so a test
+// driving ListContacts through the fake alone cannot reach it.
+func newContactRecord() record.Record {
+	return record.NewRecordWithIncompleteKey("contacts", reflect.String, &dbo4contactus.ContactDbo{})
+}
+
 // ListContacts returns the space's flat, active top-level contacts.
 func (r *ContactsReader) ListContacts(ctx context.Context, spaceID string) ([]Contact, error) {
 	db, err := r.session.DB(ctx)
@@ -61,9 +71,7 @@ func (r *ContactsReader) ListContacts(ctx context.Context, spaceID string) ([]Co
 	query := dal.NewQueryBuilder(dal.From(contactsCollectionRef(spaceID))).
 		WhereField("status", dal.Equal, "active").
 		WhereField("parentID", dal.Equal, "").
-		SelectIntoRecord(func() record.Record {
-			return record.NewRecordWithIncompleteKey("contacts", reflect.String, &dbo4contactus.ContactDbo{})
-		})
+		SelectIntoRecord(newContactRecord)
 
 	var records []record.Record
 	err = db.dal.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
