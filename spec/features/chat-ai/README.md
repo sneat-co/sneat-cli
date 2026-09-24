@@ -11,7 +11,7 @@ status: Draft
 
 ## Summary
 
-`internal/aichat` is the sneat-chat MVP's AI processing pipeline: Sneat's decision taxonomy and deterministic rules on top of `strongo/aichat`'s shared `LLMProvider`/`DecisionProvider`/`ai/aiconfig`/`ai/ctxmgr`/`ai/diag` contracts, entity resolution against real Firestore/API data, pending-confirmation and undo bookkeeping via real sneat-go HTTP mutations (calendarius/listus), the `<sneat-action>` stream-splitter convention for a main-LLM turn, and flag/env/file configuration for Sneat AI Cloud and BYOK. `internal/chatapp` (the `tui/chatshell` composition root that runs `sneat chat` through this pipeline) is implemented and tested but not yet wired into `cmd/sneat/main.go` -- see Out of Scope.
+`internal/aichat` is the sneat-chat MVP's AI processing pipeline: Sneat's decision taxonomy and deterministic rules on top of `strongo/aichat`'s shared `LLMProvider`/`DecisionProvider`/`ai/aiconfig`/`ai/ctxmgr`/`ai/diag` contracts, entity resolution against real Firestore/API data, pending-confirmation and undo bookkeeping via real sneat-go HTTP mutations (calendarius/listus), the `<sneat-action>` stream-splitter convention for a main-LLM turn, and flag/env/file configuration for Sneat AI Cloud and BYOK. `internal/chatapp` is its composition root: `sneat chat` runs it through `strongo/aichat`'s `tui/chatshell`, replacing `internal/chattui` entirely (deleted).
 
 ## Problem
 
@@ -77,6 +77,20 @@ An executed action whose `Executor.Execute` returns a non-nil undo action MUST b
 
 Every action `pipeline.SneatExecutor` executes MUST go through a sneat-go HTTP endpoint (calendarius's `update_slot`/`cancel_happening`/`revoke_happening_cancellation`, listus's `list_items_create`/`list_items_set_is_done`/`list_items_delete`, via `internal/sneatapi`) and MUST NOT write Firestore directly. Reschedule and cancel-happening actions MUST read the happening's current state first (for the slot's duration and to build the undo action) rather than trusting the resolved reference's cached Title/Keys alone.
 
+### Interactive shell
+
+#### REQ: chatshell-cutover
+
+`sneat chat` MUST run `internal/aichat/pipeline.Pipeline` through `strongo/aichat`'s `tui/chatshell.Model`, not a Sneat-specific terminal UI. Slash commands (`/spaces`, `/space`, `/contacts`, `/who-am-i`, `/version`, `/help`) MUST still route to the existing `chat.Processor` (chat-messenger#req:processor-seam) rather than being reimplemented.
+
+#### REQ: controls-are-transcript-blocks
+
+A presentation MUST render as a `tui/transcript.Block`: `ContactsGrid` MUST reuse `tui/grid` directly (the same generic grid DataTug uses) rather than a competing grid, except that a search narrowed to exactly one contact MUST render as a `controls.CardBlock` instead of a one-row grid. Every other list-shaped presentation (`day_calendar`, `week_calendar`, `happenings_list`, `todo_list`, `buy_list`) MUST render as `controls.ListBlock`. Both `ListBlock` and `CardBlock` expose `Current()` (`transcript.EntityBlock`) so the focused item can be pinned to the sidebar or resolved by a later pronoun.
+
+#### REQ: sidebar-and-focus-feed-session-state
+
+Pinning an entity to the chatshell sidebar (`Model.PinToSidebar`, driven by a control's own "+ add to sidebar" or `tui.AddToSidebarMsg`) MUST update `session.State.Sidebar` via the `SidebarObserver` callback, and a focused block's entity MUST be resolvable the same way a decision's pronoun reference resolves against `session.State.Candidates()` (chat-ai#req:resolver-never-trusts-a-model-id) -- focusing or pinning an entity is what makes "move it to Friday" or "mark it done" resolvable without the user repeating the entity's name.
+
 ## Acceptance Criteria
 
 ### AC: deterministic-scenarios-need-no-llm
@@ -119,12 +133,20 @@ Every action `pipeline.SneatExecutor` executes MUST go through a sneat-go HTTP e
 **When** it executes
 **Then** `SneatExecutor` sends exactly the expected sneat-go HTTP request (method, path, body) and never touches Firestore directly
 
+### AC: chatshell-renders-and-resolves-session-context
+
+**Requirements:** chat-ai#req:chatshell-cutover, chat-ai#req:controls-are-transcript-blocks, chat-ai#req:sidebar-and-focus-feed-session-state
+
+**Given** a headless `chatshell.Model` (no real terminal) with a focused happening, or an entity pinned to its sidebar
+**When** a `<sneat-action>` referencing "it" is handled, or the model renders a deterministic Output
+**Then** the focused/pinned entity resolves the pronoun and the matching control (`ListBlock`/`CardBlock`/`tui/grid`) appears in the transcript
+
 ## Out of Scope
 
 Deferred to follow-on work:
 
-- **The `tui/chatshell` cutover and structured controls.** A composition root (`internal/chatapp`) that runs this pipeline through `strongo/aichat`'s `tui/chatshell.Model` -- slash commands still routed to the existing `chat.Processor`, presentations rendered as `tui/transcript.Block` values (`controls.ListBlock`/`controls.CardBlock`, `ContactsGrid` reusing `tui/grid` directly rather than a competing grid) -- is fully implemented and was validated (build, `go vet`, `go test -race`, plus headless `chatshell.Model.Update` tests driving MVP scenarios 2 and 13 with no real terminal) against a merged local view of the `aichat-ai` and `aichat-tui` branches. It is **not wired into `cmd/sneat/main.go`'s `RunChat` in this commit**: `tui/chatshell`, `tui/grid` and `tui/transcript` exist only on the unmerged `aichat-tui` branch, `go.mod` can pin only one branch of that module, and this repo's pre-commit hook correctly refuses a build that does not resolve without an ambient `GOWORK`. `sneat chat` still runs `internal/chattui` (undeleted) until the coordinator merges `aichat-ai`+`aichat-tui`; see the implementation report for exactly what restores the cutover once that pin is available.
-- **The main-LLM leg's live network verification.** `pipeline.StreamRequest`/`Stream` are exercised against real `ai/openaicompat` and `ai/cloud` providers over `httptest` (scenarios 11/12). A real OpenAI-compatible/Anthropic endpoint or a live `api.sneat.cloud` was not used.
+- **The main-LLM leg's live network verification.** `pipeline.StreamRequest`/`Stream` are exercised against real `ai/openaicompat` and `ai/cloud` providers over `httptest` (scenarios 11/12), and `chatapp`'s stream wiring is exercised headlessly with no LLM configured (proving the clean "not available" path, scenario 13). A real OpenAI-compatible/Anthropic endpoint or a live `api.sneat.cloud` was not used.
+- **Full Shift-Arrow/F6 keyboard navigation exercised end-to-end.** The headless chatshell tests drive `Submit`/`OnMsg`/`OnStreamEvent`/`PinToSidebar`/`HandleAction` directly rather than through the actual focus-ring key sequence (Shift+Up/Down/Left/Right, F6); `tui/focus`'s own package tests cover the ring itself.
 - **Firestore-backed happenings/todos/contacts readers' collection paths.** `internal/aichat/data`'s Firestore readers mirror `internal/firestoredb`'s existing contact-reading convention and are unit-tested against real `dbo4calendarius`/`dbo4listus` structs, but the collection PATH itself was not verified against a live or emulated space.
 - **Recurring happening occurrence expansion.** `HappeningsReader` returns a recurring happening's stored template slot, not a resolved next-occurrence; see `internal/aichat/data`'s doc comment.
 - **Timezone handling.** `internal/aichat/data`'s slot date/time parsing and `pipeline.parseWhen` treat calendarius's date+time strings as the server's local `time.Location`, not the space's own stored timezone.

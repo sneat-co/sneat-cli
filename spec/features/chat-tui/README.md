@@ -1,17 +1,19 @@
 ---
 format: https://specscore.md/feature-specification
-status: Stable
+status: Deprecated
 ---
 
 # Feature: Chat TUI
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-tui?op=explore) | [Edit](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-tui?op=edit) | [Ask question](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-tui?op=ask) | [Request change](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-tui?op=request-change) |
-**Status:** Stable
+**Status:** Deprecated
 **Source Ideas:** —
 
 ## Summary
 
 First renderer of the Sneat chat messenger: the `sneat chat` command and its inline (non-alt-screen) Bubble Tea terminal UI, with a bottom-pinned input and arrow-navigable inline buttons.
+
+**Superseded.** `sneat chat` now runs `chat-ai`'s pipeline through `internal/chatapp` and strongo/aichat's `tui/chatshell` (an alt-screen, DataTug-family shell with structured controls, sidebar and streaming) instead of `internal/chattui`, which this Feature specified and which has been deleted. This document is kept for history; `chat-ai` is the current spec for `sneat chat`'s interactive session.
 
 ## Contents
 

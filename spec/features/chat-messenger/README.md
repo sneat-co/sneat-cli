@@ -1,12 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
-status: Stable
+status: Amending
 ---
 
 # Feature: Chat Messenger
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-messenger?op=explore) | [Edit](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-messenger?op=edit) | [Ask question](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-messenger?op=ask) | [Request change](https://specscore.studio/app/github.com/sneat-co/sneat-cli/spec/features/chat-messenger?op=request-change) |
-**Status:** Stable
+**Status:** Amending
 **Source Ideas:** —
 
 ## Summary
@@ -151,7 +151,7 @@ A type resolving to zero or several spaces is answered, never guessed: picking o
 
 #### REQ: free-text-deferred
 
-Text not beginning with `/` MUST return a reply stating that free-text chat is not yet available and naming the working commands. It MUST NOT be routed to `convoruntime`. That runtime is wired only to the sandbox (mock LLM, fake space and user), so routing real-data chat into it would mix sandbox-only action execution with real space listings in one transcript.
+**Superseded for `sneat chat`'s interactive session** by `chat-ai`'s pipeline (`internal/chatapp`/`internal/aichat`), which runs free text through the deterministic rules → decision chain → resolver → main-LLM pipeline instead of this reply — see `chat-ai#req:chain-first-decides`. This Processor-level requirement still governs any OTHER surface built on this seam (a future web messenger, or a server-backed Processor) that has not been wired to the aichat pipeline: for those, text not beginning with `/` MUST return a reply stating that free-text chat is not yet available and naming the working commands, and MUST NOT be routed to `convoruntime` (wired only to the sandbox -- mock LLM, fake space and user -- so routing real-data chat into it would mix sandbox-only action execution with real space listings in one transcript).
 
 #### REQ: card-edit
 

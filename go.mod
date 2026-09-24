@@ -24,7 +24,7 @@ require (
 	github.com/sneat-co/sneat-go-core v0.69.0
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/aichat v0.0.0-20260924094100-65b0522162d4
+	github.com/strongo/aichat v0.0.0-20260924103729-14d1dea011f5
 	github.com/strongo/buildinfo v0.2.1
 	github.com/strongo/deviceauth v0.1.0
 	github.com/strongo/strongoapp v0.31.58
@@ -63,6 +63,7 @@ require (
 	github.com/crediterra/money v0.4.0 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/evertras/bubble-table v0.23.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
