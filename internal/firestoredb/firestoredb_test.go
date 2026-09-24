@@ -14,14 +14,23 @@ import (
 // TestOpen_RealConstructor exercises newFirestoreConn's real, unmocked body
 // (both the emulator-set and emulator-unset branches): cloud.google.com/go/
 // firestore's client construction is lazy and does not dial out, so this
-// runs fast and needs no live Firestore project, emulator, or credentials.
+// runs fast and needs no live Firestore project, emulator, or credentials --
+// PROVIDED it is never left to fall back to Application Default Credentials,
+// which is environment-dependent (may probe the GCE metadata server or a
+// gcloud config file) and was the source of CI flakes/failures here. The
+// no-emulator case supplies an explicit static token source so
+// option.WithTokenSource always wins over ADC discovery; the emulator case
+// also sets the real FIRESTORE_EMULATOR_HOST env var via t.Setenv (matching
+// cfg.FirestoreEmulatorHost) since that is what the SDK itself keys off of,
+// not the cfg field alone, and points it at a closed local port so nothing
+// beyond client construction could ever attempt a real dial.
 func TestOpen_RealConstructor(t *testing.T) {
 	ctx := context.Background()
-	for _, cfg := range []config.Config{
-		{Project: "p1"},
-		{Project: "p1", FirestoreEmulatorHost: "localhost:1"},
-	} {
-		db, err := Open(ctx, cfg, nil)
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "fake-token"})
+
+	t.Run("no emulator: explicit token source bypasses ADC", func(t *testing.T) {
+		cfg := config.Config{Project: "p1"}
+		db, err := Open(ctx, cfg, ts)
 		if err != nil {
 			t.Fatalf("Open(%+v) = %v, want nil error", cfg, err)
 		}
@@ -31,7 +40,23 @@ func TestOpen_RealConstructor(t *testing.T) {
 		if err := db.Close(); err != nil {
 			t.Fatalf("Close() = %v, want nil", err)
 		}
-	}
+	})
+
+	t.Run("emulator: env var set to an unreachable closed port", func(t *testing.T) {
+		const emulatorHost = "127.0.0.1:1"
+		t.Setenv("FIRESTORE_EMULATOR_HOST", emulatorHost)
+		cfg := config.Config{Project: "p1", FirestoreEmulatorHost: emulatorHost}
+		db, err := Open(ctx, cfg, ts)
+		if err != nil {
+			t.Fatalf("Open(%+v) = %v, want nil error", cfg, err)
+		}
+		if db == nil || db.client == nil || db.dal == nil {
+			t.Fatalf("Open(%+v) returned a DB with a nil field: %+v", cfg, db)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatalf("Close() = %v, want nil", err)
+		}
+	})
 }
 
 // TestOpen_RealConstructor_ClientError exercises newFirestoreConn's real

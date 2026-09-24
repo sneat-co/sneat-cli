@@ -37,16 +37,22 @@ func (m probeQuitModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
 func (probeQuitModel) View() tea.View                        { return tea.NewView("") }
 
 // TestRunProgram_DefaultReturnsWithoutHanging covers runProgram's own real
-// default. tea.NewProgram(model).Run() opens /dev/tty, which fails fast and
-// deterministically in this sandboxed test environment (no controlling
-// terminal); a bounded select guards against ever hanging the suite if that
-// assumption stops holding on some future runner.
+// default. tea.NewProgram(model).Run() opens /dev/tty for its controlling
+// terminal, which a non-interactive test process -- sandboxed locally or a
+// headless CI runner -- never has, so this returns a non-nil error quickly
+// and deterministically in both places; a bounded select guards against
+// ever hanging the suite if that assumption stops holding on some future
+// runner (e.g. one that allocates a real pty to the test binary).
 func TestRunProgram_DefaultReturnsWithoutHanging(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runProgram(probeQuitModel{}) }()
 	select {
 	case err := <-done:
-		t.Logf("runProgram(default) returned: %v", err)
+		if err == nil {
+			t.Log("runProgram(default) returned nil: this runner has a real controlling terminal")
+			return
+		}
+		t.Logf("runProgram(default) returned the expected no-TTY error: %v", err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("runProgram's default hung instead of returning")
 	}

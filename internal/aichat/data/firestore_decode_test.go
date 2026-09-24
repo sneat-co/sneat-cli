@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	calendariusdbo "github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/sneat-co/listus/backend/const4listus"
 	listusdbo "github.com/sneat-co/listus/backend/dbo4listus"
@@ -300,9 +302,14 @@ func TestNewFirestoreHappenings_WithLocation(t *testing.T) {
 // TestFirestoreSession_AdaptsRealSession exercises firestoreSession's own
 // DB/Close methods against a REAL *firestoredb.Session (not a fake): opening
 // a Firestore client is lazy and needs no live project or emulator (see
-// internal/firestoredb's TestOpen_RealConstructor), so this runs fast.
+// internal/firestoredb's TestOpen_RealConstructor), so this runs fast. It
+// passes an explicit static token source (never nil) so client construction
+// always uses that instead of falling back to environment-dependent
+// Application Default Credentials discovery, which is what made this flaky
+// in CI.
 func TestFirestoreSession_AdaptsRealSession(t *testing.T) {
-	fs := firestoreSession{s: firestoredb.NewSession(config.Config{Project: "p1"}, nil)}
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "fake-token"})
+	fs := firestoreSession{s: firestoredb.NewSession(config.Config{Project: "p1"}, ts)}
 	db, err := fs.DB(context.Background())
 	if err != nil {
 		t.Fatalf("DB() = %v, want nil", err)
