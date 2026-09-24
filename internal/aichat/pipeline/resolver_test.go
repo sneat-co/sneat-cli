@@ -107,3 +107,85 @@ func TestResolver_PronounFallsBackToSidebar(t *testing.T) {
 		t.Fatalf("res = %+v, want the sidebar-pinned todo", res)
 	}
 }
+
+// TestResolver_PronounFocusedWinsOverSidebarAmbiguity is the S3 regression:
+// a flat merge of session.State.Candidates() would make this ambiguous
+// (focused happening + a DIFFERENT happening pinned to the sidebar, same
+// kind). The focused entity must win outright -- a session with a focused
+// happening and "move it" should never ask "which one?" just because the
+// sidebar also holds a happening.
+func TestResolver_PronounFocusedWinsOverSidebarAmbiguity(t *testing.T) {
+	focused := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Dentist appointment",
+		Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
+	sidebarHappening := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Team standup",
+		Keys: map[string]string{"spaceID": "sp1", "happeningID": "h3"}}
+	st := session.State{Focused: &focused}
+	st.Pin(sidebarHappening)
+	r := Resolver{Readers: testReaders()}
+	res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityHappening, Pronoun: true}, st, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeOne || !res.Candidates[0].Same(focused) {
+		t.Fatalf("res = %+v, want ONLY the focused happening (no sidebar ambiguity)", res)
+	}
+}
+
+// TestResolver_PronounSelectionWinsOverSidebar mirrors the above for the
+// selection tier: a multi-select of happenings must win outright over an
+// unrelated sidebar-pinned happening, even though a flat Candidates() merge
+// would combine them into one ambiguous set.
+func TestResolver_PronounSelectionWinsOverSidebar(t *testing.T) {
+	selected := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Dentist appointment",
+		Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
+	sidebarHappening := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Team standup",
+		Keys: map[string]string{"spaceID": "sp1", "happeningID": "h3"}}
+	st := session.State{Selection: []session.EntityRef{selected}}
+	st.Pin(sidebarHappening)
+	r := Resolver{Readers: testReaders()}
+	res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityHappening, Pronoun: true}, st, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeOne || !res.Candidates[0].Same(selected) {
+		t.Fatalf("res = %+v, want ONLY the selected happening (no sidebar ambiguity)", res)
+	}
+}
+
+// TestResolver_OrdinalPicksFromLastShown covers S3's choice-list picking:
+// "2" (and "the second one") selects LastShown[1] regardless of ref.Kind.
+func TestResolver_OrdinalPicksFromLastShown(t *testing.T) {
+	shown := []session.EntityRef{
+		{Type: sneatdomain.EntityHappening, Title: "Dentist appointment", Keys: map[string]string{"happeningID": "h1"}},
+		{Type: sneatdomain.EntityHappening, Title: "Dentist follow-up", Keys: map[string]string{"happeningID": "h2"}},
+	}
+	st := session.State{LastShown: shown}
+	r := Resolver{Readers: testReaders()}
+
+	for _, expr := range []string{"2", "the second one", "second", "#2"} {
+		res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityHappening, Expression: expr}, st, "sp1")
+		if err != nil {
+			t.Fatalf("Resolve(%q): %v", expr, err)
+		}
+		if res.Outcome != OutcomeOne || !res.Candidates[0].Same(shown[1]) {
+			t.Errorf("Resolve(%q) = %+v, want the second shown happening", expr, res)
+		}
+	}
+}
+
+// TestResolver_OrdinalOutOfRange_ReportsNone ensures a number beyond the
+// shown list's length is a clean "no such option", not a panic or a
+// fall-through to some unrelated candidate.
+func TestResolver_OrdinalOutOfRange_ReportsNone(t *testing.T) {
+	st := session.State{LastShown: []session.EntityRef{
+		{Type: sneatdomain.EntityHappening, Title: "Only one", Keys: map[string]string{"happeningID": "h1"}},
+	}}
+	r := Resolver{Readers: testReaders()}
+	res, err := r.Resolve(context.Background(), decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "5"}, st, "sp1")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if res.Outcome != OutcomeNone {
+		t.Fatalf("res = %+v, want OutcomeNone for an out-of-range pick", res)
+	}
+}

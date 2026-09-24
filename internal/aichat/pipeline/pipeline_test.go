@@ -172,6 +172,37 @@ func TestTurn_AmbiguousReferenceOffersChoice(t *testing.T) {
 	if len(exec.Executed) != 0 {
 		t.Fatal("must not execute an ambiguous reference")
 	}
+	if len(st.LastShown) != 2 {
+		t.Fatalf("LastShown = %+v, want the 2 ambiguous candidates so a later \"2\" can pick one (S3)", st.LastShown)
+	}
+}
+
+// TestTurn_PickByNumber_AfterAmbiguousChoice covers S3 end to end: an
+// ambiguous reference presents a choice, and a bare "2" (nothing the
+// deterministic rules chain classifies) focuses the second option instead
+// of falling through to the main LLM.
+func TestTurn_PickByNumber_AfterAmbiguousChoice(t *testing.T) {
+	exec := &FakeExecutor{}
+	p, st := newTestPipeline(exec)
+	out, err := p.resolveAndAct(context.Background(),
+		sneatdomain.ModuleCalendar+"."+sneatdomain.IntentRescheduleHappening,
+		decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "dentist"},
+		nil, st, "sp1")
+	if err != nil {
+		t.Fatalf("resolveAndAct: %v", err)
+	}
+	second := out.Entities[1]
+
+	out, err = p.Turn(context.Background(), "2", st, "sp1")
+	if err != nil {
+		t.Fatalf("Turn(2): %v", err)
+	}
+	if out.NeedsLLM {
+		t.Fatal("expected \"2\" to be handled deterministically, not routed to the main LLM")
+	}
+	if st.Focused == nil || !st.Focused.Same(second) {
+		t.Fatalf("Focused = %+v, want the second shown candidate %+v", st.Focused, second)
+	}
 }
 
 // TestNoJevParity runs a representative scenario set through a chain that

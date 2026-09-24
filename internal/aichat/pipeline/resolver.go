@@ -3,6 +3,9 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
@@ -42,20 +45,39 @@ type Result struct {
 	Candidates []session.EntityRef // len 0, 1, or >1 matching Outcome
 }
 
-// Resolve resolves ref against real data in spaceID. A pronoun reference
-// ("it", "that") resolves from session state's Candidates() (focused entity,
-// selection, the sole last-shown entity, the previous action's target, then
-// sidebar pins), filtered to ref.Kind. An expression reference searches the
-// matching reader by title/name.
+// Resolve resolves ref against real data in spaceID.
+//
+// A pronoun reference ("it", "that") resolves from session state in RANK
+// TIERS, not a flat merge of session.State.Candidates() (S3): the focused
+// entity wins outright when it matches ref.Kind, without regard to what
+// else the session holds; failing that, the current selection wins outright
+// (ambiguous only among several selected entities of that kind); only when
+// neither is set does resolution fall through to the sole last-shown
+// entity, the previous action's target, and sidebar pins, where several
+// same-kind matches ARE ambiguous. A flat merge would let, say, a sidebar
+// pin of the same kind make an otherwise-unambiguous focused entity look
+// ambiguous, which is never what "it"/"that" means while something is
+// focused or selected.
+//
+// A numeric/ordinal expression ("2", "the second one") instead picks
+// positionally from st.LastShown -- the most recent structured list/choice
+// this session showed -- regardless of ref.Kind, since a choice list is
+// already a single, already-filtered set of candidates of one kind; there
+// is nothing left to disambiguate once a valid position is named.
+//
+// Any other expression reference searches the matching reader by title/name.
 func (r Resolver) Resolve(ctx context.Context, ref decision.Reference, st session.State, spaceID string) (Result, error) {
 	if ref.Pronoun {
-		var out []session.EntityRef
-		for _, c := range st.Candidates() {
-			if c.Type == ref.Kind {
-				out = append(out, c)
-			}
+		return resolvePronoun(ref.Kind, st), nil
+	}
+	if pos, ok := parseOrdinal(ref.Expression); ok {
+		if res, handled := resolveByPosition(pos, st); handled {
+			return res, nil
 		}
-		return classify(out), nil
+		// Not a valid position into LastShown (e.g. out of range, or nothing
+		// was shown) -- fall through to a literal title/name search below,
+		// same as any other expression (a happening genuinely titled "2" is
+		// vanishingly unlikely but not this resolver's business to forbid).
 	}
 	if ref.Expression == "" {
 		return Result{Outcome: OutcomeNone}, nil
@@ -101,6 +123,94 @@ func (r Resolver) Resolve(ctx context.Context, ref decision.Reference, st sessio
 	default:
 		return Result{Outcome: OutcomeNone}, fmt.Errorf("pipeline: unknown reference kind %q", ref.Kind)
 	}
+}
+
+// resolvePronoun implements the tiered rank order documented on Resolve.
+func resolvePronoun(kind string, st session.State) Result {
+	if st.Focused != nil && st.Focused.Type == kind {
+		return Result{Outcome: OutcomeOne, Candidates: []session.EntityRef{*st.Focused}}
+	}
+	if len(st.Selection) > 0 {
+		var sel []session.EntityRef
+		for _, s := range st.Selection {
+			if s.Type == kind {
+				sel = append(sel, s)
+			}
+		}
+		if len(sel) > 0 {
+			return classify(sel)
+		}
+	}
+	// Neither focus nor selection named this kind: fall back to the rest of
+	// Candidates()'s rank order (sole last-shown, previous target, sidebar
+	// pins newest-first), where several same-kind matches ARE ambiguous.
+	var rest []session.EntityRef
+	add := func(ref session.EntityRef) {
+		if ref.Type == kind && !slices.ContainsFunc(rest, ref.Same) {
+			rest = append(rest, ref)
+		}
+	}
+	if len(st.LastShown) == 1 {
+		add(st.LastShown[0])
+	}
+	if st.Previous != nil && st.Previous.Target != nil {
+		add(*st.Previous.Target)
+	}
+	for i := len(st.Sidebar) - 1; i >= 0; i-- {
+		add(st.Sidebar[i])
+	}
+	return classify(rest)
+}
+
+// parseOrdinal recognises a choice-picking expression ("2", "#2", "the
+// second one", "second") and returns its 1-based position. Only a small
+// fixed word table is matched (first..tenth) -- not a general number-words
+// parser, per the no-giant-NLP-engine rule; a choice list this MVP renders
+// is never long enough to need more.
+func parseOrdinal(expr string) (pos int, ok bool) {
+	text := strings.ToLower(strings.TrimSpace(expr))
+	text = strings.TrimPrefix(text, "#")
+	text = strings.TrimPrefix(text, "the ")
+	text = strings.TrimSuffix(text, " one")
+	text = strings.TrimSpace(text)
+	// Strip a numeric ordinal suffix ("2nd" -> "2") ONLY when what's left is
+	// itself digits -- an unconditional TrimSuffix(text, "nd") would also
+	// mutilate the word "second" into "seco".
+	if n := len(text); n > 2 {
+		switch text[n-2:] {
+		case "st", "nd", "rd", "th":
+			if _, err := strconv.Atoi(text[:n-2]); err == nil {
+				text = text[:n-2]
+			}
+		}
+	}
+	if n, err := strconv.Atoi(text); err == nil && n > 0 {
+		return n, true
+	}
+	words := map[string]int{
+		"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+		"sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+	}
+	if n, known := words[text]; known {
+		return n, true
+	}
+	return 0, false
+}
+
+// resolveByPosition picks the pos'th (1-based) entity from st.LastShown --
+// the choice list a prior structured presentation set (day/week calendar, a
+// todo list, an ambiguous-reference choice). handled is false when there is
+// no LastShown to pick from at all, so the caller falls through to a
+// literal search instead of reporting a hard "no match" for what might just
+// be a coincidentally numeric title.
+func resolveByPosition(pos int, st session.State) (Result, bool) {
+	if len(st.LastShown) == 0 {
+		return Result{}, false
+	}
+	if pos < 1 || pos > len(st.LastShown) {
+		return Result{Outcome: OutcomeNone}, true
+	}
+	return Result{Outcome: OutcomeOne, Candidates: []session.EntityRef{st.LastShown[pos-1]}}, true
 }
 
 func classify(refs []session.EntityRef) Result {

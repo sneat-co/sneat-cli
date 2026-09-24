@@ -36,6 +36,12 @@ type Output struct {
 	// up NeedsLLM, e.g. its own CanHandleDeterministically=false) -- useful
 	// for the caller's diagnostics and for building the main-LLM prompt.
 	Decision *decision.Decision
+	// Trace is the full decision.Chain trace for this turn -- every
+	// provider's outcome/latency, not just which one decided (S11
+	// coordinator ruling DIAGNOSTICS: previously discarded via `_` at the
+	// Chain.Decide call site). The caller's diagnostics (chatapp's
+	// logTurn/aidiag.Turn.Decision) logs it; it is never shown to the user.
+	Trace decision.Trace
 }
 
 // Pipeline runs one chat turn end-to-end against real data in one space.
@@ -75,11 +81,33 @@ func (p Pipeline) Turn(ctx context.Context, text string, st *session.State, spac
 		Now:      now(),
 		TZ:       p.TZ,
 	}
-	d, ok, _ := p.Chain.Decide(ctx, req)
+	// S11: the Trace (every provider's outcome/latency, not just who decided)
+	// used to be discarded here via `_`. It is attached to every Output this
+	// method returns below, so chatapp's diagnostics can log the full chain
+	// behaviour regardless of which branch answers the turn.
+	d, ok, trace := p.Chain.Decide(ctx, req)
 	if !ok {
-		return Output{NeedsLLM: true}, nil
+		// No provider (deterministic or Jev) classified this turn. Before
+		// falling back to the main LLM, check the cheap deterministic case
+		// none of them needs to: a bare number/ordinal picking an item from
+		// the most recent structured list this session showed (S3: "Choice
+		// lists set LastShown, picking by number... or Enter") -- e.g. after
+		// an ambiguous "reschedule the dentist appointment" showed 2
+		// matches, "2" focuses the second one instead of round-tripping
+		// through the main LLM for something this deterministic.
+		if out, handled := p.pickFromLastShown(text, st); handled {
+			out.Trace = trace
+			return out, nil
+		}
+		return Output{NeedsLLM: true, Trace: trace}, nil
 	}
 
+	out, err := p.turnFromDecision(ctx, d, st, spaceID)
+	out.Trace = trace
+	return out, err
+}
+
+func (p Pipeline) turnFromDecision(ctx context.Context, d decision.Decision, st *session.State, spaceID string) (Output, error) {
 	switch d.Interaction {
 	case decision.InteractionConfirmation:
 		return p.confirmPending(ctx, st)
@@ -264,6 +292,11 @@ func (p Pipeline) resolveAndAct(ctx context.Context, kind string, ref decision.R
 	case OutcomeNone:
 		return Output{Text: fmt.Sprintf("I couldn't find a %s matching %q.", ref.Kind, ref.Expression)}, nil
 	case OutcomeMany:
+		// S3: an ambiguous reference's candidates become the choice list a
+		// later "2"/"the second one" picks from (pickFromLastShown) -- without
+		// this, presenting a choice and then answering it by number would
+		// silently fall through to the main LLM every time.
+		st.LastShown = res.Candidates
 		return Output{
 			Text:         fmt.Sprintf("I found %d matches -- which one did you mean?", len(res.Candidates)),
 			Presentation: sneatdomain.PresentationHappeningsList,
@@ -278,6 +311,41 @@ func (p Pipeline) resolveAndAct(ctx context.Context, kind string, ref decision.R
 		return Output{Text: action.Summary + " (yes/no)"}, nil
 	}
 	return p.runAction(ctx, action, st)
+}
+
+// pickFromLastShown handles a bare number/ordinal ("2", "the second one")
+// picking an item from the most recent structured list/choice this session
+// showed (S3), when nothing else classified the turn. It FOCUSES the picked
+// entity rather than guessing at re-running whatever action was pending --
+// this pipeline has no record of an intended action kind for an ambiguous
+// reference beyond the Pending mechanism (which only holds an already-
+// resolved, already-confirmed action), so the safe, still useful behaviour
+// is to make the picked entity resolvable by a following pronoun ("it") the
+// same way focusing it by hand would. handled is false for anything that
+// isn't a recognised ordinal, or when there is nothing to pick from, so the
+// caller's normal NeedsLLM fallback still applies.
+func (p Pipeline) pickFromLastShown(text string, st *session.State) (Output, bool) {
+	if len(st.LastShown) == 0 {
+		return Output{}, false
+	}
+	pos, ok := parseOrdinal(text)
+	if !ok {
+		return Output{}, false
+	}
+	res, handled := resolveByPosition(pos, *st)
+	if !handled {
+		return Output{}, false
+	}
+	if res.Outcome != OutcomeOne {
+		return Output{Text: fmt.Sprintf("There's no %s option -- I showed %d.", text, len(st.LastShown))}, true
+	}
+	ref := res.Candidates[0]
+	st.Focus(&ref)
+	title := ref.Title
+	if title == "" {
+		title = "that one"
+	}
+	return Output{Text: fmt.Sprintf("Got it: %q.", title)}, true
 }
 
 func (p Pipeline) runAction(ctx context.Context, action session.Action, st *session.State) (Output, error) {
