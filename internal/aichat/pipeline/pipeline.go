@@ -280,14 +280,34 @@ func (p Pipeline) showWindow(ctx context.Context, st *session.State, spaceID str
 	// see its documented limitation), so the presentation layer narrows to
 	// the ones that actually occur in [from, to).
 	hs = filterRecurringToWindow(hs, from, to)
+	refs, rows := happeningRowsInWindow(hs, from, to, onlyNextOccurrence)
+	if len(rows) == 0 {
+		st.LastShown = nil
+		return Output{Text: emptyText, Presentation: presentation}, nil
+	}
+	st.LastShown = refs
+	return Output{Text: fmt.Sprintf("%d happening(s).", len(rows)), Presentation: presentation, Entities: refs, HappeningRows: rows}, nil
+}
+
+// happeningRowsInWindow projects every happening in hs (already narrowed to
+// ones that actually occur in [from, to) -- see filterRecurringToWindow)
+// into its real occurrence(s), as parallel Entities/HappeningRows slices
+// (same order, same length). onlyNextOccurrence caps a recurring happening
+// to its first (next) occurrence; see showWindow's own doc comment.
+//
+// Exposed at package level (not folded into showWindow) for llm.go's
+// dynamic-context builder (S3 ruling: "LLM context rows too" -- llm.go is
+// assistant-owned but lives in this same package, so it can call this
+// directly): the LLM's context should show the same projected occurrence
+// dates a calendar presentation does, not HappeningsReader.Window's raw
+// Start/End, which is a recurring happening's stored TEMPLATE date, not a
+// real occurrence.
+func happeningRowsInWindow(hs []data.Happening, from, to time.Time, onlyNextOccurrence bool) ([]session.EntityRef, []controls.HappeningRow) {
 	var refs []session.EntityRef
 	var rows []controls.HappeningRow
 	for _, h := range hs {
 		ref := session.EntityRef{Type: sneatdomain.EntityHappening, Title: h.Title,
 			Keys: map[string]string{"spaceID": h.SpaceID, "happeningID": h.ID}}
-		// S3: each ROW carries its own projected occurrence Start/End, not
-		// the happening's stored template date -- a Mon/Fri recurring
-		// happening in a week view becomes two rows, each dated correctly.
 		occs := projectOccurrences(h, from, to)
 		if onlyNextOccurrence && len(occs) > 1 {
 			occs = occs[:1] // projectOccurrences returns them chronologically
@@ -297,12 +317,7 @@ func (p Pipeline) showWindow(ctx context.Context, st *session.State, spaceID str
 			rows = append(rows, controls.HappeningRow{Ref: ref, Title: h.Title, Start: occ.start, End: occ.end, Recurring: h.Recurring})
 		}
 	}
-	if len(rows) == 0 {
-		st.LastShown = nil
-		return Output{Text: emptyText, Presentation: presentation}, nil
-	}
-	st.LastShown = refs
-	return Output{Text: fmt.Sprintf("%d happening(s).", len(rows)), Presentation: presentation, Entities: refs, HappeningRows: rows}, nil
+	return refs, rows
 }
 
 // occurrence is one concrete instance of a happening at an absolute
