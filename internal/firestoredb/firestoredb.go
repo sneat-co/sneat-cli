@@ -19,24 +19,55 @@ import (
 // ErrNotFound is returned when a requested document does not exist.
 var ErrNotFound = errors.New("not found")
 
-// DB is an open Firestore connection plus its DALgo wrapper.
-type DB struct {
-	client *firestore.Client
-	dal    dal.DB
+// firestoreConn is the subset of *firestore.Client this package depends on:
+// just enough to release the connection. A narrow seam (instead of storing
+// the concrete SDK type) lets Open's wiring be unit-tested with a fake
+// connection, with no real Firestore project required.
+type firestoreConn interface {
+	Close() error
 }
 
-// Open connects to Firestore as the user (via ts) or to the emulator when
-// FirestoreEmulatorHost is set (the client reads FIRESTORE_EMULATOR_HOST).
-func Open(ctx context.Context, cfg config.Config, ts oauth2.TokenSource) (*DB, error) {
+// readOnlyRunner is the subset of dal.DB this package depends on. dal.DB is
+// deliberately sealed (only dalgo.NewDB/dalgo2firestore.NewDatabase can
+// produce one), so a test cannot construct a real one directly; depending on
+// this narrower, unsealed interface instead lets a fake stand in for it.
+type readOnlyRunner interface {
+	RunReadonlyTransaction(ctx context.Context, fn dal.ROTxWorker, options ...dal.TransactionOption) error
+}
+
+// DB is an open Firestore connection plus its DALgo wrapper.
+type DB struct {
+	client firestoreConn
+	dal    readOnlyRunner
+}
+
+// newFirestoreConn is Open's seam over the two Firestore SDK constructors:
+// building the client and wrapping it for DALgo. Its default value is the
+// real implementation; tests override the var to exercise Open's own
+// plumbing (error propagation, Session caching, reader wiring) without a
+// live Firestore project. The default body itself needs no real network to
+// run -- cloud.google.com/go/firestore's client construction is lazy -- so
+// it is exercised directly (not overridden) by TestOpen_RealConstructor.
+var newFirestoreConn = func(ctx context.Context, cfg config.Config, ts oauth2.TokenSource) (firestoreConn, readOnlyRunner, error) {
 	var opts []option.ClientOption
 	if cfg.FirestoreEmulatorHost == "" {
 		opts = append(opts, option.WithTokenSource(ts))
 	}
 	client, err := firestore.NewClient(ctx, cfg.Project, opts...)
 	if err != nil {
+		return nil, nil, err
+	}
+	return client, dalgo2firestore.NewDatabase(cfg.Project, client), nil
+}
+
+// Open connects to Firestore as the user (via ts) or to the emulator when
+// FirestoreEmulatorHost is set (the client reads FIRESTORE_EMULATOR_HOST).
+func Open(ctx context.Context, cfg config.Config, ts oauth2.TokenSource) (*DB, error) {
+	client, database, err := newFirestoreConn(ctx, cfg, ts)
+	if err != nil {
 		return nil, err
 	}
-	return &DB{client: client, dal: dalgo2firestore.NewDatabase(cfg.Project, client)}, nil
+	return &DB{client: client, dal: database}, nil
 }
 
 // Close releases the underlying Firestore client.
@@ -51,18 +82,6 @@ func (d *DB) Close() error { return d.client.Close() }
 // (capable of read-write transactions too, an escape hatch wider than any
 // caller outside this package needs) with the narrowest capability an
 // external read-only caller actually uses.
-//
-// COVERAGE NOTE: only reachable through a real *DB, which only Open builds
-// (a live Firestore client) -- there is no fake/seam here to unit-test
-// against without one. Covered by the existing emulator-gated suite
-// (firestoredb_emulator_test.go, `go test -tags emulator`, see its own doc
-// comment) whenever FIRESTORE_EMULATOR_HOST is set; every exerciser of this
-// package's *Session/*DB plumbing (internal/aichat/data's Firestore
-// readers, this package's own ListContacts/GetContact/spaces.go) shares
-// this same constraint -- it is the "Firestore collection paths aren't
-// verified against a live/emulated space" limitation already documented in
-// spec/features/chat-ai/README.md's Out of Scope section, not something
-// this line can fix in isolation.
 func (d *DB) RunReadonlyTransaction(ctx context.Context, fn func(ctx context.Context, tx dal.ReadTransaction) error) error {
 	return d.dal.RunReadonlyTransaction(ctx, fn)
 }
@@ -98,12 +117,6 @@ func NewSession(cfg config.Config, ts oauth2.TokenSource) *Session {
 }
 
 // DB returns the session's shared connection, opening it on first call.
-//
-// COVERAGE NOTE: the s.db != nil fast path is exercised indirectly by every
-// caller that reads twice in one session (e.g. TestReaders_ShareOneFirestoreSession);
-// the first-open path calls Open, which needs a real Firestore client -- see
-// RunReadonlyTransaction's own COVERAGE NOTE for why that is out of reach
-// for a pure unit test here.
 func (s *Session) DB(ctx context.Context) (*DB, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
