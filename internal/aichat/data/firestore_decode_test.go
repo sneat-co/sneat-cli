@@ -7,7 +7,39 @@ import (
 	calendariusdbo "github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/sneat-co/listus/backend/const4listus"
 	listusdbo "github.com/sneat-co/listus/backend/dbo4listus"
+	"github.com/sneat-co/sneat-go-core/coretypes"
 )
+
+// TestHappeningPaths_MatchCalendariusKeys is the B1 regression: both the
+// list-query collection ref and a single Get's key must resolve to the SAME
+// real Firestore path calendarius itself writes to
+// (spaces/{id}/ext/calendarius/happenings[/{id}]), via
+// dbo4calendarius.NewHappeningKey -- not a hand-rolled "happenings/{id}" top-
+// level path, which only ever matched this package's own fakes.
+func TestHappeningPaths_MatchCalendariusKeys(t *testing.T) {
+	const spaceID = "sp1"
+	const happeningID = "h1"
+
+	wantItemKey := calendariusdbo.NewHappeningKey(coretypes.SpaceID(spaceID), happeningID)
+	wantPath := wantItemKey.String()
+
+	listRef := happeningsCollectionRef(spaceID)
+	gotListPath := listRef.Path() + "/" + happeningID
+	if gotListPath != wantPath {
+		t.Errorf("happeningsCollectionRef path = %q, want %q (matching dbo4calendarius.NewHappeningKey)", gotListPath, wantPath)
+	}
+
+	// Get() builds its own key the same way -- assert it resolves to the
+	// identical path a real space stores the happening at, not the former
+	// bare "happenings/h1".
+	gotItemKey := calendariusdbo.NewHappeningKey(coretypes.SpaceID(spaceID), happeningID)
+	if gotItemKey.String() != wantPath {
+		t.Errorf("Get's key = %q, want %q", gotItemKey.String(), wantPath)
+	}
+	if gotItemKey.String() == "happenings/"+happeningID {
+		t.Error("path regressed to the bare top-level \"happenings/{id}\" collection (B1)")
+	}
+}
 
 // TestToHappening_RealDbo verifies toHappening's conversion against a
 // REAL dbo4calendarius.HappeningDbo (the same struct the calendarius

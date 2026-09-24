@@ -8,10 +8,13 @@ import (
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/record"
+	"github.com/sneat-co/calendarius/backend/const4calendarius"
 	calendariusdbo "github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	listusdbo "github.com/sneat-co/listus/backend/dbo4listus"
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
+	"github.com/sneat-co/sneat-core-modules/spaceus/dbo4spaceus"
+	"github.com/sneat-co/sneat-go-core/coretypes"
 	"golang.org/x/oauth2"
 )
 
@@ -43,10 +46,14 @@ func NewFirestoreHappenings(cfg config.Config, ts oauth2.TokenSource) Happenings
 	return &firestoreHappenings{cfg: cfg, ts: ts}
 }
 
+// happeningsCollectionRef builds the happenings collection ref the same way
+// calendarius itself does (dbo4calendarius.NewHappeningKey's parent), rather
+// than a hand-rolled spaces/{id}/ext/{module} path -- see B1: the earlier
+// hand-rolled path here matched, but Get below used a bare top-level
+// "happenings" collection, which does not.
 func happeningsCollectionRef(spaceID string) dal.CollectionRef {
-	spaceKey := record.NewKeyWithID("spaces", spaceID)
-	moduleKey := record.NewKeyWithParentAndID(spaceKey, "ext", "calendarius")
-	return dal.NewCollectionRef("happenings", "", moduleKey)
+	moduleKey := dbo4spaceus.NewSpaceModuleKey(coretypes.SpaceID(spaceID), const4calendarius.ExtensionID)
+	return dal.NewCollectionRef(const4calendarius.HappeningsCollection, "", moduleKey)
 }
 
 func (r *firestoreHappenings) list(ctx context.Context, spaceID string) ([]calendariusdbo.HappeningDbo, []string, error) {
@@ -147,6 +154,10 @@ func (r *firestoreHappenings) FindByTitle(ctx context.Context, spaceID, query st
 	return out, nil
 }
 
+// Get reads one happening by its real path (spaces/{id}/ext/calendarius/
+// happenings/{id}, via dbo4calendarius.NewHappeningKey) -- B1: a prior
+// version read a bare top-level "happenings/{id}" via GetDoc, which only
+// matched fakes in tests, never a real space.
 func (r *firestoreHappenings) Get(ctx context.Context, spaceID, happeningID string) (Happening, error) {
 	db, err := firestoredb.Open(ctx, r.cfg, r.ts)
 	if err != nil {
@@ -154,7 +165,12 @@ func (r *firestoreHappenings) Get(ctx context.Context, spaceID, happeningID stri
 	}
 	defer func() { _ = db.Close() }()
 	var dbo calendariusdbo.HappeningDbo
-	if err := db.GetDoc(ctx, "happenings", happeningID, &dbo); err != nil {
+	key := calendariusdbo.NewHappeningKey(coretypes.SpaceID(spaceID), happeningID)
+	rec := record.NewRecordWithData(key, &dbo)
+	err = db.DAL().RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+		return tx.Get(ctx, rec)
+	})
+	if err != nil {
 		return Happening{}, err
 	}
 	return toHappening(spaceID, happeningID, dbo), nil
