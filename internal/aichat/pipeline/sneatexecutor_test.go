@@ -179,8 +179,18 @@ func TestSneatExecutor_RescheduleHappening_Recurring_UsesAdjustSlot(t *testing.T
 }
 
 func TestSneatExecutor_CancelHappening_SendsCancelAndUndoRevokes(t *testing.T) {
-	api, calls := newTestSneatAPI(t, nil)
-	exec := SneatExecutor{Calendar: api}
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		// A non-recurring happening's cancel/revoke must NOT carry a
+		// date/slotID -- that would cancel/revoke one occurrence of a series
+		// this happening isn't.
+		if _, has := body["date"]; has {
+			t.Errorf("body = %v, single happening must not send a date", body)
+		}
+	})
+	happenings := &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h1", SpaceID: "sp1", Title: "Standup"}, // Recurring: false
+	}}
+	exec := SneatExecutor{Calendar: api, Happenings: happenings}
 	target := session.EntityRef{Type: "happening", Title: "Standup", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
 	undo, err := exec.Execute(context.Background(), session.Action{Kind: "calendar.cancel_happening", Target: &target})
 	if err != nil {
@@ -195,6 +205,58 @@ func TestSneatExecutor_CancelHappening_SendsCancelAndUndoRevokes(t *testing.T) {
 	want := []string{"POST /v0/happenings/cancel_happening", "POST /v0/happenings/revoke_happening_cancellation"}
 	if len(*calls) != 2 || (*calls)[0] != want[0] || (*calls)[1] != want[1] {
 		t.Fatalf("calls = %v, want %v", *calls, want)
+	}
+}
+
+// TestSneatExecutor_CancelHappening_Recurring_CancelsOnlyOneOccurrence is
+// S6's cancel ruling: a recurring happening's cancel sends the occurrence's
+// date+slotID, not a bare happening-wide cancel, and undo revokes that SAME
+// occurrence.
+func TestSneatExecutor_CancelHappening_Recurring_CancelsOnlyOneOccurrence(t *testing.T) {
+	var lastCancelDate, lastRevokeDate string
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		date, _ := body["date"].(string)
+		slotID, _ := body["slotID"].(string)
+		if slotID != "s1" {
+			t.Errorf("slotID = %q, want s1", slotID)
+		}
+		switch r.URL.Path {
+		case "/v0/happenings/cancel_happening":
+			lastCancelDate = date
+		case "/v0/happenings/revoke_happening_cancellation":
+			lastRevokeDate = date
+		}
+	})
+	slot := dbo4calendarius.HappeningSlot{
+		HappeningSlotTiming: dbo4calendarius.HappeningSlotTiming{
+			Timing:   dbo4calendarius.Timing{Start: dbo4calendarius.DateTime{Date: "2026-09-18", Time: "09:00"}},
+			Repeats:  dbo4calendarius.RepeatPeriodWeekly,
+			Weekdays: []dbo4calendarius.WeekdayCode{dbo4calendarius.Friday2},
+		},
+	}
+	happenings := &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h2", SpaceID: "sp1", Title: "Yoga", SlotID: "s1", Recurring: true,
+			Start: time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC), Slot: &slot},
+	}}
+	// "now" is Friday 2026-09-25 -- recurringAnchor resolves the current
+	// occurrence to that date, not the template's stale 09-18.
+	exec := SneatExecutor{Calendar: api, Happenings: happenings, Now: func() time.Time { return time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC) }}
+	target := session.EntityRef{Type: "happening", Title: "Yoga", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h2"}}
+	undo, err := exec.Execute(context.Background(), session.Action{Kind: "calendar.cancel_happening", Target: &target})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if lastCancelDate != "2026-09-25" {
+		t.Errorf("cancel date = %q, want 2026-09-25 (this occurrence)", lastCancelDate)
+	}
+	if _, err := exec.Execute(context.Background(), *undo); err != nil {
+		t.Fatalf("Execute(undo): %v", err)
+	}
+	if lastRevokeDate != "2026-09-25" {
+		t.Errorf("revoke date = %q, want the SAME occurrence date the cancel used", lastRevokeDate)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("calls = %v", *calls)
 	}
 }
 

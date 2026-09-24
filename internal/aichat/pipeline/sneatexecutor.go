@@ -34,7 +34,13 @@ type CalendarAPI interface {
 	// out of MVP scope).
 	AdjustSlot(ctx context.Context, req dto4calendarius.HappeningSlotDateRequest) error
 	CancelHappening(ctx context.Context, req dto4calendarius.CancelHappeningRequest) error
-	RevokeHappeningCancellation(ctx context.Context, req dto4calendarius.HappeningRequest) error
+	// RevokeHappeningCancellation undoes CancelHappening. It takes the SAME
+	// CancelHappeningRequest shape (Date/SlotID included) as CancelHappening
+	// itself -- calendarius's own facade4calendarius.RevokeHappeningCancellation
+	// does, since undoing a per-occurrence cancellation needs the same
+	// Date/SlotID that cancelled it, not just the happening ID (S6: "Cancel of
+	// recurring cancels the occurrence (date/slotID)").
+	RevokeHappeningCancellation(ctx context.Context, req dto4calendarius.CancelHappeningRequest) error
 }
 
 // TodoAPI is the subset of internal/sneatapi.Client this executor needs for
@@ -308,23 +314,47 @@ func dateTimeOf(start, end time.Time) dbo4calendarius.Timing {
 	}
 }
 
+// cancelHappening cancels ONE happening. For a recurring happening it
+// cancels just the current occurrence (Date+SlotID), never the whole
+// series -- calendarius's own CancelHappeningRequest distinguishes the two
+// by whether Date is set (S6: "Cancel of recurring cancels the occurrence
+// (date/slotID) and says so"); a single (non-recurring) happening has no
+// meaningful "occurrence" distinct from itself, so Date/SlotID stay empty.
+// It re-reads the happening (like rescheduleHappening) both to know
+// Recurring and, when recurring, to resolve which occurrence date and slot
+// are being cancelled.
 func (e SneatExecutor) cancelHappening(ctx context.Context, action session.Action) (*session.Action, error) {
-	if e.Calendar == nil || action.Target == nil {
-		return nil, fmt.Errorf("pipeline: cancel_happening requires Calendar API and a resolved target")
+	if e.Calendar == nil || e.Happenings == nil || action.Target == nil {
+		return nil, fmt.Errorf("pipeline: cancel_happening requires Calendar API, a happenings reader and a resolved target")
 	}
 	spaceID := action.Target.Keys["spaceID"]
 	happeningID := action.Target.Keys["happeningID"]
+	current, err := e.Happenings.Get(ctx, spaceID, happeningID)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: reading current happening before cancel: %w", err)
+	}
 	req := dto4calendarius.CancelHappeningRequest{
 		HappeningRequest: dto4calendarius.HappeningRequest{
 			SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
 			HappeningID:  happeningID,
 		},
 	}
+	undoArgs := map[string]string{}
+	if current.Recurring {
+		anchor := recurringAnchor(e.now(), current)
+		req.Date = anchor.Format("2006-01-02")
+		req.SlotID = current.SlotID
+		undoArgs["date"] = req.Date
+		undoArgs["slotID"] = req.SlotID
+	}
 	if err := e.Calendar.CancelHappening(ctx, req); err != nil {
 		return nil, err
 	}
-	undo := &session.Action{Kind: calendarRevokeCancellationKind, Target: action.Target,
-		Summary: fmt.Sprintf("Un-cancel %q?", action.Target.Title)}
+	summary := fmt.Sprintf("Un-cancel %q?", action.Target.Title)
+	if current.Recurring {
+		summary = fmt.Sprintf("Un-cancel %q on %s (this occurrence only)?", action.Target.Title, req.Date)
+	}
+	undo := &session.Action{Kind: calendarRevokeCancellationKind, Target: action.Target, Args: undoArgs, Summary: summary}
 	return undo, nil
 }
 
@@ -334,9 +364,16 @@ func (e SneatExecutor) revokeCancellation(ctx context.Context, action session.Ac
 	}
 	spaceID := action.Target.Keys["spaceID"]
 	happeningID := action.Target.Keys["happeningID"]
-	return e.Calendar.RevokeHappeningCancellation(ctx, dto4calendarius.HappeningRequest{
-		SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
-		HappeningID:  happeningID,
+	return e.Calendar.RevokeHappeningCancellation(ctx, dto4calendarius.CancelHappeningRequest{
+		HappeningRequest: dto4calendarius.HappeningRequest{
+			SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
+			HappeningID:  happeningID,
+		},
+		// Same Date/SlotID CancelHappening cancelled with -- empty for a
+		// single happening's whole-happening cancellation, exactly matching
+		// what un-cancels it.
+		Date:   action.Args["date"],
+		SlotID: action.Args["slotID"],
 	})
 }
 

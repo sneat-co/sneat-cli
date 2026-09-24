@@ -34,8 +34,13 @@ func (c *Client) CancelHappening(ctx context.Context, req dto4calendarius.Cancel
 }
 
 // RevokeHappeningCancellation POSTs happenings/revoke_happening_cancellation
-// -- the undo of CancelHappening.
-func (c *Client) RevokeHappeningCancellation(ctx context.Context, req dto4calendarius.HappeningRequest) error {
+// -- the undo of CancelHappening. It takes the same CancelHappeningRequest
+// shape (Date/SlotID included) CancelHappening does: calendarius's own
+// facade4calendarius.RevokeHappeningCancellation needs the same Date/SlotID
+// that cancelled an occurrence to un-cancel that same occurrence (S6) -- a
+// prior version took the bare HappeningRequest, which could only ever
+// revoke a whole-happening cancellation.
+func (c *Client) RevokeHappeningCancellation(ctx context.Context, req dto4calendarius.CancelHappeningRequest) error {
 	return c.do(ctx, http.MethodPost, calendariusPath("/v0/happenings/revoke_happening_cancellation"), req, nil)
 }
 
