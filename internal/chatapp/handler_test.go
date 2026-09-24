@@ -12,6 +12,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
+	"github.com/strongo/aichat/ai"
 	"github.com/strongo/aichat/ai/decision"
 	aidiag "github.com/strongo/aichat/ai/diag"
 	"github.com/strongo/aichat/ai/openaicompat"
@@ -601,60 +603,78 @@ func (s *slowExecutor) Execute(ctx context.Context, spaceID string, action sessi
 }
 
 // TestS1_ActionRunsOnSnapshot_SidebarPinDuringItSurvives is S1's
-// concurrency regression test: an LLM turn streams a <sneat-action> block,
-// whose OnStreamEvent(EventCompleted) branch runs HandleAction on a
-// background tea.Cmd (this test holds it open via slowExecutor). WHILE it
-// is still running, a sidebar pin is added the same way a real "+" press
-// would (OnSidebarChange, which -- like every chatshell key handler --
-// always runs on the UI loop, never concurrently with a tea.Cmd closure).
-// Before S1's fix, the eventual actionMsg applied its ENTIRE state
-// snapshot (`*h.state = m.state`) back onto live state, silently dropping
-// that pin because the snapshot was taken before it existed; after the
-// fix, applyStateDelta only ever touches the turn-owned fields, so the pin
-// -- added on a different "thread" of control entirely -- survives.
+// concurrency regression test: OnStreamEvent(EventCompleted)'s returned
+// tea.Cmd runs HandleAction on a background goroutine (this test holds it
+// open via slowExecutor). WHILE it is still running, a sidebar pin is added
+// the same way a real "+" press would (OnSidebarChange, which -- like every
+// chatshell key handler -- always runs on the UI loop, never concurrently
+// with a tea.Cmd closure). Before S1's fix, the eventual actionMsg applied
+// its ENTIRE state snapshot (`*h.state = m.state`) back onto live state,
+// silently dropping that pin because the snapshot was taken before it
+// existed; after the fix, applyStateDelta only ever touches the turn-owned
+// fields, so the pin -- added on a different "thread" of control entirely
+// -- survives.
+//
+// This drives OnStreamEvent/the returned cmd directly (simulating
+// startLLMStream's own per-stream bookkeeping by hand) rather than through
+// the full real-SSE/chatshell.StartStream/drain plumbing: drain's own
+// runCmd has a fixed 5ms per-command budget (see its doc comment) that
+// exists to keep m13's real-timer noise (spinner ticks, cursor blink) from
+// dominating test time, and is fundamentally incompatible with a command
+// this test DELIBERATELY blocks open for much longer than 5ms -- driving it
+// through drain would make whether the message is ever delivered a race
+// against drain's own queue-processing speed, not a reliable test of
+// applyStateDelta.
 func TestS1_ActionRunsOnSnapshot_SidebarPinDuringItSurvives(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		sseWriteHandler(w, `{"model":"gpt-5","choices":[{"delta":{"content":"Done. <sneat-action>{\"kind\":\"todo.complete_todo\",\"pronoun\":true}</sneat-action>"}}]}`)
-		sseWriteHandler(w, "[DONE]")
-	}))
-	defer srv.Close()
-
 	h, model := testHandler(t)
-	h.pipeline.LLM = openaicompat.New(openaicompat.Config{BaseURL: srv.URL, APIKey: "sk-test", Model: "gpt-5"})
 	slow := &slowExecutor{FakeExecutor: &pipeline.FakeExecutor{}, entered: make(chan struct{}), release: make(chan struct{})}
 	h.pipeline.Executor = slow
 	todoRef := session.EntityRef{Type: sneatdomain.EntityTodo, Title: "Buy milk", Keys: map[string]string{"spaceID": "sp1", "list": "do", "itemID": "t1"}}
 	h.state.Focus(&todoRef)
 
-	var m tea.Model = model
-	var cmd tea.Cmd
-	m, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = drain(m, cmd, 6)
-	for _, r := range "complete it" {
-		m, cmd = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
-	}
-	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Simulate startLLMStream's own per-stream bookkeeping (S1) by hand --
+	// the same values a real turn would have stored via Submit ->
+	// beginLLMStream -> startLLMStream -- so OnStreamEvent's EventCompleted
+	// branch has a splitter/snapshot/ctx/seq to work with.
+	const id = "turn-1"
+	seq := h.turnSeq + 1
+	h.turnSeq = seq
+	sp := &pipeline.Splitter{}
+	sp.Feed(`Done. <sneat-action>{"kind":"todo.complete_todo","pronoun":true}</sneat-action>`)
+	h.splitters = map[string]*pipeline.Splitter{id: sp}
+	snapshot := *h.state
+	h.streamState = map[string]*session.State{id: &snapshot}
+	h.streamCtx = map[string]context.Context{id: context.Background()}
+	h.streamTurnSeq = map[string]int64{id: seq}
 
-	done := make(chan tea.Model, 1)
-	go func() { done <- drain(m, cmd, 40) }()
+	cmd := h.OnStreamEvent(id, ai.Event{Type: ai.EventCompleted})
+	if cmd == nil {
+		t.Fatal("OnStreamEvent(EventCompleted) returned a nil cmd -- the splitter/action setup above is wrong")
+	}
+
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
 
 	select {
 	case <-slow.entered:
 	case <-time.After(2 * time.Second):
-		t.Fatal("HandleAction never reached the (blocked) executor -- the stream/EventCompleted path did not run in time")
+		t.Fatal("HandleAction never reached the (blocked) executor")
 	}
 
 	pinnedRef := session.EntityRef{Type: sneatdomain.EntityTodo, Title: "Call dentist", Keys: map[string]string{"spaceID": "sp1", "list": "do", "itemID": "t2"}}
 	h.OnSidebarChange([]session.EntityRef{pinnedRef})
 	close(slow.release)
 
+	var msg tea.Msg
 	select {
-	case <-done:
+	case msg = <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("drain did not finish after releasing the executor")
+		t.Fatal("the background HandleAction closure did not finish after releasing the executor")
 	}
+
+	var m tea.Model = model
+	m, _ = m.Update(msg)
+	h.model = m.(*chatshell.Model)
 
 	if len(slow.Executed) != 1 || slow.Executed[0].Kind != "todo.complete_todo" {
 		t.Fatalf("Executed = %+v, want exactly 1 todo.complete_todo", slow.Executed)
@@ -686,5 +706,166 @@ func TestOnMsg_ActionMsg_StaleSeqDropped_NoRenderNoStateWrite(t *testing.T) {
 	}
 	if h.state.Focused == nil || !h.state.Focused.Same(liveFocused) {
 		t.Fatalf("Focused = %+v, want the live value untouched by a dropped stale actionMsg", h.state.Focused)
+	}
+}
+
+// fakeJevDecision is a minimal decision.Provider standing in for the Sneat
+// AI Cloud/Jev decision service (never the real network): it decides a
+// reschedule deterministically whenever the text contains "dentist",
+// abstaining otherwise so it never shadows sneat-rules' own fixed-phrase
+// commands in a test that shares a handler.
+type fakeJevDecision struct{ name string }
+
+func (f fakeJevDecision) Name() string { return f.name }
+
+func (f fakeJevDecision) Decide(_ context.Context, req decision.Request) (decision.Decision, bool, error) {
+	if !strings.Contains(req.Text, "dentist") {
+		return decision.Decision{}, false, nil
+	}
+	return decision.Decision{
+		Module:                     decision.Scored{Value: sneatdomain.ModuleCalendar, Confidence: 1},
+		Intent:                     decision.Scored{Value: sneatdomain.IntentRescheduleHappening, Confidence: 1},
+		Interaction:                decision.InteractionCommand,
+		Reference:                  &decision.Reference{Kind: sneatdomain.EntityHappening, Expression: "dentist"},
+		Slots:                      map[string]string{"when": "Friday"},
+		CanHandleDeterministically: true,
+	}, true, nil
+}
+
+// TestChatshell_Scenario4_AmbiguousReference_ThroughFakeJevDecision is
+// scenario 4's deterministic-decision leg, driven through the real
+// chatshell.Model (not a direct resolveAndAct call): a fake Jev-shaped
+// decision.Provider decides "reschedule dentist" deterministically, and two
+// same-word candidates in the space must render as a choice -- never a
+// silent guess, never an execution.
+func TestChatshell_Scenario4_AmbiguousReference_ThroughFakeJevDecision(t *testing.T) {
+	h, model := testHandler(t)
+	h.pipeline.Readers.Happenings = &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h1", SpaceID: "sp1", Title: "Dentist checkup",
+			Start: time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 25, 10, 30, 0, 0, time.UTC)},
+		{ID: "h2", SpaceID: "sp1", Title: "Dentist follow-up",
+			Start: time.Date(2026, 9, 26, 14, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 26, 14, 30, 0, 0, time.UTC)},
+	}}
+	h.pipeline.Resolver = pipeline.Resolver{Readers: h.pipeline.Readers}
+	h.pipeline.Chain = decision.Chain{Providers: []decision.Provider{fakeJevDecision{name: "fake-jev"}}}
+	exec := &pipeline.FakeExecutor{}
+	h.pipeline.Executor = exec
+
+	m := typeAndEnter(t, model, "reschedule dentist")
+	view := m.View().Content
+	if !strings.Contains(view, "Dentist checkup") || !strings.Contains(view, "Dentist follow-up") {
+		t.Fatalf("expected both ambiguous candidates in the choice list:\n%s", view)
+	}
+	if len(exec.Executed) != 0 {
+		t.Fatalf("an ambiguous reference must never execute: %+v", exec.Executed)
+	}
+}
+
+// TestChatshell_Scenario4_AmbiguousReference_ThroughNaturalLanguageLLM is
+// scenario 4's other leg: text sneat-rules does not classify at all (it has
+// no reschedule handling) falls to the main LLM, whose streamed reply ends
+// with a <sneat-action> block naming an ambiguous reference. This drives
+// OnStreamEvent's EventCompleted -> HandleAction path end to end through the
+// real chatshell.Model and a real openaicompat.Provider (httptest SSE),
+// proving the same "never guess, never execute" guarantee holds on the LLM
+// leg, not just the deterministic one above.
+func TestChatshell_Scenario4_AmbiguousReference_ThroughNaturalLanguageLLM(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		sseWriteHandler(w, `{"model":"gpt-5","choices":[{"delta":{"content":"Sure -- which one? <sneat-action>{\"kind\":\"calendar.reschedule_happening\",\"reference\":\"dentist\",\"slots\":{\"when\":\"Friday\"}}</sneat-action>"}}]}`)
+		sseWriteHandler(w, "[DONE]")
+	}))
+	defer srv.Close()
+
+	h, model := testHandler(t)
+	h.pipeline.LLM = openaicompat.New(openaicompat.Config{BaseURL: srv.URL, APIKey: "sk-test", Model: "gpt-5"})
+	h.pipeline.Readers.Happenings = &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h1", SpaceID: "sp1", Title: "Dentist checkup",
+			Start: time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 25, 10, 30, 0, 0, time.UTC)},
+		{ID: "h2", SpaceID: "sp1", Title: "Dentist follow-up",
+			Start: time.Date(2026, 9, 26, 14, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 26, 14, 30, 0, 0, time.UTC)},
+	}}
+	h.pipeline.Resolver = pipeline.Resolver{Readers: h.pipeline.Readers}
+	exec := &pipeline.FakeExecutor{}
+	h.pipeline.Executor = exec
+
+	var m tea.Model = model
+	var cmd tea.Cmd
+	m, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = drain(m, cmd, 6)
+	// Not one of sneat-rules' fixed help phrases, and not shaped like any
+	// deterministic reschedule phrasing -- must fall through to NeedsLLM.
+	for _, r := range "please sort out my dentist thing" {
+		m, cmd = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(m, cmd, 40)
+
+	view := m.View().Content
+	if !strings.Contains(view, "Dentist checkup") || !strings.Contains(view, "Dentist follow-up") {
+		t.Fatalf("expected both ambiguous candidates rendered after the LLM's action block:\n%s", view)
+	}
+	if len(exec.Executed) != 0 {
+		t.Fatalf("an ambiguous reference must never execute: %+v", exec.Executed)
+	}
+}
+
+// TestChatshell_Scenario5_MoveItToFriday_ThroughUI_FakeLLM is scenario
+// 5/8's chatshell-level test (coordinator ruling: through the real UI, not
+// a direct HandleAction injection): a happening is focused, the user types
+// "move it to Friday" through the real composer, a fake LLM streams a
+// reschedule <sneat-action> block with pronoun:true, and the resulting
+// destructive confirmation renders as a HappeningCard (S5) rather than
+// executing outright. Typing "yes" then confirms it, and the executor runs
+// exactly once.
+func TestChatshell_Scenario5_MoveItToFriday_ThroughUI_FakeLLM(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		sseWriteHandler(w, `{"model":"gpt-5","choices":[{"delta":{"content":"<sneat-action>{\"kind\":\"calendar.reschedule_happening\",\"pronoun\":true,\"slots\":{\"when\":\"Friday 16:00\"}}</sneat-action>"}}]}`)
+		sseWriteHandler(w, "[DONE]")
+	}))
+	defer srv.Close()
+
+	h, model := testHandler(t)
+	h.pipeline.LLM = openaicompat.New(openaicompat.Config{BaseURL: srv.URL, APIKey: "sk-test", Model: "gpt-5"})
+	h.pipeline.Now = func() time.Time { return time.Date(2026, 9, 25, 9, 0, 0, 0, time.UTC) } // a Friday
+	slot := dbo4calendarius.HappeningSlot{HappeningSlotTiming: dbo4calendarius.HappeningSlotTiming{
+		Timing:  dbo4calendarius.Timing{Start: dbo4calendarius.DateTime{Date: "2026-09-25", Time: "10:00"}, End: dbo4calendarius.DateTime{Date: "2026-09-25", Time: "10:30"}},
+		Repeats: dbo4calendarius.RepeatPeriodOnce,
+	}}
+	h.pipeline.Readers.Happenings = &data.FakeHappenings{Items: []data.Happening{
+		{ID: "h1", SpaceID: "sp1", Title: "Dentist appointment", SlotID: "s1",
+			Start: time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 25, 10, 30, 0, 0, time.UTC), Slot: &slot},
+	}}
+	exec := &pipeline.FakeExecutor{Undo: map[string]*session.Action{
+		sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening: {Kind: sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening},
+	}}
+	h.pipeline.Executor = exec
+	todoRef := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Dentist appointment", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
+	h.state.Focus(&todoRef)
+
+	var m tea.Model = model
+	var cmd tea.Cmd
+	m, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = drain(m, cmd, 6)
+	for _, r := range "move it to Friday" {
+		m, cmd = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(m, cmd, 40)
+
+	view := m.View().Content
+	if !strings.Contains(view, "yes/no") {
+		t.Fatalf("expected a reschedule confirmation prompt, view:\n%s", view)
+	}
+	if len(exec.Executed) != 0 {
+		t.Fatalf("a destructive action must not execute before confirmation: %+v", exec.Executed)
+	}
+
+	m = typeAndEnter(t, m, "yes")
+	if len(exec.Executed) != 1 || exec.Executed[0].Kind != sneatdomain.ModuleCalendar+"."+sneatdomain.IntentRescheduleHappening {
+		t.Fatalf("Executed = %+v, want exactly 1 reschedule after confirming", exec.Executed)
 	}
 }
