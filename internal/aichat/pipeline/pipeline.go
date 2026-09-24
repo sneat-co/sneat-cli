@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
+	"github.com/sneat-co/sneat-ai-backend/temporal"
 	"github.com/strongo/aichat/ai"
 	"github.com/strongo/aichat/ai/ctxmgr"
 	"github.com/strongo/aichat/ai/decision"
@@ -175,7 +176,7 @@ func (p Pipeline) handleCommand(ctx context.Context, d decision.Decision, st *se
 	}
 	switch d.Presentation {
 	case sneatdomain.PresentationDayCalendar:
-		return p.showDay(ctx, st, spaceID)
+		return p.showDay(ctx, st, spaceID, d.Slots["when"])
 	case sneatdomain.PresentationWeekCalendar:
 		return p.showWeek(ctx, st, spaceID)
 	case sneatdomain.PresentationHappeningsList:
@@ -198,13 +199,26 @@ func (p Pipeline) handleCommand(ctx context.Context, d decision.Decision, st *se
 
 const helpText = "I can show your calendar (today, this week, upcoming), your todos and to-buy list, and your contacts. Say things like \"show my calendar today\", \"my todos\", or \"contacts\"."
 
-func (p Pipeline) showDay(ctx context.Context, st *session.State, spaceID string) (Output, error) {
-	now := p.now()
-	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+// showDay shows one calendar day. when is a decision's "when" slot (m1:
+// "honour decision date slots", e.g. "show my calendar tomorrow" ->
+// slots={"when":"tomorrow"}) -- empty or unresolvable falls back to today, a
+// deterministic rule's own default (see rules.showDayRule) as well as this
+// method's zero-value behaviour, so a decision that never set the slot at
+// all still shows today exactly as before.
+func (p Pipeline) showDay(ctx context.Context, st *session.State, spaceID, when string) (Output, error) {
+	day := p.now()
+	emptyText := "You have no happenings today."
+	if when != "" && when != "today" {
+		if d, ok := temporal.ParseText(p.now(), when); ok {
+			day = d
+			emptyText = fmt.Sprintf("You have no happenings on %s.", d.Format("Mon Jan 2"))
+		}
+	}
+	from := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location())
 	// AddDate, not +24h: a calendar day is not always 24 wall-clock hours in
 	// the user's zone (DST transitions), coordinator ruling TIMEZONES.
 	to := from.AddDate(0, 0, 1)
-	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationDayCalendar, "You have no happenings today.")
+	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationDayCalendar, emptyText)
 }
 
 func (p Pipeline) showWeek(ctx context.Context, st *session.State, spaceID string) (Output, error) {
@@ -460,7 +474,17 @@ func (p Pipeline) runAction(ctx context.Context, action session.Action, st *sess
 	action.Undo = undo
 	st.Previous = &action
 	st.PreviousAt = p.now()
-	return Output{Text: "Done."}, nil
+	text := "Done."
+	if undo != nil {
+		// m10: a non-destructive action (destructive ones already got a
+		// confirmation prompt before execution, via resolveAndAct's
+		// isDestructive check -- this only fires for the ones that ran
+		// immediately, most often an LLM-originated action) still leaves an
+		// undo hint, so "undo" is discoverable without having to guess it is
+		// even possible.
+		text += " Say \"undo\" to reverse it."
+	}
+	return Output{Text: text}, nil
 }
 
 func (p Pipeline) confirmPending(ctx context.Context, st *session.State) (Output, error) {

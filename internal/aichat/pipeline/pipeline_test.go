@@ -102,6 +102,20 @@ func TestTurn_ShowDay_RecurringOnlyOnMatchingWeekday(t *testing.T) {
 	}
 }
 
+// TestShowDay_HonoursWhenSlot is m1: a decision's "when" slot (e.g. from a
+// future rule/Jev/LLM decision for "show my calendar tomorrow") selects the
+// day shown, not always today.
+func TestShowDay_HonoursWhenSlot(t *testing.T) {
+	p, st := newTestPipeline(nil) // fixedNow is Friday 2026-09-25; h1 is Sep 26 (tomorrow)
+	out, err := p.showDay(context.Background(), st, "sp1", "tomorrow")
+	if err != nil {
+		t.Fatalf("showDay: %v", err)
+	}
+	if len(out.Entities) != 1 || out.Entities[0].Keys["happeningID"] != "h1" {
+		t.Fatalf("Entities = %+v, want h1 (Sep 26, resolved from the \"tomorrow\" slot)", out.Entities)
+	}
+}
+
 func TestTurn_UnknownText_NeedsLLM(t *testing.T) {
 	p, st := newTestPipeline(nil)
 	out, err := p.Turn(context.Background(), "what is the meaning of life", st, "sp1")
@@ -155,8 +169,10 @@ func TestTurn_PendingConfirmCancelUndo(t *testing.T) {
 	if st.Previous == nil || st.Previous.Undo == nil {
 		t.Fatal("expected Previous with Undo set after execution")
 	}
-	if out.Text != "Done." {
-		t.Fatalf("out.Text = %q", out.Text)
+	// m10: an undoable action's Output.Text carries a discoverable hint,
+	// not just a bare "Done.".
+	if !strings.HasPrefix(out.Text, "Done.") || !strings.Contains(out.Text, "undo") {
+		t.Fatalf("out.Text = %q, want a \"Done.\" answer with an undo hint", out.Text)
 	}
 
 	// "undo" reverses it.
@@ -238,7 +254,7 @@ func TestResolveAndAct_Reschedule_ConfirmationShowsResolvedDateTimeTZ(t *testing
 	if err != nil {
 		t.Fatalf("Turn(yes): %v", err)
 	}
-	if out.Text != "Done." || len(exec.Executed) != 1 {
+	if !strings.HasPrefix(out.Text, "Done.") || len(exec.Executed) != 1 {
 		t.Fatalf("out = %+v, executed = %+v", out, exec.Executed)
 	}
 
