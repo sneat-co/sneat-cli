@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -72,7 +73,7 @@ func (r *firestoreHappenings) list(ctx context.Context, spaceID string) ([]calen
 		})
 
 	var records []record.Record
-	err = db.DAL().RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+	err = db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 		records, err = dal.ExecuteQueryAndReadAllToRecords(ctx, q, tx)
 		return err
 	})
@@ -174,7 +175,7 @@ func (r *firestoreHappenings) Get(ctx context.Context, spaceID, happeningID stri
 	var dbo calendariusdbo.HappeningDbo
 	key := calendariusdbo.NewHappeningKey(coretypes.SpaceID(spaceID), happeningID)
 	rec := record.NewRecordWithData(key, &dbo)
-	err = db.DAL().RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+	err = db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 		return tx.Get(ctx, rec)
 	})
 	if err != nil {
@@ -220,7 +221,7 @@ func (r *firestoreTodos) getList(ctx context.Context, spaceID, listKey string) (
 	var l listusdbo.ListDbo
 	key := dal4listus.NewListKey(coretypes.SpaceID(spaceID), listusdbo.ListKey(listKey))
 	rec := record.NewRecordWithData(key, &l)
-	err = db.DAL().RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+	err = db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 		return tx.Get(ctx, rec)
 	})
 	if err != nil {
@@ -257,13 +258,22 @@ func sortNotDoneFirst(items []Todo) {
 	sort.SliceStable(items, func(i, j int) bool { return !items[i].Done && items[j].Done })
 }
 
+// FindByTitle searches both list kinds. A list that does not exist YET in
+// this space (record.IsNotFound) is not an error -- an empty/never-created
+// to-buy list, say, must not sink the whole search. Any other read error
+// (auth failure, network, a malformed document) is surfaced rather than
+// silently swallowed (m6): a caller must be able to tell "no matches" from
+// "the search could not run".
 func (r *firestoreTodos) FindByTitle(ctx context.Context, spaceID, query string) ([]Todo, error) {
 	q := normalizeForSearch(query)
 	var out []Todo
 	for _, list := range []string{ListKindDo, ListKindBuy} {
 		items, err := r.List(ctx, spaceID, list)
 		if err != nil {
-			continue // one list missing/unreadable must not fail the whole search
+			if record.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("data: searching %s list: %w", list, err)
 		}
 		for _, it := range items {
 			if containsFold(it.Title, q) {

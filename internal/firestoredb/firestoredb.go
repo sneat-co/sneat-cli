@@ -41,12 +41,18 @@ func Open(ctx context.Context, cfg config.Config, ts oauth2.TokenSource) (*DB, e
 // Close releases the underlying Firestore client.
 func (d *DB) Close() error { return d.client.Close() }
 
-// DAL returns the underlying DALgo database, for callers (internal/aichat/data
-// today) that need query/nested-key reads GetDoc does not cover. It is a
-// deliberate escape hatch rather than growing this package's surface for
-// every module's read shape: Contact/Happening/Todo readers each know their
-// own collection layout, and this package should not.
-func (d *DB) DAL() dal.DB { return d.dal }
+// RunReadonlyTransaction runs fn in a read-only transaction against the
+// underlying database, for callers (internal/aichat/data today) that need
+// query/nested-key reads GetDoc does not cover -- each module reader knows
+// its own collection layout and query shape; this package should not.
+//
+// m3: this replaces a prior DAL() accessor that returned the full dal.DB
+// (capable of read-write transactions too, an escape hatch wider than any
+// caller outside this package needs) with the narrowest capability an
+// external read-only caller actually uses.
+func (d *DB) RunReadonlyTransaction(ctx context.Context, fn func(ctx context.Context, tx dal.ReadTransaction) error) error {
+	return d.dal.RunReadonlyTransaction(ctx, fn)
+}
 
 // GetDoc reads the document at collection/id into data (a pointer to a struct
 // or a *map[string]any) using DALgo.
