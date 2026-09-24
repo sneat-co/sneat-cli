@@ -52,6 +52,35 @@ type handler struct {
 	// OnStreamEvent's EventCompleted can retrieve the parsed <sneat-action>
 	// once the stream that produced it is known to have finished.
 	splitters map[string]*pipeline.Splitter
+	// streamText/streamUser accumulate an in-flight stream's visible text and
+	// the user turn that started it, so OnStreamDone can record the exchange
+	// into history once the stream finishes (brief §7/S7 coordinator ruling:
+	// "last N (8) turns of history" -- see pipeline.HistoryTurns).
+	streamText map[string]*strings.Builder
+	streamUser map[string]string
+	// history is the bounded exchange log StreamRequest sends ahead of the
+	// current turn. Pipeline itself is a stateless value (rebuilt per call),
+	// so this is where the session's history actually lives.
+	history []ai.Message
+}
+
+// appendHistory records one user/assistant exchange and trims history to
+// pipeline.HistoryTurns exchanges, oldest first. An empty assistant text
+// (e.g. a deterministic turn that only rendered a structured control) still
+// records the user's side, so a later pronoun/continuation still has it in
+// view even though there was no prose reply.
+func (h *handler) appendHistory(user, assistant string) {
+	if user == "" {
+		return
+	}
+	h.history = append(h.history, ai.Message{Role: ai.RoleUser, Text: user})
+	if assistant != "" {
+		h.history = append(h.history, ai.Message{Role: ai.RoleAssistant, Text: assistant})
+	}
+	max := pipeline.HistoryTurns * 2
+	if len(h.history) > max {
+		h.history = h.history[len(h.history)-max:]
+	}
 }
 
 // --- chatshell.Handler -----------------------------------------------------
@@ -119,6 +148,15 @@ func (h *handler) OnSidebarChange(refs []session.EntityRef) {
 // --- chatshell.StreamObserver ------------------------------------------------
 
 func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
+	if ev.Type == ai.EventTextDelta {
+		// Accumulate the visible (splitter-filtered) reply text for history
+		// (S7): OnStreamDone records it as the assistant side of this turn's
+		// exchange once the stream finishes.
+		if b := h.streamText[id]; b != nil {
+			b.WriteString(ev.Text)
+		}
+		return nil
+	}
 	if ev.Type != ai.EventCompleted {
 		return nil
 	}
@@ -147,6 +185,11 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 // retired and the LLM-leg diagnostics are logged, regardless of outcome.
 func (h *handler) OnStreamDone(id string, err error) tea.Cmd {
 	delete(h.splitters, id)
+	if b := h.streamText[id]; b != nil && err == nil {
+		h.appendHistory(h.streamUser[id], b.String())
+	}
+	delete(h.streamText, id)
+	delete(h.streamUser, id)
 	if h.logger != nil {
 		t := aidiag.Turn{Path: aidiag.PathLLMFallback}
 		if err != nil {
@@ -224,6 +267,7 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 	if !m.output.NeedsLLM {
 		h.render(m.output, nil)
 		h.logTurn(aidiag.PathDeterministic, m.output, nil)
+		h.appendHistory(m.text, m.output.Text)
 		return nil
 	}
 	return h.startLLMStream(m.text, m.output.Decision)
@@ -231,6 +275,7 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 
 func (h *handler) startLLMStream(text string, d *decision.Decision) tea.Cmd {
 	focused := focusedScopes(h.state)
+	history := append([]ai.Message(nil), h.history...)
 	// StreamRequest itself does no I/O; DynamicBlocks reads happen inside
 	// the open func below, which chatshell's StartStream runs under the
 	// per-stream context it owns -- not on the UI loop, and cancellable via
@@ -240,8 +285,14 @@ func (h *handler) startLLMStream(text string, d *decision.Decision) tea.Cmd {
 	if h.splitters == nil {
 		h.splitters = map[string]*pipeline.Splitter{}
 	}
+	if h.streamText == nil {
+		h.streamText = map[string]*strings.Builder{}
+		h.streamUser = map[string]string{}
+	}
+	h.streamText[id] = &strings.Builder{}
+	h.streamUser[id] = text
 	open := func(ctx context.Context) iter.Seq2[ai.Event, error] {
-		req, report := h.pipeline.StreamRequest(ctx, text, &stateSnapshot, h.spaceID, d, focused)
+		req, report := h.pipeline.StreamRequest(ctx, text, &stateSnapshot, h.spaceID, d, focused, history)
 		h.logStreamRequest(d, report)
 		seq, splitter := h.pipeline.Stream(ctx, req)
 		h.splitters[id] = splitter

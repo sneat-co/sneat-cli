@@ -2,15 +2,23 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/strongo/aichat/ai"
 	"github.com/strongo/aichat/ai/cloud"
 	"github.com/strongo/aichat/ai/cloudproto"
+	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/openaicompat"
+	"github.com/strongo/aichat/ai/session"
+
+	"github.com/sneat-co/sneat-cli/internal/aichat/data"
+	"github.com/sneat-co/sneat-cli/internal/aichat/sneatdomain"
 )
 
 func sseWrite(w http.ResponseWriter, data string) {
@@ -54,7 +62,7 @@ func TestStream_BYOKOpenAICompatible_ThroughPipeline(t *testing.T) {
 		LLM:     openaicompat.New(openaicompat.Config{BaseURL: srv.URL, APIKey: "sk-test", Model: "gpt-5"}),
 		Product: "sneat",
 	}
-	req, _ := p.StreamRequest(context.Background(), "what's on my plate", nil, "sp1", nil, nil)
+	req, _ := p.StreamRequest(context.Background(), "what's on my plate", nil, "sp1", nil, nil, nil)
 	seq, splitter := p.Stream(context.Background(), req)
 	text, _ := drain(t, seq)
 	if text != "You have 5 things. " {
@@ -96,7 +104,7 @@ func TestStream_Cloud_ThroughPipeline(t *testing.T) {
 		LLM:     cloud.New(cloud.Config{BaseURL: srv.URL + "/v0/", Product: "sneat", Token: func(context.Context) (string, error) { return "tok", nil }}),
 		Product: "sneat",
 	}
-	req, _ := p.StreamRequest(context.Background(), "show my calendar today", nil, "sp1", nil, nil)
+	req, _ := p.StreamRequest(context.Background(), "show my calendar today", nil, "sp1", nil, nil, nil)
 	seq, splitter := p.Stream(context.Background(), req)
 	text, events := drain(t, seq)
 	if text != "You have 5 things." {
@@ -117,6 +125,142 @@ func TestStream_Cloud_ThroughPipeline(t *testing.T) {
 	if _, action, err := splitter.Finish(); err != nil || action != nil {
 		t.Fatalf("splitter.Finish() = action=%+v err=%v, want no action", action, err)
 	}
+}
+
+// TestStreamRequest_IncludesHistory covers S7: the last HistoryTurns
+// exchanges are sent ahead of the current user message, oldest first.
+func TestStreamRequest_IncludesHistory(t *testing.T) {
+	p := Pipeline{Now: func() time.Time { return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC) }}
+	history := []ai.Message{
+		{Role: ai.RoleUser, Text: "hi"},
+		{Role: ai.RoleAssistant, Text: "hello"},
+	}
+	req, _ := p.StreamRequest(context.Background(), "what's next", nil, "sp1", nil, nil, history)
+	if len(req.Messages) != 3 {
+		t.Fatalf("Messages = %+v, want history + current turn", req.Messages)
+	}
+	if req.Messages[0] != history[0] || req.Messages[1] != history[1] {
+		t.Fatalf("Messages = %+v, want history first", req.Messages)
+	}
+	if req.Messages[2].Text != "what's next" || req.Messages[2].Role != ai.RoleUser {
+		t.Fatalf("Messages[2] = %+v, want the current user turn", req.Messages[2])
+	}
+}
+
+// TestStreamRequest_HistoryIsBoundedToHistoryTurns covers the same ruling's
+// bound: StreamRequest itself caps history to HistoryTurns exchanges even if
+// a caller hands it more.
+func TestStreamRequest_HistoryIsBoundedToHistoryTurns(t *testing.T) {
+	p := Pipeline{}
+	var history []ai.Message
+	for i := 0; i < HistoryTurns+5; i++ {
+		history = append(history,
+			ai.Message{Role: ai.RoleUser, Text: fmt.Sprintf("u%d", i)},
+			ai.Message{Role: ai.RoleAssistant, Text: fmt.Sprintf("a%d", i)})
+	}
+	req, _ := p.StreamRequest(context.Background(), "now", nil, "sp1", nil, nil, history)
+	// +1 for the current turn's own message.
+	if want := HistoryTurns*2 + 1; len(req.Messages) != want {
+		t.Fatalf("len(Messages) = %d, want %d (bounded to HistoryTurns)", len(req.Messages), want)
+	}
+	// The oldest exchanges are dropped, not the newest.
+	if req.Messages[0].Text != "u5" {
+		t.Fatalf("Messages[0] = %+v, want the oldest RETAINED exchange (u5)", req.Messages[0])
+	}
+}
+
+// TestStreamRequest_SessionBlockCarriesFocusSelectionSidebarTitles covers
+// S7: the "now"/TZ line plus focused/selection/sidebar entity titles are
+// sent as a dynamic context block, so the LLM sees what the user is looking
+// at without Sneat re-deriving it from Keys alone.
+func TestStreamRequest_SessionBlockCarriesFocusSelectionSidebarTitles(t *testing.T) {
+	p := Pipeline{Now: func() time.Time { return time.Date(2026, 9, 24, 15, 30, 0, 0, time.UTC) }, TZ: "Europe/Paris"}
+	focused := session.EntityRef{Type: "happening", Title: "Dentist"}
+	st := &session.State{
+		Focused:   &focused,
+		Selection: []session.EntityRef{{Type: "todo", Title: "Buy milk"}},
+		Sidebar:   []session.EntityRef{{Type: "contact", Title: "Alice"}},
+	}
+	req, _ := p.StreamRequest(context.Background(), "hi", st, "sp1", nil, nil, nil)
+	block := findBlock(t, req.Context, "session")
+	for _, want := range []string{"Europe/Paris", "Dentist", "Buy milk", "Alice"} {
+		if !strings.Contains(block.Text, want) {
+			t.Fatalf("session block = %q, want it to contain %q", block.Text, want)
+		}
+	}
+}
+
+// TestStreamRequest_ContactsCountOnlyUnlessMentionedOrRequired covers S7's
+// contacts cap: a turn that neither requires the contacts scope nor
+// plausibly mentions a person gets a count, not the full name list; naming
+// someone (a capitalized word past the first) includes the full list.
+func TestStreamRequest_ContactsCountOnlyUnlessMentionedOrRequired(t *testing.T) {
+	readers := contactsReaders(t)
+	p := Pipeline{Readers: readers}
+
+	req, _ := p.StreamRequest(context.Background(), "what should I do today", nil, "sp1", nil, nil, nil)
+	block := findBlock(t, req.Context, "contacts")
+	if strings.Contains(block.Text, "Alice") {
+		t.Fatalf("contacts block = %q, want a count only (no person mentioned)", block.Text)
+	}
+	if !strings.Contains(block.Text, "1 contact") {
+		t.Fatalf("contacts block = %q, want a count", block.Text)
+	}
+
+	req, _ = p.StreamRequest(context.Background(), "can you remind Alice about the meeting", nil, "sp1", nil, nil, nil)
+	block = findBlock(t, req.Context, "contacts")
+	if !strings.Contains(block.Text, "Alice") {
+		t.Fatalf("contacts block = %q, want the full list once a person is mentioned", block.Text)
+	}
+}
+
+// TestStreamRequest_ContactsFullWhenRequiredByDecision covers the Select
+// (decision-driven) path's equivalent rule: RequiredScopes naming contacts
+// gets the full list even with no person mentioned in text.
+func TestStreamRequest_ContactsFullWhenRequiredByDecision(t *testing.T) {
+	readers := contactsReaders(t)
+	p := Pipeline{Readers: readers}
+	d := &decision.Decision{RequiredScopes: []string{sneatdomain.ModuleContacts}, NeedsLLM: true}
+	req, _ := p.StreamRequest(context.Background(), "who do I know", nil, "sp1", d, nil, nil)
+	block := findBlock(t, req.Context, "contacts")
+	if !strings.Contains(block.Text, "Alice") {
+		t.Fatalf("contacts block = %q, want the full list (scope explicitly required)", block.Text)
+	}
+}
+
+// TestDynamicBlocks_CapsHappeningsAndTodos covers S7's item cap: a dynamic
+// block never dumps more than maxDynamicItems records.
+func TestDynamicBlocks_CapsHappeningsAndTodos(t *testing.T) {
+	var items []data.Happening
+	for i := 0; i < maxDynamicItems+10; i++ {
+		items = append(items, data.Happening{SpaceID: "sp1", ID: fmt.Sprintf("h%d", i), Title: fmt.Sprintf("H%d", i),
+			Start: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)})
+	}
+	p := Pipeline{
+		Now:     func() time.Time { return time.Date(2026, 9, 24, 9, 0, 0, 0, time.UTC) },
+		Readers: data.Readers{Happenings: &data.FakeHappenings{Items: items}},
+	}
+	blocks := p.DynamicBlocks(context.Background(), "sp1", []string{sneatdomain.ModuleCalendar}, false)
+	block := findBlock(t, blocks, "relevant_happenings")
+	if got := strings.Count(block.Text, "- H"); got != maxDynamicItems {
+		t.Fatalf("listed %d happenings, want the cap of %d", got, maxDynamicItems)
+	}
+}
+
+func contactsReaders(t *testing.T) data.Readers {
+	t.Helper()
+	return data.Readers{Contacts: &data.FakeContacts{Items: []data.Contact{{ID: "c1", SpaceID: "sp1", Name: "Alice"}}}}
+}
+
+func findBlock(t *testing.T, blocks []ai.ContextBlock, name string) ai.ContextBlock {
+	t.Helper()
+	for _, b := range blocks {
+		if b.Name == name {
+			return b
+		}
+	}
+	t.Fatalf("no %q context block among %+v", name, blocks)
+	return ai.ContextBlock{}
 }
 
 func TestStream_NoLLMConfiguredIsAnError(t *testing.T) {

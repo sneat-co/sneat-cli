@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"slices"
+	"strings"
+	"unicode"
 
 	"github.com/strongo/aichat/ai"
 	"github.com/strongo/aichat/ai/ctxmgr"
@@ -12,6 +15,18 @@ import (
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/sneatdomain"
 )
+
+// maxDynamicItems caps how many happenings/todos a dynamic context block
+// lists (brief §7/S7 coordinator ruling): the LLM needs enough to answer
+// without inventing facts, not a full record dump on every turn that needs
+// one.
+const maxDynamicItems = 50
+
+// HistoryTurns is how many past user/assistant EXCHANGES StreamRequest
+// includes ahead of the current turn (brief §7 coordinator ruling S7: "last
+// N (8) turns of history"). A turn is one user message plus its assistant
+// reply, so this is up to 2*HistoryTurns ai.Message values.
+const HistoryTurns = 8
 
 // sneatActionInstruction is appended to the system prompt so the main LLM
 // follows the product convention: stream user-facing text, then optionally
@@ -36,8 +51,13 @@ func StaticBlocks() []ai.ContextBlock {
 // DynamicBlocks fetches a short per-scope textual summary for scope (the
 // data the main LLM needs to answer without inventing facts) -- deliberately
 // lightweight (title/count only, not a full record dump) since it is sent on
-// every turn that needs it and is never cached.
-func (p Pipeline) DynamicBlocks(ctx context.Context, spaceID string, scopes []string) []ai.ContextBlock {
+// every turn that needs it and is never cached. Happenings/todos are capped
+// at maxDynamicItems. fullContacts controls whether the contacts scope sends
+// the full name list or just a count (brief §7/S7 coordinator ruling: full
+// contacts only when the contacts scope is actually required or text
+// mentions a person; a count otherwise, so an unrelated turn does not pay
+// for every contact's name).
+func (p Pipeline) DynamicBlocks(ctx context.Context, spaceID string, scopes []string, fullContacts bool) []ai.ContextBlock {
 	var out []ai.ContextBlock
 	now := p.now()
 	for _, scope := range scopes {
@@ -50,9 +70,16 @@ func (p Pipeline) DynamicBlocks(ctx context.Context, spaceID string, scopes []st
 			if err != nil {
 				continue
 			}
+			truncated := len(hs) > maxDynamicItems
+			if truncated {
+				hs = hs[:maxDynamicItems]
+			}
 			text := "Upcoming happenings:\n"
 			for _, h := range hs {
 				text += fmt.Sprintf("- %s (%s)\n", h.Title, h.Start.Format("Mon 2006-01-02 15:04"))
+			}
+			if truncated {
+				text += fmt.Sprintf("(showing the first %d)\n", maxDynamicItems)
 			}
 			out = append(out, ai.ContextBlock{Scope: scope, Kind: ai.ContextDynamic, Name: "relevant_happenings", Text: text})
 		case sneatdomain.ModuleTodo:
@@ -61,8 +88,15 @@ func (p Pipeline) DynamicBlocks(ctx context.Context, spaceID string, scopes []st
 			}
 			text := "Todos:\n"
 			if items, err := p.Readers.Todos.List(ctx, spaceID, "do"); err == nil {
+				truncated := len(items) > maxDynamicItems
+				if truncated {
+					items = items[:maxDynamicItems]
+				}
 				for _, it := range items {
 					text += fmt.Sprintf("- %s [done=%v]\n", it.Title, it.Done)
+				}
+				if truncated {
+					text += fmt.Sprintf("(showing the first %d)\n", maxDynamicItems)
 				}
 			}
 			out = append(out, ai.ContextBlock{Scope: scope, Kind: ai.ContextDynamic, Name: "todos", Text: text})
@@ -74,9 +108,14 @@ func (p Pipeline) DynamicBlocks(ctx context.Context, spaceID string, scopes []st
 			if err != nil {
 				continue
 			}
-			text := "Contacts:\n"
-			for _, c := range cs {
-				text += "- " + c.Name + "\n"
+			var text string
+			if fullContacts {
+				text = "Contacts:\n"
+				for _, c := range cs {
+					text += "- " + c.Name + "\n"
+				}
+			} else {
+				text = fmt.Sprintf("%d contact(s) in this space (ask to list/search them for names).\n", len(cs))
 			}
 			out = append(out, ai.ContextBlock{Scope: scope, Kind: ai.ContextDynamic, Name: "contacts", Text: text})
 		}
@@ -84,40 +123,150 @@ func (p Pipeline) DynamicBlocks(ctx context.Context, spaceID string, scopes []st
 	return out
 }
 
+// sessionBlock builds the "now"/TZ/focused-selection-sidebar dynamic context
+// block (brief §7/S7 coordinator ruling): the current time in the session's
+// zone, and the display titles of whatever the user is currently looking at
+// or has pinned, so "move it to Friday" and similar resolve against what the
+// LLM was actually told, not just what Sneat's resolver later works out from
+// Keys alone. st may be nil (no session yet); a nil/empty state still yields
+// the "now" line.
+func (p Pipeline) sessionBlock(st *session.State) ai.ContextBlock {
+	now := p.now()
+	tz := p.TZ
+	if tz == "" {
+		tz = "local"
+	}
+	text := fmt.Sprintf("Now: %s (%s).\n", now.Format("Mon 2006-01-02 15:04"), tz)
+	if st == nil {
+		return ai.ContextBlock{Scope: sneatdomain.ModuleGeneral, Kind: ai.ContextDynamic, Name: "session", Text: text}
+	}
+	if st.Focused != nil && st.Focused.Title != "" {
+		text += "Focused: " + st.Focused.Title + "\n"
+	}
+	if len(st.Selection) > 0 {
+		text += "Selected: " + entityTitles(st.Selection) + "\n"
+	}
+	if len(st.Sidebar) > 0 {
+		text += "Sidebar (pinned): " + entityTitles(st.Sidebar) + "\n"
+	}
+	return ai.ContextBlock{Scope: sneatdomain.ModuleGeneral, Kind: ai.ContextDynamic, Name: "session", Text: text}
+}
+
+func entityTitles(refs []session.EntityRef) string {
+	titles := make([]string, 0, len(refs))
+	for _, r := range refs {
+		title := r.Title
+		if title == "" {
+			title = r.Type
+		}
+		titles = append(titles, title)
+	}
+	return strings.Join(titles, ", ")
+}
+
+// mentionsPerson is a small heuristic (not NLP, per brief §5's "no giant
+// regex NLP engine"): a capitalized word that is not the first word of the
+// text is treated as a plausible person mention ("ask Alice", "tell Bob"),
+// same spirit as sentence-initial capitalization not counting. It only
+// widens the SelectAll path's contacts inclusion; a false negative just
+// falls back to a count block (DynamicBlocks' fullContacts=false), never a
+// hard failure.
+func mentionsPerson(text string) bool {
+	words := strings.Fields(text)
+	for i, w := range words {
+		if i == 0 {
+			continue
+		}
+		w = strings.TrimFunc(w, func(r rune) bool { return !unicode.IsLetter(r) })
+		// "I" is the one common capitalized pronoun that is not sentence-
+		// initial; everything else this heuristic exists to catch is a name.
+		if w == "" || w == "I" || len([]rune(w)) < 2 {
+			continue
+		}
+		r := []rune(w)
+		if unicode.IsUpper(r[0]) {
+			return true
+		}
+	}
+	return false
+}
+
 // StreamRequest builds the ai.ChatRequest for a main-LLM turn: SelectAll
 // (every cached static scope) when d is nil (no decision at all -- Jev off/
 // abstained/timeout/malformed), or Select(d.RequiredScopes, ...) when a
 // decision named required scopes but asked for LLM handling. focusedScopes
 // are the modules of the session's focused/sidebar entities (pinnedScopes),
-// included even when not required, per brief §4/§7.
-func (p Pipeline) StreamRequest(ctx context.Context, text string, st *session.State, spaceID string, d *decision.Decision, focusedScopes []string) (ai.ChatRequest, ctxmgr.Report) {
+// included even when not required, per brief §4/§7. history is the last
+// HistoryTurns exchanges (brief §7/S7 coordinator ruling), oldest first,
+// sent ahead of the current user message -- callers own trimming it to that
+// bound (chatapp's handler does; see its history field) since Pipeline
+// itself is a stateless value with nowhere to keep it between turns.
+func (p Pipeline) StreamRequest(ctx context.Context, text string, st *session.State, spaceID string, d *decision.Decision, focusedScopes []string, history []ai.Message) (ai.ChatRequest, ctxmgr.Report) {
 	available := append([]ai.ContextBlock{}, StaticBlocks()...)
+	available = append(available, p.sessionBlock(st))
+
+	// The SelectAll (no-decision) path defaults to calendar+todo as its
+	// REQUIRED scopes -- contacts is never assumed required just because Jev
+	// is unavailable. Either path still sends a contacts block on every turn
+	// (dynamicScopes always includes it below) so the LLM always knows contacts
+	// exist; whether that block is the full name list or just a count is the
+	// separate fullContacts decision (S7 coordinator ruling: full contacts
+	// only when the scope is actually required or text plausibly mentions a
+	// person, a count otherwise).
 	var required []string
 	if d != nil {
 		required = d.RequiredScopes
 	} else {
-		required = []string{sneatdomain.ModuleCalendar, sneatdomain.ModuleTodo, sneatdomain.ModuleContacts}
+		required = []string{sneatdomain.ModuleCalendar, sneatdomain.ModuleTodo}
 	}
-	available = append(available, p.DynamicBlocks(ctx, spaceID, uniqueStrings(append(append([]string{}, required...), focusedScopes...)))...)
+	fullContacts := slices.Contains(required, sneatdomain.ModuleContacts) || mentionsPerson(text)
+
+	dynamicScopes := uniqueStrings(append(append([]string{}, required...), focusedScopes...))
+	if !slices.Contains(dynamicScopes, sneatdomain.ModuleContacts) {
+		dynamicScopes = append(dynamicScopes, sneatdomain.ModuleContacts)
+	}
+	available = append(available, p.DynamicBlocks(ctx, spaceID, dynamicScopes, fullContacts)...)
+
+	// pinnedScopes is what ctxmgr.Select/SelectAll uses (beyond required) to
+	// decide which DYNAMIC blocks survive -- it always carries contacts too,
+	// so the count-or-full contacts block above is never dropped by ctxmgr
+	// even on a turn where contacts is not itself a required/focused scope.
+	pinnedScopes := uniqueStrings(append(append([]string{}, focusedScopes...), sneatdomain.ModuleContacts))
 
 	var blocks []ai.ContextBlock
 	var report ctxmgr.Report
 	if p.CtxMgr == nil {
 		blocks = available
 	} else if d == nil {
-		blocks, report = p.CtxMgr.SelectAll(available, focusedScopes)
+		blocks, report = p.CtxMgr.SelectAll(available, pinnedScopes)
 	} else {
-		blocks, report = p.CtxMgr.Select(required, available, focusedScopes)
+		blocks, report = p.CtxMgr.Select(required, available, pinnedScopes)
 	}
 
-	system := sneatActionInstruction
+	messages := make([]ai.Message, 0, 1+len(history))
+	messages = append(messages, boundHistory(history)...)
+	messages = append(messages, ai.Message{Role: ai.RoleUser, Text: text})
+
 	req := ai.ChatRequest{
 		Product:  p.Product,
-		System:   system,
+		System:   sneatActionInstruction,
 		Context:  blocks,
-		Messages: []ai.Message{{Role: ai.RoleUser, Text: text}},
+		Messages: messages,
 	}
 	return req, report
+}
+
+// boundHistory trims h to the last HistoryTurns exchanges (2*HistoryTurns
+// messages), keeping the most recent ones -- a caller's history is expected
+// to already be roughly this size (chatapp's handler trims as it appends),
+// this is a defensive final cap so StreamRequest itself never sends an
+// unbounded transcript regardless of caller discipline.
+func boundHistory(h []ai.Message) []ai.Message {
+	cap := HistoryTurns * 2
+	if len(h) <= cap {
+		return h
+	}
+	return h[len(h)-cap:]
 }
 
 // Stream starts the main-LLM turn and returns its stream, wrapped so
