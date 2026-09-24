@@ -11,7 +11,7 @@ import (
 	"github.com/sneat-co/sneat-cli/cmd/sneat/commands"
 	"github.com/sneat-co/sneat-cli/internal/browserauth"
 	"github.com/sneat-co/sneat-cli/internal/chat"
-	"github.com/sneat-co/sneat-cli/internal/chattui"
+	"github.com/sneat-co/sneat-cli/internal/chatapp"
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/deviceflow"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
@@ -106,17 +106,27 @@ func main() {
 		RunTUI: func(spaces commands.SpacesReader, contacts commands.ContactsReader, deleter commands.ContactDeleter, uid string) error {
 			return tui.Run(spaces, contacts, deleter, uid)
 		},
-		// RunChat is the chat session's composition root: the one place that
-		// builds a concrete processor and hands the renderer only the
-		// chat.Processor interface (chat-messenger#req:processor-seam).
-		RunChat: func(spaces commands.SpacesReader, contacts commands.ContactsReader, uid, email string) error {
-			return chattui.Run(chat.NewProcessor(chat.Deps{
-				Spaces:   spaces,
-				Contacts: chatContacts{contacts},
-				UID:      uid,
-				Email:    email,
-				Version:  info.Version,
-			}))
+		// RunChat is the chat session's composition root: internal/chatapp
+		// builds the aichat MVP pipeline (deterministic rules + decision
+		// chain + resolver + Context Manager + main LLM) and runs it through
+		// strongo/aichat's tui/chatshell.
+		RunChat: func(args commands.RunChatArgs) error {
+			auth := sneatauth.New(sneatauth.Options{APIKey: args.Cfg.APIKey, AuthEmulatorHost: args.Cfg.AuthEmulatorHost})
+			ts := tokensrc.FromEnvOrSession(os.Getenv, context.Background(), store, auth, time.Now)
+			return chatapp.Run(chatapp.Deps{
+				Spaces:       args.Spaces,
+				Contacts:     chatContacts{args.Contacts},
+				UID:          args.UID,
+				Email:        args.Email,
+				Version:      info.Version,
+				Cfg:          args.Cfg,
+				AIConfig:     args.AIConfig,
+				NoJev:        args.NoJev,
+				TokenSource:  ts,
+				Debug:        os.Getenv("SNEAT_DEBUG") != "",
+				CurrentSpace: args.CurrentSpace,
+				TZ:           args.TZ,
+			})
 		},
 	}
 	root := commands.Root(env)

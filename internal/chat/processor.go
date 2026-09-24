@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/bots-go-framework/bots-go-core/botkb"
@@ -47,6 +48,14 @@ type Deps struct {
 	UID      string
 	Email    string
 	Version  string
+	// CurrentSpace seeds the processor's active space at construction (m9
+	// coordinator ruling): the composition root's own default-space pick
+	// (chatapp.defaultSpaceID) is what the aichat pipeline already starts
+	// in, so /space must agree with it from the first turn rather than
+	// reporting "No space is selected" until the user explicitly presses a
+	// space button. Empty leaves the processor with no active space, same
+	// as before this field existed.
+	CurrentSpace string
 }
 
 // Command names, as the user types them.
@@ -121,9 +130,18 @@ type processor struct {
 	email    string
 	version  string
 
+	// spaceMu guards activeSpace/listedSpaces (S1 coordinator ruling): SendText
+	// and PressButton each run inside their own tea.Cmd closure on a worker
+	// goroutine (see chatapp's Submit/pressButton), so two turns dispatched
+	// close together -- a slash command and a button press, or two button
+	// presses -- can read/write these fields concurrently. Plain field access
+	// would be a data race under `go test -race`; every access below goes
+	// through the activeSpace()/setActiveSpace()/listedSpace()/
+	// setListedSpaces() accessors instead of touching the fields directly.
+	spaceMu sync.RWMutex
 	// activeSpace is the session's selected space ID: set by pressing a space
 	// button, read by later space-scoped commands. Empty until the user picks
-	// one.
+	// one (or Deps.CurrentSpace seeded it).
 	activeSpace string
 
 	// listedSpaces is the spaces map the most recent /spaces drew its buttons
@@ -146,12 +164,13 @@ type processor struct {
 // renderer's composition root above all — can name an implementation.
 func NewProcessor(deps Deps) Processor {
 	p := &processor{
-		spaces:   deps.Spaces,
-		contacts: deps.Contacts,
-		uid:      deps.UID,
-		email:    deps.Email,
-		version:  deps.Version,
-		commands: map[string]command{},
+		spaces:      deps.Spaces,
+		contacts:    deps.Contacts,
+		uid:         deps.UID,
+		email:       deps.Email,
+		version:     deps.Version,
+		activeSpace: deps.CurrentSpace,
+		commands:    map[string]command{},
 	}
 	// Registration order is the order /help and the palette list the commands.
 	p.register(command{name: cmdSpaces, summary: "list your spaces", handle: p.spacesCmd})
@@ -172,6 +191,46 @@ func (p *processor) Commands() []CommandInfo {
 		out = append(out, CommandInfo{Name: c.name, Summary: c.summary, Arg: c.arg})
 	}
 	return out
+}
+
+// activeSpaceID reads activeSpace under spaceMu (S1: see the field's doc
+// comment).
+func (p *processor) activeSpaceID() string {
+	p.spaceMu.RLock()
+	defer p.spaceMu.RUnlock()
+	return p.activeSpace
+}
+
+// setActiveSpace writes activeSpace under spaceMu.
+func (p *processor) setActiveSpace(id string) {
+	p.spaceMu.Lock()
+	p.activeSpace = id
+	p.spaceMu.Unlock()
+}
+
+// listedSpace reads one entry of listedSpaces under spaceMu.
+func (p *processor) listedSpace(id string) (any, bool) {
+	p.spaceMu.RLock()
+	defer p.spaceMu.RUnlock()
+	brief, ok := p.listedSpaces[id]
+	return brief, ok
+}
+
+// listedSpacesSnapshot returns the current listedSpaces map under spaceMu.
+// The map itself is only ever replaced wholesale by setListedSpaces (never
+// mutated in place), so handing back the live map here is safe -- a caller
+// never sees a half-written map, only the most recent complete one.
+func (p *processor) listedSpacesSnapshot() map[string]any {
+	p.spaceMu.RLock()
+	defer p.spaceMu.RUnlock()
+	return p.listedSpaces
+}
+
+// setListedSpaces replaces listedSpaces wholesale under spaceMu.
+func (p *processor) setListedSpaces(spaces map[string]any) {
+	p.spaceMu.Lock()
+	p.listedSpaces = spaces
+	p.spaceMu.Unlock()
 }
 
 // register adds a command to the routing table and to /help's listing.
@@ -275,14 +334,18 @@ func commandArg(text string) string {
 	return ""
 }
 
+// ActiveSpace implements Processor.
+func (p *processor) ActiveSpace() string { return p.activeSpaceID() }
+
 // spaceCmd reports the active space, or that none is chosen yet
 // (REQ: space-command). It is the only way to see the active space after the
 // one line that names it when it is picked.
 func (p *processor) spaceCmd(ctx context.Context, _ string) ([]Reply, error) {
-	if p.activeSpace == "" {
+	active := p.activeSpaceID()
+	if active == "" {
 		return []Reply{{Text: "No space is selected. Use /spaces to pick one."}}, nil
 	}
-	label, err := p.spaceLabelByID(ctx, p.activeSpace)
+	label, err := p.spaceLabelByID(ctx, active)
 	if err != nil {
 		return nil, err
 	}
@@ -347,10 +410,11 @@ func (p *processor) contactsCmd(ctx context.Context, arg string) ([]Reply, error
 // reading the spaces failed.
 func (p *processor) resolveSpace(ctx context.Context, arg string) (id string, reply *Reply, err error) {
 	if arg == "" {
-		if p.activeSpace == "" {
+		active := p.activeSpaceID()
+		if active == "" {
 			return "", &Reply{Text: "No space is selected. Use /spaces to pick one, or name one: /contacts <space>."}, nil
 		}
-		return p.activeSpace, nil, nil
+		return active, nil, nil
 	}
 
 	spaces, err := p.spaces.ListSpaces(ctx, p.uid)
@@ -390,7 +454,7 @@ func (p *processor) spaceLabelByID(ctx context.Context, id string) (string, erro
 	// Prefer the last listing: the active space is set by a press, which drew
 	// from it, so its label is usually already in hand and /space needs no
 	// fetch. Fall back to a read only when it is not.
-	if brief, ok := p.listedSpaces[id]; ok {
+	if brief, ok := p.listedSpace(id); ok {
 		return spaceLabel(brief, id), nil
 	}
 	spaces, err := p.spaces.ListSpaces(ctx, p.uid)
@@ -429,7 +493,7 @@ func (p *processor) spacesCmd(ctx context.Context, _ string) ([]Reply, error) {
 	// Remember what was listed: a press resolves against this rather than
 	// fetching again, since the button pressed is built from exactly this map
 	// (REQ: active-space-selection).
-	p.listedSpaces = spaces
+	p.setListedSpaces(spaces)
 	return p.spacesList(spaces, false)
 }
 
@@ -437,7 +501,7 @@ func (p *processor) spacesCmd(ctx context.Context, _ string) ([]Reply, error) {
 // card's ← Spaces button. It reuses the last listing rather than fetching, since
 // the buttons that reach it were drawn from it.
 func (p *processor) spacesListCard() ([]Reply, error) {
-	return p.spacesList(p.listedSpaces, true)
+	return p.spacesList(p.listedSpacesSnapshot(), true)
 }
 
 // spacesList builds the spaces list reply. edit marks it as a card re-render
@@ -483,13 +547,13 @@ func (p *processor) spaceCard(id string) ([]Reply, error) {
 	// Resolved against the last listing, not a fresh fetch: the button pressed
 	// was drawn from exactly this map, so opening the card is instant
 	// (REQ: active-space-selection).
-	brief, ok := p.listedSpaces[id]
+	brief, ok := p.listedSpace(id)
 	if !ok {
 		return nil, fmt.Errorf("space %q was not among the spaces last listed", id)
 	}
 	// Assigned only past the lookup: an unknown id must leave the previously
 	// active space standing.
-	p.activeSpace = id
+	p.setActiveSpace(id)
 	label := spaceLabel(brief, id)
 
 	contactsData, err := encodeCallbackData(cbContacts, url.Values{cbArgSpace: {id}})
@@ -523,7 +587,7 @@ func (p *processor) contactsCard(ctx context.Context, spaceID string) ([]Reply, 
 		return nil, fmt.Errorf("failed to list contacts: %w", err)
 	}
 	label := "this space"
-	if brief, ok := p.listedSpaces[spaceID]; ok {
+	if brief, ok := p.listedSpace(spaceID); ok {
 		label = spaceLabel(brief, spaceID)
 	}
 

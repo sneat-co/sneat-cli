@@ -16,6 +16,7 @@ require (
 	github.com/dal-go/record v0.1.3
 	github.com/sneat-co/calendarius/backend v0.10.1
 	github.com/sneat-co/contactus/backend v0.3.6
+	github.com/sneat-co/listus/backend v0.1.14
 	github.com/sneat-co/sneat-ai-backend v0.0.6
 	github.com/sneat-co/sneat-bots v0.30.26
 	github.com/sneat-co/sneat-core-modules v0.73.0
@@ -23,6 +24,7 @@ require (
 	github.com/sneat-co/sneat-go-core v0.69.0
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
+	github.com/strongo/aichat v0.0.3
 	github.com/strongo/buildinfo v0.2.1
 	github.com/strongo/deviceauth v0.1.0
 	github.com/strongo/strongoapp v0.31.58
@@ -61,6 +63,7 @@ require (
 	github.com/crediterra/money v0.4.0 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/evertras/bubble-table v0.23.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -81,7 +84,6 @@ require (
 	github.com/sahilm/fuzzy v0.1.3 // indirect
 	github.com/sneat-co/assetus/backend v0.8.2 // indirect
 	github.com/sneat-co/commitius/backend v0.8.0 // indirect
-	github.com/sneat-co/listus/backend v0.1.14 // indirect
 	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.6 // indirect
 	github.com/sneat-co/sneat-ext-contracts/listus v0.0.6 // indirect
 	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.1 // indirect
@@ -109,6 +111,7 @@ require (
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
