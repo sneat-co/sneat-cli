@@ -304,7 +304,7 @@ func TestDynamicBlocks_TodoContextIncludesBuyList_NotDoneFirst(t *testing.T) {
 	if callIdx < 0 || milkIdx < 0 || reportIdx < 0 || eggsIdx < 0 {
 		t.Fatalf("todo context missing an item: %q", block.Text)
 	}
-	if !(callIdx < reportIdx && milkIdx < reportIdx && callIdx < eggsIdx && milkIdx < eggsIdx) {
+	if callIdx >= reportIdx || milkIdx >= reportIdx || callIdx >= eggsIdx || milkIdx >= eggsIdx {
 		t.Fatalf("todo context = %q, want both not-done items before both done items", block.Text)
 	}
 }

@@ -219,8 +219,8 @@ func (e SneatExecutor) rescheduleHappening(ctx context.Context, spaceID string, 
 	// Start/End) would silently drop TimeZone/UTCOffset/DurationInMinutes.
 	slot := *current.Slot
 	newTiming := dateTimeOf(newStart, newEnd)
-	slot.Timing.Start = newTiming.Start
-	slot.Timing.End = newTiming.End
+	slot.Start = newTiming.Start
+	slot.End = newTiming.End
 	// m4: an UTCOffset (as opposed to a named TimeZone) is only valid for
 	// the specific instant it was recorded at -- moving the slot to a new
 	// time (a different day, possibly across a DST transition) makes a
@@ -230,11 +230,11 @@ func (e SneatExecutor) rescheduleHappening(ctx context.Context, spaceID string, 
 	// user-zone fallback), rather than leaving the old slot's offset
 	// untouched. A named TimeZone needs no such fix -- it is recomputed by
 	// the receiving system from the zone name plus the new date/time.
-	if slot.Timing.UTCOffset != "" {
-		slot.Timing.UTCOffset = utcOffsetString(newStart)
+	if slot.UTCOffset != "" {
+		slot.UTCOffset = utcOffsetString(newStart)
 	}
-	if slot.Timing.EndUTCOffset != "" || (slot.Timing.UTCOffset != "" && !newEnd.IsZero()) {
-		slot.Timing.EndUTCOffset = utcOffsetString(newEnd)
+	if slot.EndUTCOffset != "" || (slot.UTCOffset != "" && !newEnd.IsZero()) {
+		slot.EndUTCOffset = utcOffsetString(newEnd)
 	}
 
 	happeningReq := dto4calendarius.HappeningRequest{

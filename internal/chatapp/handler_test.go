@@ -262,10 +262,10 @@ func TestChatshell_ExplainFreeForm_StreamsThroughLLM(t *testing.T) {
 	m, cmd := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = drain(m, cmd, 6)
 	for _, r := range "explain this app" {
-		m, cmd = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+		m, _ = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
 	}
 	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = drain(m, cmd, 6) // enough for Submit's work + StartStream's own kickoff, not a full real-time spinner drain
+	_ = drain(m, cmd, 6) // enough for Submit's work + StartStream's own kickoff, not a full real-time spinner drain; result unused, only h.* below is checked
 
 	if h.splitters == nil {
 		t.Fatal("expected startLLMStream to have registered a splitter for the in-flight stream")
@@ -1047,7 +1047,7 @@ func TestChatshell_Scenario4_AmbiguousReference_ThroughNaturalLanguageLLM(t *tes
 	// Not one of sneat-rules' fixed help phrases, and not shaped like any
 	// deterministic reschedule phrasing -- must fall through to NeedsLLM.
 	for _, r := range "please sort out my dentist thing" {
-		m, cmd = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+		m, _ = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
 	}
 	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = drain(m, cmd, 40)
@@ -1101,7 +1101,7 @@ func TestChatshell_Scenario5_MoveItToFriday_ThroughUI_FakeLLM(t *testing.T) {
 	m, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = drain(m, cmd, 6)
 	for _, r := range "move it to Friday" {
-		m, cmd = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+		m, _ = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
 	}
 	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = drain(m, cmd, 40)
@@ -1114,7 +1114,7 @@ func TestChatshell_Scenario5_MoveItToFriday_ThroughUI_FakeLLM(t *testing.T) {
 		t.Fatalf("a destructive action must not execute before confirmation: %+v", exec.Executed)
 	}
 
-	m = typeAndEnter(t, m, "yes")
+	_ = typeAndEnter(t, m, "yes") // result unused, only exec.Executed below is checked
 	if len(exec.Executed) != 1 || exec.Executed[0].Kind != sneatdomain.ModuleCalendar+"."+sneatdomain.IntentRescheduleHappening {
 		t.Fatalf("Executed = %+v, want exactly 1 reschedule after confirming", exec.Executed)
 	}
