@@ -2,20 +2,35 @@ package commands
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
-	"github.com/sneat-co/sneat-cli/internal/aichat/aiconfig"
+	"github.com/strongo/aichat/ai/aiconfig"
 )
+
+// aiConfigPath returns <UserConfigDir>/sneat/ai.yaml, or "" when the user
+// config directory cannot be determined -- aiconfig.Load treats a missing
+// file as "use defaults", never an error, so "" is a safe fallback too.
+func aiConfigPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "sneat", "ai.yaml")
+}
 
 // Chat is the top-level `sneat chat` — launches the interactive chat session.
 //
 // The ai-* flags configure the aichat MVP pipeline (internal/aichat): which
-// decision providers run (rules always; the Sneat AI Cloud/Jev provider
-// unless --no-jev) and which LLM answers (Sneat AI Cloud, or a BYOK
-// endpoint). They are read into internal/aichat/aiconfig.Overrides by
-// aiChatOverridesFromCmd; RunChat's composition root resolves them the same
-// flag>env>file>default way as every other sneat-cli config value.
+// decision providers run (the deterministic rules provider always; the
+// Sneat AI Cloud/Jev decision provider unless --no-jev) and which LLM
+// answers (Sneat AI Cloud, or a BYOK endpoint). aiChatOverridesFromCmd reads
+// them into an aiconfig.Config that RunChat's composition root feeds to
+// aiconfig.Build alongside aiconfig.Deps (EnvPrefix "SNEAT_", CloudBaseURL,
+// CloudToken, ExtraDecision: the rules provider, DisableCloudDecision:
+// --no-jev).
 func Chat(env Env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "chat",
@@ -27,23 +42,44 @@ func Chat(env Env) *cobra.Command {
 	cmd.Flags().String("byok-endpoint", "", "BYOK: the LLM API base URL")
 	cmd.Flags().String("byok-model", "", "BYOK: the model id")
 	cmd.Flags().String("byok-protocol", "", "BYOK: openai-compatible (default) or anthropic")
-	cmd.Flags().String("byok-api-key-env", "", "BYOK: env var holding the API key (default OPENAI_API_KEY / ANTHROPIC_API_KEY by protocol)")
+	cmd.Flags().String("byok-api-key-env", "", "BYOK: env var holding the API key")
 	return cmd
 }
 
-// aiChatOverridesFromCmd reads the ai-* flags into aiconfig.Overrides.
-func aiChatOverridesFromCmd(cmd *cobra.Command) aiconfig.Overrides {
-	noJev, _ := cmd.Flags().GetBool("no-jev")
-	llm, _ := cmd.Flags().GetString("ai-llm")
-	endpoint, _ := cmd.Flags().GetString("byok-endpoint")
-	model, _ := cmd.Flags().GetString("byok-model")
-	protocol, _ := cmd.Flags().GetString("byok-protocol")
-	apiKeyEnv, _ := cmd.Flags().GetString("byok-api-key-env")
-	return aiconfig.Overrides{
-		NoJev: noJev, NoJevSet: cmd.Flags().Changed("no-jev"),
-		LLM: llm, BYOKEndpoint: endpoint, BYOKModel: model,
-		BYOKProtocol: protocol, BYOKAPIKeyEnv: apiKeyEnv,
+// aiChatConfigFromCmd builds an aiconfig.Config from the ai-* flags layered
+// onto base (typically aiconfig.Load's result). Flags not passed leave
+// base's value (file/default) untouched; aiconfig.Build itself then layers
+// SNEAT_-prefixed env vars on top via aiconfig.Deps.EnvPrefix.
+func aiChatConfigFromCmd(cmd *cobra.Command, base aiconfig.Config) aiconfig.Config {
+	cfg := base
+	if v, _ := cmd.Flags().GetBool("no-jev"); v && cmd.Flags().Changed("no-jev") {
+		cfg.Decision.Provider = "disabled"
 	}
+	if v, _ := cmd.Flags().GetString("ai-llm"); v != "" {
+		cfg.LLM.Provider = v
+	}
+	if v, _ := cmd.Flags().GetString("byok-endpoint"); v != "" {
+		cfg.BYOK.Endpoint = v
+	}
+	if v, _ := cmd.Flags().GetString("byok-model"); v != "" {
+		cfg.BYOK.Model = v
+	}
+	if v, _ := cmd.Flags().GetString("byok-protocol"); v != "" {
+		cfg.BYOK.Protocol = v
+	}
+	if v, _ := cmd.Flags().GetString("byok-api-key-env"); v != "" {
+		cfg.BYOK.APIKeyEnv = v
+	}
+	return cfg
+}
+
+// noJevFromCmd reports whether --no-jev was passed, for
+// aiconfig.Deps.DisableCloudDecision (kept separate from
+// aiChatConfigFromCmd's Decision.Provider="disabled" so the flag's intent is
+// unambiguous even if a product config file also sets decision.provider).
+func noJevFromCmd(cmd *cobra.Command) bool {
+	v, _ := cmd.Flags().GetBool("no-jev")
+	return v && cmd.Flags().Changed("no-jev")
 }
 
 // runChat checks the startup preconditions — a terminal and a signed-in
@@ -67,5 +103,13 @@ func runChat(env Env, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	return env.RunChat(spaces, contacts, sess.UID, sess.Email)
+	aiBase, err := aiconfig.Load(aiConfigPath())
+	if err != nil {
+		return err
+	}
+	aiCfg := aiChatConfigFromCmd(cmd, aiBase)
+	return env.RunChat(RunChatArgs{
+		Spaces: spaces, Contacts: contacts, UID: sess.UID, Email: sess.Email,
+		AIConfig: aiCfg, NoJev: noJevFromCmd(cmd), Cfg: cfg,
+	})
 }

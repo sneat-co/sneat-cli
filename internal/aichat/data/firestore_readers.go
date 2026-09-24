@@ -89,8 +89,8 @@ func (r *firestoreHappenings) list(ctx context.Context, spaceID string) ([]calen
 // date+time as separate strings; this MVP slice treats them as UTC, which is
 // wrong for a user in another timezone -- a follow-up, not silently ignored:
 // see the final report).
-func firstSlotWindow(h calendariusdbo.HappeningDbo) (start, end time.Time, recurring bool) {
-	for _, slot := range h.Slots {
+func firstSlotWindow(h calendariusdbo.HappeningDbo) (start, end time.Time, slotID string, recurring bool) {
+	for id, slot := range h.Slots {
 		if slot == nil {
 			continue
 		}
@@ -101,6 +101,7 @@ func firstSlotWindow(h calendariusdbo.HappeningDbo) (start, end time.Time, recur
 		}
 		if start.IsZero() || st.Before(start) {
 			start = st
+			slotID = id
 			if slot.End.Time != "" {
 				if et, eErr := time.Parse("2006-01-02 15:04", slot.End.Date+" "+slot.End.Time); eErr == nil {
 					end = et
@@ -108,12 +109,12 @@ func firstSlotWindow(h calendariusdbo.HappeningDbo) (start, end time.Time, recur
 			}
 		}
 	}
-	return start, end, recurring
+	return start, end, slotID, recurring
 }
 
 func toHappening(spaceID, id string, h calendariusdbo.HappeningDbo) Happening {
-	start, end, recurring := firstSlotWindow(h)
-	return Happening{ID: id, SpaceID: spaceID, Title: h.Title, Start: start, End: end, Recurring: recurring}
+	start, end, slotID, recurring := firstSlotWindow(h)
+	return Happening{ID: id, SpaceID: spaceID, Title: h.Title, Start: start, End: end, SlotID: slotID, Recurring: recurring}
 }
 
 func (r *firestoreHappenings) Window(ctx context.Context, spaceID string, from, to time.Time) ([]Happening, error) {

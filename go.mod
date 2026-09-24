@@ -24,7 +24,7 @@ require (
 	github.com/sneat-co/sneat-go-core v0.69.0
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/aichat v0.0.0-20260924091342-6a10e3ea2f06
+	github.com/strongo/aichat v0.0.0-20260924094100-65b0522162d4
 	github.com/strongo/buildinfo v0.2.1
 	github.com/strongo/deviceauth v0.1.0
 	github.com/strongo/strongoapp v0.31.58
@@ -110,6 +110,7 @@ require (
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/net v0.58.0 // indirect

@@ -12,6 +12,7 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/session"
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/spf13/cobra"
+	"github.com/strongo/aichat/ai/aiconfig"
 )
 
 // SessionStore persists the authenticated session.
@@ -60,9 +61,37 @@ type Env struct {
 	RunContactForm func(*contactInput) error
 	// RunTUI launches the interactive terminal UI.
 	RunTUI func(spaces SpacesReader, contacts ContactsReader, deleter ContactDeleter, uid string) error
-	// RunChat launches the interactive chat session. It is the composition root:
-	// it builds the concrete chat processor from the reader and uid.
-	RunChat func(spaces SpacesReader, contacts ContactsReader, uid, email string) error
+	// RunChat launches the interactive chat session. It is the composition
+	// root: it builds the concrete chat processor and the aichat pipeline
+	// (deterministic rules + decision chain + resolver + Context Manager +
+	// main LLM + tui/chatshell) from args.
+	RunChat func(args RunChatArgs) error
+}
+
+// RunChatArgs is what RunChat needs to build one chat session. It is a
+// struct rather than a growing parameter list because it already carries
+// both the existing slash-command dependencies (Spaces/Contacts/UID/Email)
+// and the aichat MVP pipeline's config (AIConfig/NoJev/Cfg); the concrete
+// readers, sneatapi client and token source RunChat's own implementation
+// builds itself, the same way it already built Spaces/Contacts from cfg
+// before this Feature.
+type RunChatArgs struct {
+	Spaces   SpacesReader
+	Contacts ContactsReader
+	UID      string
+	Email    string
+	// AIConfig is the resolved (flag > file) aichat configuration; RunChat's
+	// implementation still applies SNEAT_-prefixed env vars via
+	// aiconfig.Build's Deps.EnvPrefix.
+	AIConfig aiconfig.Config
+	// NoJev is --no-jev, kept separate from AIConfig.Decision.Provider so its
+	// intent survives even if a product config file also sets
+	// decision.provider (aiconfig.Deps.DisableCloudDecision).
+	NoJev bool
+	// Cfg is the resolved sneat-cli runtime config (API base URL, project,
+	// emulators, ...), for building the Firestore readers and sneatapi
+	// client RunChat's implementation needs beyond Spaces/Contacts.
+	Cfg config.Config
 }
 
 // ContactDeleter deletes a contact by space and id. It is the id-based view of

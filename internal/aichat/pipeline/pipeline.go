@@ -1,15 +1,8 @@
 // Package pipeline implements the sneat-chat MVP processing pipeline
 // (brief §5): deterministic handlers, then the decision chain, then entity
-// resolution, then either deterministic execution or a main-LLM turn.
-//
-// It deliberately stops short of the Context Manager / main-LLM leg: that
-// leg needs strongo/aichat's ai/ctxmgr package, which is still an empty stub
-// in the parallel aichat lane as of this slice (see the final report). What
-// this package does implement -- the deterministic chain, resolver, pending/
-// confirm/cancel/undo bookkeeping, and the <sneat-action> splitter a main-LLM
-// answer will eventually feed through HandleAction -- does not depend on it,
-// so `--no-jev` behaviour and every deterministic scenario already work
-// end-to-end.
+// resolution, then either deterministic execution or a main-LLM turn
+// (llm.go: static+dynamic context via ai/ctxmgr, streaming via an
+// ai.LLMProvider, and the <sneat-action> Splitter).
 package pipeline
 
 import (
@@ -17,6 +10,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/strongo/aichat/ai"
+	"github.com/strongo/aichat/ai/ctxmgr"
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
 
@@ -53,6 +48,16 @@ type Pipeline struct {
 	Now func() time.Time
 	// TZ is the IANA timezone "today"/"this week" resolve in.
 	TZ string
+	// LLM answers a turn the deterministic chain could not (NeedsLLM). Nil
+	// means "no main LLM configured" -- Stream reports that as an error
+	// rather than panicking.
+	LLM ai.LLMProvider
+	// CtxMgr selects which static/dynamic context blocks go into an LLM
+	// request (see llm.go/StreamRequest). Nil sends every available block
+	// uncompacted -- fine for tests, not for a long-running session.
+	CtxMgr *ctxmgr.Manager
+	// Product identifies the consuming product ("sneat") in ai.ChatRequest.
+	Product string
 }
 
 // Turn runs the deterministic chain against text and answers, or reports

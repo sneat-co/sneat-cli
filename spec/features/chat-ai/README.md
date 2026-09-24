@@ -11,7 +11,7 @@ status: Draft
 
 ## Summary
 
-`internal/aichat` is the sneat-chat MVP's AI processing pipeline: Sneat's decision taxonomy and deterministic rules on top of `strongo/aichat`'s shared `LLMProvider`/`DecisionProvider` contracts, entity resolution against real Firestore/API data, pending-confirmation and undo bookkeeping, the `<sneat-action>` stream-splitter convention for a main-LLM turn, and flag/env/file configuration for Sneat AI Cloud and BYOK. It is consumed by `cmd/sneat/commands/chat.go` today only for flag plumbing; running it against the interactive shell is out of scope for this artifact (see Out of Scope).
+`internal/aichat` is the sneat-chat MVP's AI processing pipeline: Sneat's decision taxonomy and deterministic rules on top of `strongo/aichat`'s shared `LLMProvider`/`DecisionProvider`/`ai/aiconfig`/`ai/ctxmgr`/`ai/diag` contracts, entity resolution against real Firestore/API data, pending-confirmation and undo bookkeeping via real sneat-go HTTP mutations (calendarius/listus), the `<sneat-action>` stream-splitter convention for a main-LLM turn, and flag/env/file configuration for Sneat AI Cloud and BYOK. `internal/chatapp` (the `tui/chatshell` composition root that runs `sneat chat` through this pipeline) is implemented and tested but not yet wired into `cmd/sneat/main.go` -- see Out of Scope.
 
 ## Problem
 
@@ -65,11 +65,17 @@ An executed action whose `Executor.Execute` returns a non-nil undo action MUST b
 
 #### REQ: no-jev-still-works
 
-`aiconfig.Config.NoJev` (flag `--no-jev`, env `SNEAT_AI_LLM`/file `ai.decision.provider: disabled`) MUST remove only the cloud decision provider from the chain; the deterministic rules provider MUST remain, so every deterministic scenario keeps working with Jev disabled, unavailable, or never configured.
+`--no-jev` (mapped by `cmd/sneat/commands/chat.go` onto `aiconfig.Config.Decision.Provider = "disabled"`, and passed independently as `aiconfig.Deps.DisableCloudDecision`) MUST remove only the cloud decision provider from the chain; the deterministic rules provider (`aiconfig.Deps.ExtraDecision`) MUST remain, so every deterministic scenario keeps working with Jev disabled, unavailable, or never configured.
 
 #### REQ: byok-independent-of-decision
 
-`aiconfig.Build` MUST be able to select a BYOK main-LLM provider (`--ai-llm byok`, `--byok-protocol openai-compatible|anthropic`, `--byok-endpoint`, `--byok-model`, `--byok-api-key-env`, defaulting to `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` by protocol) independently of whether the cloud decision provider is in the chain, so a user may use Sneat AI Cloud for Jev while answering with their own key.
+`aiconfig.Build` MUST be able to select a BYOK main-LLM provider (`--ai-llm byok`, `--byok-protocol openai-compatible|anthropic`, `--byok-endpoint`, `--byok-model`, `--byok-api-key-env`) independently of whether the cloud decision provider is in the chain, so a user may use Sneat AI Cloud for Jev while answering with their own key.
+
+### Mutations
+
+#### REQ: mutations-via-sneat-go-http
+
+Every action `pipeline.SneatExecutor` executes MUST go through a sneat-go HTTP endpoint (calendarius's `update_slot`/`cancel_happening`/`revoke_happening_cancellation`, listus's `list_items_create`/`list_items_set_is_done`/`list_items_delete`, via `internal/sneatapi`) and MUST NOT write Firestore directly. Reschedule and cancel-happening actions MUST read the happening's current state first (for the slot's duration and to build the undo action) rather than trusting the resolved reference's cached Title/Keys alone.
 
 ## Acceptance Criteria
 
@@ -105,19 +111,28 @@ An executed action whose `Executor.Execute` returns a non-nil undo action MUST b
 **When** the stream is fed through `Splitter.Feed` and finished with `Splitter.Finish`
 **Then** the visible text excludes the block entirely and the action parses correctly
 
+### AC: mutations-are-http-and-confirmed
+
+**Requirements:** chat-ai#req:mutations-via-sneat-go-http, chat-ai#req:destructive-actions-confirm
+
+**Given** a resolved reschedule, cancel, complete/reopen, add, or delete action
+**When** it executes
+**Then** `SneatExecutor` sends exactly the expected sneat-go HTTP request (method, path, body) and never touches Firestore directly
+
 ## Out of Scope
 
-Deferred to follow-on work, in dependency order:
+Deferred to follow-on work:
 
-- **The interactive chatshell cutover.** `strongo/aichat`'s `tui/chatshell`, `tui/grid`, `tui/transcript`, `tui/sidebar` and `tui/focus` packages landed in the parallel `aichat-tui` lane during this slice, but wiring `sneat chat` to run the pipeline through them — replacing `internal/chattui`, building the semantic control renderers (`HappeningCard`, `DayCalendar`, `WeekCalendar`, `HappeningsList`, `TodoList`, `BuyList`, `ContactCard`, `ContactsGrid` over `tui/grid`), and the sidebar/focus keyboard — is not done. `chat-messenger#req:free-text-deferred` and `chat-tui` remain accurate until that cutover lands; this Feature does not change their status.
-- **The main-LLM leg's Context Manager.** `strongo/aichat/ai/ctxmgr` was still an empty stub in the parallel `aichat-ai` lane as of this slice, so `Pipeline.Turn`'s `NeedsLLM = true` outcome is not yet wired to an actual LLM call with static/dynamic context selection — only `HandleAction` (a main LLM's `<sneat-action>` block) is implemented, ready for whatever builds the prompt around it.
-- **Sneat AI Cloud / BYOK end-to-end verification.** `aiconfig.Build` assembles `ai/cloud.Client` and the BYOK adapters correctly per their tested contracts, but was not run against a live `api.sneat.cloud` or a real OpenAI-compatible/Anthropic endpoint in this slice (see the implementation report's scenario coverage).
-- **Firestore-backed happenings/todos readers' collection paths.** `internal/aichat/data`'s `firestoreHappenings`/`firestoreTodos` mirror `internal/firestoredb`'s existing contact-reading convention but were not verified against a live or emulated space.
+- **The `tui/chatshell` cutover and structured controls.** A composition root (`internal/chatapp`) that runs this pipeline through `strongo/aichat`'s `tui/chatshell.Model` -- slash commands still routed to the existing `chat.Processor`, presentations rendered as `tui/transcript.Block` values (`controls.ListBlock`/`controls.CardBlock`, `ContactsGrid` reusing `tui/grid` directly rather than a competing grid) -- is fully implemented and was validated (build, `go vet`, `go test -race`, plus headless `chatshell.Model.Update` tests driving MVP scenarios 2 and 13 with no real terminal) against a merged local view of the `aichat-ai` and `aichat-tui` branches. It is **not wired into `cmd/sneat/main.go`'s `RunChat` in this commit**: `tui/chatshell`, `tui/grid` and `tui/transcript` exist only on the unmerged `aichat-tui` branch, `go.mod` can pin only one branch of that module, and this repo's pre-commit hook correctly refuses a build that does not resolve without an ambient `GOWORK`. `sneat chat` still runs `internal/chattui` (undeleted) until the coordinator merges `aichat-ai`+`aichat-tui`; see the implementation report for exactly what restores the cutover once that pin is available.
+- **The main-LLM leg's live network verification.** `pipeline.StreamRequest`/`Stream` are exercised against real `ai/openaicompat` and `ai/cloud` providers over `httptest` (scenarios 11/12). A real OpenAI-compatible/Anthropic endpoint or a live `api.sneat.cloud` was not used.
+- **Firestore-backed happenings/todos/contacts readers' collection paths.** `internal/aichat/data`'s Firestore readers mirror `internal/firestoredb`'s existing contact-reading convention and are unit-tested against real `dbo4calendarius`/`dbo4listus` structs, but the collection PATH itself was not verified against a live or emulated space.
 - **Recurring happening occurrence expansion.** `HappeningsReader` returns a recurring happening's stored template slot, not a resolved next-occurrence; see `internal/aichat/data`'s doc comment.
+- **Timezone handling.** `internal/aichat/data`'s slot date/time parsing and `pipeline.parseWhen` treat calendarius's date+time strings as the server's local `time.Location`, not the space's own stored timezone.
+- **A `/space` picker for the aichat pipeline.** The (currently unwired) `chatapp.defaultSpaceID` picks an arbitrary one of the user's spaces (Go map iteration order); it does not read or drive the existing `/space`/`/spaces` active-space selection the slash-command Processor already has.
 
 ## Open Questions
 
-- Should `aiconfig.Build`'s chain include an `llmdecider.Decider` (a single-inference LLM decision fallback) between the rules provider and the main-LLM leg, or is `NeedsLLM` sufficient once the Context Manager exists? Deferred until `ai/ctxmgr` lands.
+None at this time.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

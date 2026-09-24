@@ -24,6 +24,11 @@ type Happening struct {
 	Title   string
 	Start   time.Time
 	End     time.Time
+	// SlotID is the calendarius slot this Start/End came from -- required to
+	// target a mutation (update_slot/adjust_slot/cancel_happening's slotID)
+	// at the right slot of a multi-slot happening. Empty when the happening
+	// has no slots.
+	SlotID string
 	// Recurring is true when the source happening repeats; such happenings are
 	// still returned (for listing) but Start/End are its stored template slot,
 	// not a resolved next-occurrence -- callers must not treat it as "the next

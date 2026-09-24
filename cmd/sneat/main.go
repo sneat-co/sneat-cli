@@ -106,15 +106,24 @@ func main() {
 		RunTUI: func(spaces commands.SpacesReader, contacts commands.ContactsReader, deleter commands.ContactDeleter, uid string) error {
 			return tui.Run(spaces, contacts, deleter, uid)
 		},
-		// RunChat is the chat session's composition root: the one place that
-		// builds a concrete processor and hands the renderer only the
-		// chat.Processor interface (chat-messenger#req:processor-seam).
-		RunChat: func(spaces commands.SpacesReader, contacts commands.ContactsReader, uid, email string) error {
+		// RunChat is the chat session's composition root.
+		//
+		// KNOWN GAP, see the implementation report: internal/chatapp (the
+		// tui/chatshell cutover that runs args.AIConfig/args.NoJev through
+		// the aichat MVP pipeline) is fully implemented and tested but not
+		// wired in HERE, because it imports strongo/aichat's tui/chatshell,
+		// tui/grid and tui/transcript packages, which as of this commit live
+		// only on the unmerged aichat-tui branch -- go.mod can pin only one
+		// branch of that module, and this repo's pre-commit hook correctly
+		// refuses a build that cannot resolve without an ambient GOWORK. See
+		// the report for the exact file this wiring restores once the
+		// coordinator merges aichat-ai and aichat-tui.
+		RunChat: func(args commands.RunChatArgs) error {
 			return chattui.Run(chat.NewProcessor(chat.Deps{
-				Spaces:   spaces,
-				Contacts: chatContacts{contacts},
-				UID:      uid,
-				Email:    email,
+				Spaces:   args.Spaces,
+				Contacts: chatContacts{args.Contacts},
+				UID:      args.UID,
+				Email:    args.Email,
 				Version:  info.Version,
 			}))
 		},
