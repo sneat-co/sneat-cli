@@ -32,6 +32,16 @@ type Item struct {
 	Ref      session.EntityRef
 }
 
+// ItemActivatedMsg is emitted when Enter is pressed over a ListBlock's
+// cursor item -- the ListBlock counterpart of tui/grid's RowActivatedMsg.
+// internal/chatapp's handler.OnMsg (a chatshell.MsgHandler) focuses the
+// entity on it, the same way it already focuses a grid.RowActivatedMsg's
+// row: a real, UI-driven way to set session.State.Focused (brief §4/§18
+// scenario 5), rather than a test or product calling state.Focus directly.
+type ItemActivatedMsg struct {
+	Ref session.EntityRef
+}
+
 // ListBlock renders a chronological/enumerated list of Items -- the shared
 // shape behind DayCalendar, WeekCalendar, HappeningsList, TodoList and
 // BuyList (they differ only in Heading and how Items was built, not in how
@@ -80,6 +90,12 @@ func (b *ListBlock) Update(msg tea.Msg) (transcript.Block, tea.Cmd) {
 		// to the working-context sidebar (brief §4/§18 scenario 8).
 		if ref := b.Current(); ref != nil {
 			return b, func() tea.Msg { return tui.AddToSidebarMsg{Ref: *ref} }
+		}
+	case "enter":
+		// Same convention as tui/grid's Enter/RowActivatedMsg: focus the
+		// entity under the cursor (brief §4/§18 scenario 5).
+		if ref := b.Current(); ref != nil {
+			return b, func() tea.Msg { return ItemActivatedMsg{Ref: *ref} }
 		}
 	}
 	return b, nil

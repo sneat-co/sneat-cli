@@ -187,6 +187,10 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 			h.state.Focus(m.Row.Ref)
 		}
 		return nil
+	case controls.ItemActivatedMsg:
+		ref := m.Ref
+		h.state.Focus(&ref)
+		return nil
 	}
 	return nil
 }

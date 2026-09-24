@@ -19,6 +19,15 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/chat"
 )
 
+// pressKey is a single non-printable/chorded key press (e.g. "shift+up",
+// "enter", "+") driven through the real chatshell.Model.Update, draining any
+// resulting tea.Cmd the same way typeAndEnter does for typed text.
+func pressKey(m tea.Model, key tea.KeyPressMsg) tea.Model {
+	var cmd tea.Cmd
+	m, cmd = m.Update(key)
+	return drain(m, cmd, 10)
+}
+
 type fakeSpaces struct{}
 
 func (fakeSpaces) ListSpaces(context.Context, string) (map[string]any, error) {
@@ -81,6 +90,35 @@ func typeAndEnter(t *testing.T, m tea.Model, text string) tea.Model {
 	return drain(m, cmd, 40)
 }
 
+// slowCmdBudget bounds how long drain waits for any single tea.Cmd before
+// giving up on it (m13: chatapp tests must not carry real sleeps). Bubble
+// Tea's own textarea cursor blink and chatshell's busy spinner are real
+// wall-clock timers (cursor.Model.Blink() blocks on a context timeout,
+// spinner.Tick fires on its FPS interval) that re-arm themselves
+// indefinitely while focused/busy; run for real, an unbounded drain of them
+// dominates every keystroke's test time. Dropping a cmd that does not
+// resolve within the budget is safe here: this harness never asserts on
+// cursor-blink or spinner-tick state, only on the transcript/session
+// content those keys produced synchronously.
+const slowCmdBudget = 5 * time.Millisecond
+
+// runCmd runs cmd with slowCmdBudget, returning nil (and abandoning cmd's
+// goroutine -- harmless, it sends to a buffered channel of size 1) if it has
+// not produced a Msg within the budget.
+func runCmd(cmd tea.Cmd) tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	ch := make(chan tea.Msg, 1)
+	go func() { ch <- cmd() }()
+	select {
+	case msg := <-ch:
+		return msg
+	case <-time.After(slowCmdBudget):
+		return nil
+	}
+}
+
 // drain is a headless stand-in for tea.Program's event loop: it maintains a
 // queue of pending commands (seeded with cmd), runs each one, and feeds the
 // resulting Msg back into Update -- expanding a tea.BatchMsg into its
@@ -95,7 +133,7 @@ func drain(m tea.Model, cmd tea.Cmd, maxSteps int) tea.Model {
 		if cmd == nil {
 			continue
 		}
-		msg := cmd()
+		msg := runCmd(cmd)
 		if msg == nil {
 			continue
 		}
@@ -160,13 +198,18 @@ func TestFocusedScopes(t *testing.T) {
 
 // TestChatshell_FocusThenPronounAction_ResolvesConfirmsAndUndoes is the
 // scenario-5 chatshell-level test: "focus a happening, then 'move it to
-// Friday' -> use session context." A real LLM is not configured in this
-// test harness (see internal/aichat/pipeline's TestStream_* for that leg
-// tested against real providers), so this drives the SAME path chatshell's
-// own StreamObserver would drive once a stream completes with a
-// <sneat-action> block -- h.pipeline.HandleAction with Pronoun:true -- and
-// then confirms/executes through the real chatshell.Model exactly as a user
-// would type "yes".
+// Friday' -> use session context." Focus itself is driven entirely through
+// real chatshell.Model.Update keys -- Shift+Up into the transcript's
+// DayCalendar block, then Enter over its (only) item, which the block emits
+// as controls.ItemActivatedMsg and handler.OnMsg turns into state.Focus, the
+// same way a grid row's Enter already does (see OnMsg's grid.RowActivatedMsg
+// case) -- never a direct h.state.Focus call from the test. A real LLM is
+// not configured in this test harness (see internal/aichat/pipeline's
+// TestStream_* for that leg tested against real providers), so the action
+// itself still drives the SAME path chatshell's own StreamObserver would
+// drive once a stream completes with a <sneat-action> block --
+// h.pipeline.HandleAction with Pronoun:true -- and then confirms/executes
+// through the real chatshell.Model exactly as a user would type "yes".
 func TestChatshell_FocusThenPronounAction_ResolvesConfirmsAndUndoes(t *testing.T) {
 	h, model := testHandler(t)
 	exec := &pipeline.FakeExecutor{Undo: map[string]*session.Action{
@@ -174,9 +217,12 @@ func TestChatshell_FocusThenPronounAction_ResolvesConfirmsAndUndoes(t *testing.T
 	}}
 	h.pipeline.Executor = exec
 
-	focused := session.EntityRef{Type: sneatdomain.EntityHappening, Title: "Team standup",
-		Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
-	h.state.Focus(&focused)
+	m := typeAndEnter(t, model, "show my calendar today")
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})   // Shift+Up: focus the DayCalendar block
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})                  // Enter: activate its (only) item
+	if h.state.Focused == nil || h.state.Focused.Keys["happeningID"] != "h1" {
+		t.Fatalf("Enter over the block's item did not focus it via OnMsg: %+v", h.state.Focused)
+	}
 
 	out, err := h.pipeline.HandleAction(h.ctx, pipeline.Action{
 		Kind: "calendar.reschedule_happening", Pronoun: true, Slots: map[string]string{"when": "Friday 16:00"},
@@ -192,9 +238,11 @@ func TestChatshell_FocusThenPronounAction_ResolvesConfirmsAndUndoes(t *testing.T
 		t.Fatalf("view does not show the confirmation prompt:\n%s", h.model.View().Content)
 	}
 
-	// "yes" through the real UI confirms it -- the rules provider's
-	// confirmation rule only fires because state.Pending is set.
-	m := typeAndEnter(t, model, "yes")
+	// Return focus to the composer (Shift+Down past the last transcript
+	// stop), then "yes" through the real UI confirms it -- the rules
+	// provider's confirmation rule only fires because state.Pending is set.
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+	m = typeAndEnter(t, m, "yes")
 	if !strings.Contains(m.View().Content, "Done") {
 		t.Fatalf("view does not show confirmation, view:\n%s", m.View().Content)
 	}
@@ -245,18 +293,26 @@ func TestChatshell_ContactSearch_GridThenCard(t *testing.T) {
 // TestChatshell_PinToSidebar_ThenReferredToByPronoun is the scenario-8
 // chatshell-level test: adding an entity to the sidebar (as a card/grid's
 // "+ add to sidebar" would) makes it resolvable by a later pronoun even
-// after focus moves elsewhere.
+// after focus moves elsewhere. The pin itself is driven entirely through
+// real chatshell.Model.Update keys -- Shift+Up into the rendered TodoList
+// block, then "+" over its (only) item, which the block emits as
+// tui.AddToSidebarMsg exactly like tui/grid's own "+" -- never a direct
+// h.model.PinToSidebar call from the test.
 func TestChatshell_PinToSidebar_ThenReferredToByPronoun(t *testing.T) {
-	h, _ := testHandler(t)
+	h, model := testHandler(t)
 	h.pipeline.Readers.Todos = &data.FakeTodos{Items: []data.Todo{
 		{ID: "t1", SpaceID: "sp1", List: data.ListKindDo, Title: "Buy milk"},
 	}}
 	h.pipeline.Resolver = pipeline.Resolver{Readers: h.pipeline.Readers}
 
+	m := typeAndEnter(t, model, "my todos")
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift}) // Shift+Up: focus the TodoList block
+	m = pressKey(m, tea.KeyPressMsg{Text: "+", Code: '+'})               // "+": pin its (only) item to the sidebar
+	_ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+
 	pinned := session.EntityRef{Type: sneatdomain.EntityTodo, Title: "Buy milk", Keys: map[string]string{"spaceID": "sp1", "list": "do", "itemID": "t1"}}
-	h.model.PinToSidebar(pinned)
 	if len(h.state.Sidebar) != 1 || !h.state.Sidebar[0].Same(pinned) {
-		t.Fatalf("OnSidebarChange did not update session state: %+v", h.state.Sidebar)
+		t.Fatalf("\"+\" did not pin the item to the sidebar via OnSidebarChange: %+v", h.state.Sidebar)
 	}
 
 	// Nothing focused, nothing last-shown -- only the sidebar pin resolves
