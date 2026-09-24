@@ -15,11 +15,9 @@ import (
 	calendariusdbo "github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/sneat-co/listus/backend/dal4listus"
 	listusdbo "github.com/sneat-co/listus/backend/dbo4listus"
-	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/sneat-co/sneat-core-modules/spaceus/dbo4spaceus"
 	"github.com/sneat-co/sneat-go-core/coretypes"
-	"golang.org/x/oauth2"
 )
 
 // normalizeForSearch/containsFold back FindByTitle's case-insensitive
@@ -74,13 +72,15 @@ func newReaderOptions(opts []ReaderOption) readerOptions {
 	return o
 }
 
-// NewFirestoreHappenings builds a HappeningsReader over ONE lazily-opened,
-// reused Firestore client (m4) rather than a fresh client per call. See
-// WithLocation (S4) for the "user zone" a TimeZone/UTCOffset-less slot
-// decodes in.
-func NewFirestoreHappenings(cfg config.Config, ts oauth2.TokenSource, opts ...ReaderOption) HappeningsReader {
+// NewFirestoreHappenings builds a HappeningsReader over session, an
+// ALREADY-OWNED *firestoredb.Session (m6: "one Firestore client per chat
+// session shared by all three readers") -- the caller (internal/chatapp)
+// opens ONE Session and shares it across Happenings/Todos/Contacts, rather
+// than each reader opening its own client. See WithLocation (S4) for the
+// "user zone" a TimeZone/UTCOffset-less slot decodes in.
+func NewFirestoreHappenings(session *firestoredb.Session, opts ...ReaderOption) HappeningsReader {
 	o := newReaderOptions(opts)
-	return &firestoreHappenings{session: firestoredb.NewSession(cfg, ts), loc: o.loc}
+	return &firestoreHappenings{session: session, loc: o.loc}
 }
 
 // Close releases the reader's Firestore client, if one was ever opened.
@@ -283,10 +283,11 @@ type firestoreTodos struct {
 	session *firestoredb.Session
 }
 
-// NewFirestoreTodos builds a TodosReader over ONE lazily-opened, reused
-// Firestore client (m4) rather than a fresh client per call.
-func NewFirestoreTodos(cfg config.Config, ts oauth2.TokenSource) TodosReader {
-	return &firestoreTodos{session: firestoredb.NewSession(cfg, ts)}
+// NewFirestoreTodos builds a TodosReader over session, an ALREADY-OWNED
+// *firestoredb.Session shared with the other readers (m6; see
+// NewFirestoreHappenings's doc comment).
+func NewFirestoreTodos(session *firestoredb.Session) TodosReader {
+	return &firestoreTodos{session: session}
 }
 
 // Close releases the reader's Firestore client, if one was ever opened (see

@@ -3,9 +3,7 @@ package data
 import (
 	"context"
 
-	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
-	"golang.org/x/oauth2"
 )
 
 // firestoreContacts adapts internal/firestoredb.ContactsReader (this repo's
@@ -17,10 +15,11 @@ type firestoreContacts struct {
 	r *firestoredb.ContactsReader
 }
 
-// NewFirestoreContacts builds a ContactsReader over the existing
-// firestoredb.ContactsReader.
-func NewFirestoreContacts(cfg config.Config, ts oauth2.TokenSource) ContactsReader {
-	return &firestoreContacts{r: firestoredb.NewContactsReader(cfg, ts)}
+// NewFirestoreContacts builds a ContactsReader over session, an
+// ALREADY-OWNED *firestoredb.Session shared with the other readers (m6;
+// see NewFirestoreHappenings's doc comment in firestore_readers.go).
+func NewFirestoreContacts(session *firestoredb.Session) ContactsReader {
+	return &firestoreContacts{r: firestoredb.NewContactsReaderFromSession(session)}
 }
 
 // Close releases the reader's Firestore client, if one was ever opened

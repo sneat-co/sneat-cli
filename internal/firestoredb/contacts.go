@@ -22,10 +22,23 @@ type ContactsReader struct {
 	session *Session
 }
 
-// NewContactsReader builds a reader over ONE lazily-opened, reused Firestore
-// client (m4) rather than a fresh client per call.
+// NewContactsReader builds a reader over its OWN lazily-opened, reused
+// Firestore client (m4) rather than a fresh client per call. Kept for
+// existing single-reader callers (cmd/sneat/main.go); a caller building
+// several readers for one chat session (internal/aichat/data, via
+// internal/chatapp) should share ONE Session across all of them instead --
+// see NewContactsReaderFromSession (m6).
 func NewContactsReader(cfg config.Config, ts oauth2.TokenSource) *ContactsReader {
-	return &ContactsReader{session: NewSession(cfg, ts)}
+	return NewContactsReaderFromSession(NewSession(cfg, ts))
+}
+
+// NewContactsReaderFromSession builds a reader over an ALREADY-OWNED
+// Session (m6: "one Firestore client per chat session shared by all three
+// readers") -- the caller opens (and eventually closes) the Session once
+// and shares it across every reader built from it, instead of each reader
+// opening its own client.
+func NewContactsReaderFromSession(session *Session) *ContactsReader {
+	return &ContactsReader{session: session}
 }
 
 // Close releases the reader's Firestore client, if one was ever opened.

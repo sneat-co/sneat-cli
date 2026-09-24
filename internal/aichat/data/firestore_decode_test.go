@@ -8,6 +8,7 @@ import (
 	"github.com/sneat-co/listus/backend/const4listus"
 	listusdbo "github.com/sneat-co/listus/backend/dbo4listus"
 	"github.com/sneat-co/sneat-cli/internal/config"
+	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/sneat-co/sneat-go-core/coretypes"
 )
 
@@ -287,10 +288,49 @@ func TestNewFirestoreHappenings_WithLocation(t *testing.T) {
 	if err != nil {
 		t.Skipf("tzdata unavailable: %v", err)
 	}
-	r := NewFirestoreHappenings(config.Config{}, nil, WithLocation(tokyo))
+	r := NewFirestoreHappenings(firestoredb.NewSession(config.Config{}, nil), WithLocation(tokyo))
 	fh, ok := r.(*firestoreHappenings)
 	if !ok || fh.loc != tokyo {
 		t.Fatalf("reader loc = %v, want %v", fh, tokyo)
+	}
+}
+
+// TestReaders_ShareOneFirestoreSession is m6: Happenings/Todos/Contacts
+// readers built from the SAME *firestoredb.Session must all hold that
+// identical session (one Firestore client for the whole chat session), not
+// each open its own.
+func TestReaders_ShareOneFirestoreSession(t *testing.T) {
+	session := firestoredb.NewSession(config.Config{}, nil)
+
+	happenings := NewFirestoreHappenings(session)
+	fh, ok := happenings.(*firestoreHappenings)
+	if !ok || fh.session != session {
+		t.Errorf("Happenings reader session = %v, want the shared %v", fh, session)
+	}
+
+	todos := NewFirestoreTodos(session)
+	ft, ok := todos.(*firestoreTodos)
+	if !ok || ft.session != session {
+		t.Errorf("Todos reader session = %v, want the shared %v", ft, session)
+	}
+
+	// firestoreContacts wraps *firestoredb.ContactsReader, whose own session
+	// field is unexported to this package -- Close() forwards to it, so
+	// closing the CONTACTS reader must also close the SAME session Happenings
+	// and Todos hold (verified indirectly: Close is idempotent and a second
+	// Close on `session` itself, after the contacts reader's Close ran,
+	// must be a safe no-op either way -- proving there is nothing left for
+	// it to double-close only if it were the same underlying client).
+	contacts := NewFirestoreContacts(session)
+	fc, ok := contacts.(*firestoreContacts)
+	if !ok {
+		t.Fatalf("Contacts reader = %v, want *firestoreContacts", contacts)
+	}
+	if err := fc.Close(); err != nil {
+		t.Fatalf("Contacts Close: %v", err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("session.Close after Contacts already closed it: %v", err)
 	}
 }
 

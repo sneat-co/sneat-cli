@@ -31,6 +31,7 @@ import (
 	sneatrules "github.com/sneat-co/sneat-cli/internal/aichat/rules"
 	"github.com/sneat-co/sneat-cli/internal/chat"
 	"github.com/sneat-co/sneat-cli/internal/config"
+	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/sneat-co/sneat-cli/internal/sneatapi"
 )
 
@@ -91,18 +92,27 @@ func Run(deps Deps) (err error) {
 	// whole session over a typo'd --tz.
 	loc := locationFromName(deps.TZ)
 
+	// m6: ONE Firestore client for the whole chat session, shared by all
+	// three readers, instead of each reader opening its own -- a prior
+	// version's Readers.Close() closed 3 separate clients (each reader had
+	// built its own Session from the same cfg/ts) that all conversed with
+	// the same Firestore project as the same user; there was never a reason
+	// for more than one.
+	fsSession := firestoredb.NewSession(deps.Cfg, deps.TokenSource)
 	readers := data.Readers{
-		Happenings: data.NewFirestoreHappenings(deps.Cfg, deps.TokenSource, data.WithLocation(loc)),
-		Todos:      data.NewFirestoreTodos(deps.Cfg, deps.TokenSource),
-		Contacts:   data.NewFirestoreContacts(deps.Cfg, deps.TokenSource),
+		Happenings: data.NewFirestoreHappenings(fsSession, data.WithLocation(loc)),
+		Todos:      data.NewFirestoreTodos(fsSession),
+		Contacts:   data.NewFirestoreContacts(fsSession),
 	}
-	// m4/Readers.Close's own doc comment: the session that wires a Readers
-	// (this Run call) owns closing it on shutdown, releasing the lazily-
-	// opened, reused Firestore client(s) behind it -- on every return path,
+	// m4/m6: the session that wires a Readers (this Run call) owns closing
+	// the shared Firestore client on shutdown -- on every return path,
 	// including an early one from aiconfig.Build failing below.
+	// Readers.Close() still works (each reader forwards to the SAME
+	// fsSession, and Session.Close is idempotent), but closing fsSession
+	// directly says what is actually happening: one client, closed once.
 	defer func() {
-		if cerr := readers.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("aichat: closing readers: %w", cerr)
+		if cerr := fsSession.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("aichat: closing Firestore session: %w", cerr)
 		}
 	}()
 
