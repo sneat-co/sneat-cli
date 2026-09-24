@@ -295,6 +295,53 @@ func TestChatshell_MyTodos_ShowsDoneState(t *testing.T) {
 	}
 }
 
+// slowHappenings is a HappeningsReader whose Window blocks until release is
+// closed -- stands in for a real Firestore read's latency (S2 test).
+type slowHappenings struct {
+	release chan struct{}
+}
+
+func (s *slowHappenings) Window(ctx context.Context, spaceID string, from, to time.Time) ([]data.Happening, error) {
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return nil, nil
+}
+func (s *slowHappenings) FindByTitle(context.Context, string, string) ([]data.Happening, error) {
+	return nil, nil
+}
+func (s *slowHappenings) Get(context.Context, string, string) (data.Happening, error) {
+	return data.Happening{}, nil
+}
+
+// TestBeginLLMStream_DoesNotBlockOnRequestBuildingIO is S2's regression
+// test: beginLLMStream must return its tea.Cmd immediately, without waiting
+// for StreamRequest's own I/O (DynamicBlocks' Firestore reads) to finish --
+// that I/O happens only once the RETURNED Cmd is actually executed (on a
+// worker goroutine, per bubbletea's own contract), never inline on the call
+// that produces the Cmd (the UI loop). A slow Happenings reader proves it:
+// if beginLLMStream itself blocked on the read, this call would hang for
+// the whole test timeout instead of returning right away.
+func TestBeginLLMStream_DoesNotBlockOnRequestBuildingIO(t *testing.T) {
+	h, _ := testHandler(t)
+	slow := &slowHappenings{release: make(chan struct{})}
+	defer close(slow.release)
+	h.pipeline.Readers.Happenings = slow
+
+	done := make(chan struct{})
+	go func() {
+		h.beginLLMStream("show my calendar today", nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("beginLLMStream blocked on StreamRequest's own I/O -- it must only build and return the tea.Cmd, not run it")
+	}
+}
+
 // TestFocusedScopes covers brief §4/§7: a focused happening pins the
 // calendar scope so the Context Manager includes its dynamic data even when
 // a decision does not require it.
@@ -397,31 +444,34 @@ func TestChatshell_SlashCommandButtons_PressSelectsSpace(t *testing.T) {
 
 // TestChatshell_ContactSearch_GridThenCard is the scenario-7 chatshell-level
 // test: contact search renders the reusable tui/grid; a single match renders
-// a contact card instead.
+// a contact card instead. Both legs are driven through a REAL search typed
+// through the UI -- "contacts" (list all -> grid) and "find contact bob"
+// (a real resolve.Resolve/title search narrowing to one match -> card) --
+// never a hand-sliced Entities slice standing in for a narrowed result
+// (m7 coordinator ruling).
 func TestChatshell_ContactSearch_GridThenCard(t *testing.T) {
 	h, model := testHandler(t)
 	h.pipeline.Readers.Contacts = &data.FakeContacts{Items: []data.Contact{
 		{ID: "c1", SpaceID: "sp1", Name: "Alice"},
 		{ID: "c2", SpaceID: "sp1", Name: "Alicia"},
+		{ID: "c3", SpaceID: "sp1", Name: "Bob"},
 	}}
 	h.pipeline.Resolver = pipeline.Resolver{Readers: h.pipeline.Readers}
 
 	m := typeAndEnter(t, model, "contacts")
 	view := m.View().Content
-	if !strings.Contains(view, "Alice") || !strings.Contains(view, "Alicia") {
-		t.Fatalf("expected the contacts grid to list both contacts:\n%s", view)
+	if !strings.Contains(view, "Alice") || !strings.Contains(view, "Alicia") || !strings.Contains(view, "Bob") {
+		t.Fatalf("expected the contacts grid to list every contact:\n%s", view)
 	}
 
-	// A resolver search narrowing to exactly one contact renders a card, not
-	// a one-row grid (blockFor's len(entities)==1 special case).
-	out, err := h.pipeline.Turn(h.ctx, "contacts", h.state, h.spaceID)
-	if err != nil {
-		t.Fatalf("Turn: %v", err)
-	}
-	out.Entities = out.Entities[:1] // simulate a search narrowed to one match
-	h.render(out, nil)
-	if !strings.Contains(h.model.View().Content, "Alice") {
-		t.Fatalf("expected the single-contact card, view:\n%s", h.model.View().Content)
+	// A real search ("find contact bob") narrowing to exactly one contact
+	// renders a card, not a one-row grid (blockFor's len(entities)==1
+	// special case) -- via the same deterministic rule/resolve.Resolve path
+	// a real user's search would take.
+	m = typeAndEnter(t, m, "find contact bob")
+	view = m.View().Content
+	if !strings.Contains(view, "Bob") {
+		t.Fatalf("expected the single-contact card for Bob, view:\n%s", view)
 	}
 }
 

@@ -258,6 +258,9 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 		return h.handleSlash(m)
 	case turnMsg:
 		return h.handleTurn(m)
+	case llmRequestReadyMsg:
+		h.model.SetBusy(false) // clears the "building the request" phase; StartStream sets busy again
+		return h.startLLMStream(m)
 	case actionMsg:
 		if m.parseErr != nil {
 			if m.trailing != "" {
@@ -366,17 +369,55 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 		h.appendHistory(m.text, m.output.Text)
 		return nil
 	}
-	return h.startLLMStream(m.text, m.output.Decision)
+	return h.beginLLMStream(m.text, m.output.Decision)
 }
 
-func (h *handler) startLLMStream(text string, d *decision.Decision) tea.Cmd {
+// beginLLMStream is S2's fix: chatshell.Model.StartStream calls its `open`
+// func SYNCHRONOUSLY, on the UI loop, to obtain the stream -- only the
+// resulting iter.Seq2's own consumption is asynchronous (see
+// tui/chatshell's StartStream: `seq := open(ctx); return
+// tea.Batch(stream.Start(...), ...)`). The previous version built req
+// (h.pipeline.StreamRequest, whose DynamicBlocks does real Firestore reads
+// for calendar/todo/contacts context) INSIDE open, so every LLM turn
+// blocked the UI loop on those reads before the stream even started -- a
+// real freeze, not just a misleading comment. This version does that I/O in
+// a background tea.Cmd FIRST; only once llmRequestReadyMsg arrives (back on
+// the UI loop) does it call StartStream, whose own `open` now does no I/O
+// at all (just Pipeline.Stream, which only asks the already-selected
+// ai.LLMProvider to start streaming).
+func (h *handler) beginLLMStream(text string, d *decision.Decision) tea.Cmd {
 	focused := focusedScopes(h.state)
 	history := append([]ai.Message(nil), h.history...)
-	// StreamRequest itself does no I/O; DynamicBlocks reads happen inside
-	// the open func below, which chatshell's StartStream runs under the
-	// per-stream context it owns -- not on the UI loop, and cancellable via
-	// Esc/Ctrl+C like the rest of the stream.
 	stateSnapshot := *h.state
+	ctx, cancel := context.WithCancel(h.ctx)
+	// A bare SetBusy(true) phase (no stream yet) is exactly what chatshell's
+	// own cancelBusy doc comment describes: Esc/Ctrl+C during this
+	// "building the request" phase calls the registered SetBusyCancel func
+	// and reports "(stopped)" itself, since there is no stream DoneMsg yet
+	// to do it asynchronously.
+	busyCmd := h.model.SetBusy(true)
+	h.model.SetBusyCancel(cancel)
+	work := func() tea.Msg {
+		req, report := h.pipeline.StreamRequest(ctx, text, &stateSnapshot, h.spaceID, d, focused, history)
+		return llmRequestReadyMsg{ctx: ctx, text: text, decision: d, req: req, report: report}
+	}
+	if busyCmd == nil {
+		return work
+	}
+	return tea.Batch(work, busyCmd)
+}
+
+// startLLMStream is beginLLMStream's second half, run once the request is
+// built: it registers this stream's bookkeeping and calls the real
+// chatshell.StartStream, whose `open` now only calls Pipeline.Stream (no
+// I/O) -- safe to run synchronously on the UI loop.
+func (h *handler) startLLMStream(m llmRequestReadyMsg) tea.Cmd {
+	if m.ctx.Err() != nil {
+		// The "building the request" phase was cancelled (Esc/Ctrl+C) before
+		// it finished -- cancelBusy already reported "(stopped)"; starting a
+		// stream now would be a new turn the user never asked to continue.
+		return nil
+	}
 	id := h.nextStreamID()
 	if h.splitters == nil {
 		h.splitters = map[string]*pipeline.Splitter{}
@@ -391,13 +432,12 @@ func (h *handler) startLLMStream(text string, d *decision.Decision) tea.Cmd {
 		h.streamDecided = map[string]bool{}
 	}
 	h.streamText[id] = &strings.Builder{}
-	h.streamUser[id] = text
+	h.streamUser[id] = m.text
 	h.streamStart[id] = time.Now()
-	h.streamDecided[id] = d != nil
+	h.streamDecided[id] = m.decision != nil
+	h.logStreamRequest(m.decision, m.report)
 	open := func(ctx context.Context) iter.Seq2[ai.Event, error] {
-		req, report := h.pipeline.StreamRequest(ctx, text, &stateSnapshot, h.spaceID, d, focused, history)
-		h.logStreamRequest(d, report)
-		seq, splitter := h.pipeline.Stream(ctx, req)
+		seq, splitter := h.pipeline.Stream(ctx, m.req)
 		h.splitters[id] = splitter
 		return seq
 	}
@@ -636,6 +676,19 @@ type turnMsg struct {
 	output pipeline.Output
 	err    error
 	state  session.State
+}
+
+// llmRequestReadyMsg carries beginLLMStream's background-built
+// ai.ChatRequest back to the UI loop (S2): ctx is the "building the
+// request" phase's own cancellable context (not the stream's own, which
+// chatshell.StartStream creates separately) -- startLLMStream checks it to
+// drop a request that finished building after the user already cancelled.
+type llmRequestReadyMsg struct {
+	ctx      context.Context
+	text     string
+	decision *decision.Decision
+	req      ai.ChatRequest
+	report   ctxmgr.Report
 }
 
 type actionMsg struct {
