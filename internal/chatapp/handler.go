@@ -227,8 +227,11 @@ func (h *handler) applyStateDelta(from session.State) {
 // on the acting side, not by deleting them here: Resolver/SneatExecutor
 // already refuse a resolved target whose EntityRef.Keys["spaceID"] doesn't
 // match the space a turn is running against (verified against the
-// reviewer's own B3 probe tests -- TestProbeCheck_B3_SpaceLeakViaReference
-// and TestProbeCheck_FocusFromOtherSpace both pass unmodified), so a pin
+// reviewer's own B3 probe tests, adapted into
+// internal/aichat/pipeline/pipeline_test.go's
+// TestHandleAction_AddTodo_ViaReference_IgnoresModelSuppliedSpaceID and
+// TestHandleAction_Pronoun_RejectsFocusedEntityFromAnotherSpace, both of
+// which pass), so a pin
 // from another space can be a Candidates() fallback without ever being
 // actable; explicitly excluding cross-space pins from the sidebar's own
 // display is a UI nicety (sidebarRender/rendering), not a safety
@@ -306,7 +309,22 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 		snapshot = *sp2
 	}
 	spaceID := h.spaceID
-	return func() tea.Msg {
+	// M2 (fix round r4 review): the stream itself has already finished by
+	// the time this tea.Cmd runs (that is what EventCompleted means), so
+	// chatshell's own stream-tied busy state has already cleared -- but
+	// HandleAction below still has to run (possibly executing a destructive
+	// calendar/todo mutation) on a worker goroutine. Without owning busy
+	// itself, the composer re-enables the instant the STREAM ends, letting
+	// the user submit a new turn while this action is still in flight
+	// (racing h.state via applyStateDelta, or double-executing something).
+	// Same convention as Submit's own background work: derive a cancellable
+	// ctx from the turn's own (so Esc during the action phase still works),
+	// SetBusy(true) for its duration, and clear it in OnMsg's actionMsg case
+	// below once the result lands (or is dropped as stale).
+	actionCtx, cancel := context.WithCancel(ctx)
+	busyCmd := h.model.SetBusy(true)
+	h.model.SetBusyCancel(cancel)
+	work := func() tea.Msg {
 		trailing, action, err := sp.Finish()
 		if err != nil {
 			// Splitter contract: a malformed/unterminated block is surfaced,
@@ -315,11 +333,19 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 			return actionMsg{parseErr: err, trailing: trailing, seq: turnSeq}
 		}
 		if action == nil {
-			return nil // a plain text-only answer
+			// A plain text-only answer: still an actionMsg (not a bare nil)
+			// so OnMsg's stale-seq-checked actionMsg case runs and clears
+			// busy -- a bare nil never reaches OnMsg at all (bubbletea drops
+			// a nil Msg outright), which would leave busy stuck true.
+			return actionMsg{seq: turnSeq}
 		}
-		out, err := h.pipeline.HandleAction(ctx, *action, &snapshot, spaceID)
+		out, err := h.pipeline.HandleAction(actionCtx, *action, &snapshot, spaceID)
 		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq}
 	}
+	if busyCmd == nil {
+		return work
+	}
+	return tea.Batch(work, busyCmd)
 }
 
 // OnStreamDone fires exactly once per StartStream call (success, fatal
@@ -390,6 +416,11 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 			// driving busy and will clear it itself).
 			return nil
 		}
+		// M2 (fix round r4 review): the action phase (OnStreamEvent's
+		// EventCompleted branch) owns busy for its own duration -- clear it
+		// here, the same way handleTurn/llmRequestReadyMsg clear the phase
+		// THEY own, now that this result is confirmed current (not stale).
+		h.model.SetBusy(false)
 		if m.parseErr != nil {
 			if m.trailing != "" {
 				h.model.AppendAssistant(m.trailing)

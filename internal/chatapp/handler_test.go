@@ -527,9 +527,9 @@ func TestChatshell_PinToSidebar_ThenReferredToByPronoun(t *testing.T) {
 // doesn't lose them, and are never resolved-and-acted-on for the new space
 // only because Resolver/SneatExecutor refuse a cross-space target
 // defensively (covered separately by the reviewer's own B3 probe tests,
-// TestProbeCheck_B3_SpaceLeakViaReference and
-// TestProbeCheck_FocusFromOtherSpace, both of which pass unmodified against
-// this branch).
+// adapted into internal/aichat/pipeline/pipeline_test.go's
+// TestHandleAction_AddTodo_ViaReference_IgnoresModelSuppliedSpaceID and
+// TestHandleAction_Pronoun_RejectsFocusedEntityFromAnotherSpace).
 func TestApplySpaceChange_ClearsWorkingContext_KeepsSidebar(t *testing.T) {
 	h, _ := testHandler(t)
 	h.spaceID = "sp1"
@@ -651,9 +651,42 @@ func TestS1_ActionRunsOnSnapshot_SidebarPinDuringItSurvives(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("OnStreamEvent(EventCompleted) returned a nil cmd -- the splitter/action setup above is wrong")
 	}
+	// M2 (fix round r4 review): the action phase claims busy SYNCHRONOUSLY,
+	// inside OnStreamEvent itself, before its background work even starts --
+	// the stream that produced this action already finished (that is what
+	// EventCompleted means), so without this the composer would re-enable
+	// the instant the stream ended, letting the user submit a new turn while
+	// HandleAction is still running (possibly a destructive mutation).
+	if !h.model.Busy() {
+		t.Fatal("model is not busy right after OnStreamEvent(EventCompleted) -- the action phase must own busy for its own duration")
+	}
 
+	// M2 (fix round r4 review): the action phase now owns busy for its own
+	// duration, so OnStreamEvent's returned cmd is tea.Batch(work, busyCmd)
+	// -- a real tea.Program dispatches every sub-command of a tea.BatchMsg
+	// concurrently, so this harness (which drives OnStreamEvent directly,
+	// bypassing the real runtime -- see the doc comment above) must do the
+	// same rather than call cmd() and expect it to BE work itself, which
+	// would just hand back the (unexecuted) BatchMsg. Only the sub-command
+	// that actually produces an actionMsg matters here; a spinner-tick
+	// message from busyCmd is dropped.
 	done := make(chan tea.Msg, 1)
-	go func() { done <- cmd() }()
+	var dispatch func(tea.Cmd)
+	dispatch = func(c tea.Cmd) {
+		msg := c()
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, sub := range batch {
+				if sub != nil {
+					go dispatch(sub)
+				}
+			}
+			return
+		}
+		if _, ok := msg.(actionMsg); ok {
+			done <- msg
+		}
+	}
+	go dispatch(cmd)
 
 	select {
 	case <-slow.entered:
@@ -681,6 +714,11 @@ func TestS1_ActionRunsOnSnapshot_SidebarPinDuringItSurvives(t *testing.T) {
 	}
 	if len(h.state.Sidebar) != 1 || !h.state.Sidebar[0].Same(pinnedRef) {
 		t.Fatalf("Sidebar = %+v, want the pin added WHILE the action was running to survive (S1: applyStateDelta must never touch Sidebar)", h.state.Sidebar)
+	}
+	// M2: the actionMsg's OnMsg case clears busy once the result is applied
+	// -- the action phase no longer owns it.
+	if h.model.Busy() {
+		t.Fatal("model still busy after the actionMsg was applied -- OnMsg's actionMsg case must clear it")
 	}
 }
 
