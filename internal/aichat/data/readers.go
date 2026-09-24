@@ -9,6 +9,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	calendariusdbo "github.com/sneat-co/calendarius/backend/dbo4calendarius"
@@ -113,4 +114,23 @@ type Readers struct {
 	Happenings HappeningsReader
 	Todos      TodosReader
 	Contacts   ContactsReader
+}
+
+// Close releases every reader's resources that support it (m4: the
+// Firestore-backed readers each hold one lazily-opened, reused client for
+// their whole lifetime -- see firestoredb.Session -- rather than one per
+// call; the session that wires a Readers is responsible for closing it on
+// shutdown). Readers that don't need closing (fakes, a future non-Firestore
+// backend) are silently skipped via an io.Closer type assertion rather than
+// growing every interface with an optional Close.
+func (r Readers) Close() error {
+	var errs []error
+	for _, closer := range []any{r.Happenings, r.Todos, r.Contacts} {
+		if c, ok := closer.(interface{ Close() error }); ok {
+			if err := c.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }

@@ -179,6 +179,38 @@ func TestSortNotDoneFirst(t *testing.T) {
 	}
 }
 
+// closerStub is a reader stub whose Close records whether it ran and can
+// return a caller-supplied error.
+type closerStub struct {
+	FakeHappenings
+	closed bool
+	err    error
+}
+
+func (c *closerStub) Close() error {
+	c.closed = true
+	return c.err
+}
+
+// TestReaders_Close is m4's Readers.Close(): every reader that supports
+// Close gets closed, fakes without one (no Close method) are silently
+// skipped rather than causing a panic/type-assertion failure, and any
+// closer errors are joined rather than dropped.
+func TestReaders_Close(t *testing.T) {
+	h := &closerStub{}
+	readers := Readers{
+		Happenings: h,
+		Todos:      &FakeTodos{},    // no Close method -- must be skipped, not panic
+		Contacts:   &FakeContacts{}, // same
+	}
+	if err := readers.Close(); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+	if !h.closed {
+		t.Fatal("Happenings reader was not closed")
+	}
+}
+
 func TestListKeyFor(t *testing.T) {
 	if listKeyFor(ListKindBuy) != listusdbo.BuyGroceriesListID {
 		t.Errorf("listKeyFor(buy) = %q", listKeyFor(ListKindBuy))

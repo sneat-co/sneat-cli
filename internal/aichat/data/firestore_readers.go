@@ -40,14 +40,20 @@ func containsFold(haystack, needleLower string) bool {
 // run against a real or emulated Firestore space to confirm it -- see the
 // final report's "manual / not done" list.
 type firestoreHappenings struct {
-	cfg config.Config
-	ts  oauth2.TokenSource
+	session *firestoredb.Session
 }
 
-// NewFirestoreHappenings builds a HappeningsReader over Firestore.
+// NewFirestoreHappenings builds a HappeningsReader over ONE lazily-opened,
+// reused Firestore client (m4) rather than a fresh client per call.
 func NewFirestoreHappenings(cfg config.Config, ts oauth2.TokenSource) HappeningsReader {
-	return &firestoreHappenings{cfg: cfg, ts: ts}
+	return &firestoreHappenings{session: firestoredb.NewSession(cfg, ts)}
 }
+
+// Close releases the reader's Firestore client, if one was ever opened.
+// HappeningsReader does not declare Close (not every implementation needs
+// one, e.g. FakeHappenings) -- a caller that wants to release it type-
+// asserts for io.Closer, or a concrete *firestoreHappenings.
+func (r *firestoreHappenings) Close() error { return r.session.Close() }
 
 // happeningsCollectionRef builds the happenings collection ref the same way
 // calendarius itself does (dbo4calendarius.NewHappeningKey's parent), rather
@@ -60,11 +66,10 @@ func happeningsCollectionRef(spaceID string) dal.CollectionRef {
 }
 
 func (r *firestoreHappenings) list(ctx context.Context, spaceID string) ([]calendariusdbo.HappeningDbo, []string, error) {
-	db, err := firestoredb.Open(ctx, r.cfg, r.ts)
+	db, err := r.session.DB(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { _ = db.Close() }()
 
 	q := dal.NewQueryBuilder(dal.From(happeningsCollectionRef(spaceID))).
 		WhereField("status", dal.Equal, "active").
@@ -167,11 +172,10 @@ func (r *firestoreHappenings) FindByTitle(ctx context.Context, spaceID, query st
 // version read a bare top-level "happenings/{id}" via GetDoc, which only
 // matched fakes in tests, never a real space.
 func (r *firestoreHappenings) Get(ctx context.Context, spaceID, happeningID string) (Happening, error) {
-	db, err := firestoredb.Open(ctx, r.cfg, r.ts)
+	db, err := r.session.DB(ctx)
 	if err != nil {
 		return Happening{}, err
 	}
-	defer func() { _ = db.Close() }()
 	var dbo calendariusdbo.HappeningDbo
 	key := calendariusdbo.NewHappeningKey(coretypes.SpaceID(spaceID), happeningID)
 	rec := record.NewRecordWithData(key, &dbo)
@@ -188,14 +192,18 @@ func (r *firestoreHappenings) Get(ctx context.Context, spaceID, happeningID stri
 // firestoreHappenings, the collection path is unverified against a live
 // space.
 type firestoreTodos struct {
-	cfg config.Config
-	ts  oauth2.TokenSource
+	session *firestoredb.Session
 }
 
-// NewFirestoreTodos builds a TodosReader over Firestore.
+// NewFirestoreTodos builds a TodosReader over ONE lazily-opened, reused
+// Firestore client (m4) rather than a fresh client per call.
 func NewFirestoreTodos(cfg config.Config, ts oauth2.TokenSource) TodosReader {
-	return &firestoreTodos{cfg: cfg, ts: ts}
+	return &firestoreTodos{session: firestoredb.NewSession(cfg, ts)}
 }
+
+// Close releases the reader's Firestore client, if one was ever opened (see
+// firestoreHappenings.Close's doc comment on why this isn't in TodosReader).
+func (r *firestoreTodos) Close() error { return r.session.Close() }
 
 // listKeyFor maps this package's list-kind constant to listus's standard
 // list key ("do!tasks", "buy!groceries").
@@ -209,11 +217,10 @@ func listKeyFor(list string) string {
 }
 
 func (r *firestoreTodos) getList(ctx context.Context, spaceID, listKey string) (listusdbo.ListDbo, error) {
-	db, err := firestoredb.Open(ctx, r.cfg, r.ts)
+	db, err := r.session.DB(ctx)
 	if err != nil {
 		return listusdbo.ListDbo{}, err
 	}
-	defer func() { _ = db.Close() }()
 
 	// m2: reuse listus's own key helper (dal4listus.NewListKey) rather than a
 	// hand-rolled spaces/{id}/ext/listus/lists/{key} path -- the same fix B1

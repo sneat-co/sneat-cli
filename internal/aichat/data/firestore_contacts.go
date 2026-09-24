@@ -23,6 +23,11 @@ func NewFirestoreContacts(cfg config.Config, ts oauth2.TokenSource) ContactsRead
 	return &firestoreContacts{r: firestoredb.NewContactsReader(cfg, ts)}
 }
 
+// Close releases the reader's Firestore client, if one was ever opened
+// (firestoredb.ContactsReader already holds one lazily-opened, reused
+// client per m4 -- this just forwards to it).
+func (a *firestoreContacts) Close() error { return a.r.Close() }
+
 func (a *firestoreContacts) List(ctx context.Context, spaceID string) ([]Contact, error) {
 	cs, err := a.r.ListContacts(ctx, spaceID)
 	if err != nil {

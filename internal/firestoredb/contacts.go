@@ -19,14 +19,17 @@ type Contact struct {
 
 // ContactsReader reads a space's contacts from Firestore as the user.
 type ContactsReader struct {
-	cfg config.Config
-	ts  oauth2.TokenSource
+	session *Session
 }
 
-// NewContactsReader builds a reader; each call opens its own short-lived client.
+// NewContactsReader builds a reader over ONE lazily-opened, reused Firestore
+// client (m4) rather than a fresh client per call.
 func NewContactsReader(cfg config.Config, ts oauth2.TokenSource) *ContactsReader {
-	return &ContactsReader{cfg: cfg, ts: ts}
+	return &ContactsReader{session: NewSession(cfg, ts)}
 }
+
+// Close releases the reader's Firestore client, if one was ever opened.
+func (r *ContactsReader) Close() error { return r.session.Close() }
 
 // contactsCollectionRef points at spaces/{spaceID}/ext/contactus/contacts.
 func contactsCollectionRef(spaceID string) dal.CollectionRef {
@@ -37,11 +40,10 @@ func contactsCollectionRef(spaceID string) dal.CollectionRef {
 
 // ListContacts returns the space's flat, active top-level contacts.
 func (r *ContactsReader) ListContacts(ctx context.Context, spaceID string) ([]Contact, error) {
-	db, err := Open(ctx, r.cfg, r.ts)
+	db, err := r.session.DB(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = db.Close() }()
 
 	query := dal.NewQueryBuilder(dal.From(contactsCollectionRef(spaceID))).
 		WhereField("status", dal.Equal, "active").
@@ -70,11 +72,10 @@ func (r *ContactsReader) ListContacts(ctx context.Context, spaceID string) ([]Co
 
 // GetContact reads a single contact by ID.
 func (r *ContactsReader) GetContact(ctx context.Context, spaceID, contactID string) (Contact, error) {
-	db, err := Open(ctx, r.cfg, r.ts)
+	db, err := r.session.DB(ctx)
 	if err != nil {
 		return Contact{}, err
 	}
-	defer func() { _ = db.Close() }()
 
 	spaceKey := record.NewKeyWithID("spaces", spaceID)
 	moduleKey := record.NewKeyWithParentAndID(spaceKey, "ext", "contactus")

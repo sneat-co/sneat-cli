@@ -5,6 +5,7 @@ package firestoredb
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"cloud.google.com/go/firestore"
 	"github.com/dal-go/dalgo/dal"
@@ -61,4 +62,52 @@ func (d *DB) GetDoc(ctx context.Context, collection, id string, data any) error 
 	return d.dal.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 		return tx.Get(ctx, rec)
 	})
+}
+
+// Session lazily opens ONE Firestore client and reuses it for every read a
+// reader built on top of it makes, instead of Open/Close per call (m4: one
+// Firestore client per session -- a fresh gRPC client per keystroke-driven
+// chat turn is wasteful and was the pre-fix-round-2 behaviour of every
+// reader in this package and internal/aichat/data).
+//
+// A failed Open is not cached: a transient failure (a network blip on the
+// FIRST read) must not permanently poison the reader for the rest of the
+// session -- the next call simply retries Open.
+type Session struct {
+	cfg config.Config
+	ts  oauth2.TokenSource
+	mu  sync.Mutex
+	db  *DB
+}
+
+// NewSession builds a Session that opens its Firestore client on first use.
+func NewSession(cfg config.Config, ts oauth2.TokenSource) *Session {
+	return &Session{cfg: cfg, ts: ts}
+}
+
+// DB returns the session's shared connection, opening it on first call.
+func (s *Session) DB(ctx context.Context) (*DB, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		return s.db, nil
+	}
+	db, err := Open(ctx, s.cfg, s.ts)
+	if err != nil {
+		return nil, err
+	}
+	s.db = db
+	return db, nil
+}
+
+// Close releases the session's Firestore client, if one was ever opened.
+func (s *Session) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db == nil {
+		return nil
+	}
+	err := s.db.Close()
+	s.db = nil
+	return err
 }
