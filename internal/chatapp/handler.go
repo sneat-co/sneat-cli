@@ -17,6 +17,8 @@ import (
 
 	"github.com/bots-go-framework/bots-go-core/botkb"
 	"github.com/strongo/aichat/ai"
+	"github.com/strongo/aichat/ai/clientctx"
+	"github.com/strongo/aichat/ai/cloud"
 	"github.com/strongo/aichat/ai/ctxmgr"
 	"github.com/strongo/aichat/ai/decision"
 	aidiag "github.com/strongo/aichat/ai/diag"
@@ -54,12 +56,14 @@ import (
 // outright. See Submit, applyStateDelta, handleTurn, and OnStreamEvent's own
 // doc comments.
 type handler struct {
-	ctx       context.Context
-	pipeline  pipeline.Pipeline
-	processor chat.Processor
-	state     *session.State
-	spaceID   string
-	logger    *slog.Logger
+	ctx         context.Context
+	pipeline    pipeline.Pipeline
+	processor   chat.Processor
+	state       *session.State
+	spaceID     string
+	logger      *slog.Logger
+	reporter    interactionReporter
+	turnReports map[int64]*turnReport
 
 	model *chatshell.Model
 
@@ -205,6 +209,7 @@ func (h *handler) hints(int) (hints []theme.Hint, segments []string) {
 // applied back to h.state by OnMsg, which does run on the UI loop.
 func (h *handler) Submit(text string) tea.Cmd {
 	trimmed := strings.TrimSpace(text)
+	interactionID, _ := clientctx.NewUUID()
 
 	// Sync the pipeline's space to whatever the slash-command Processor's
 	// active space now is (coordinator ruling SPACE: /space is the single
@@ -215,7 +220,7 @@ func (h *handler) Submit(text string) tea.Cmd {
 	if strings.HasPrefix(trimmed, "/") {
 		return func() tea.Msg {
 			replies, err := h.processor.SendText(h.ctx, trimmed)
-			return slashMsg{replies: replies, err: err}
+			return slashMsg{replies: replies, err: err, text: trimmed, interactionID: interactionID}
 		}
 	}
 
@@ -228,6 +233,10 @@ func (h *handler) Submit(text string) tea.Cmd {
 	// chatshell's composer is disabled while busy (Esc cancels the busy
 	// phase without necessarily killing the background goroutine).
 	seq := atomic.AddInt64(&h.turnSeq, 1)
+	if h.turnReports == nil {
+		h.turnReports = make(map[int64]*turnReport)
+	}
+	h.turnReports[seq] = &turnReport{id: interactionID, text: trimmed}
 
 	// Snapshot state ON THE UI LOOP: a shallow copy isolates the background
 	// call's Pending/Previous/LastShown/Selection/Focused reassignments
@@ -245,6 +254,7 @@ func (h *handler) Submit(text string) tea.Cmd {
 	}
 
 	ctx, cancel := context.WithCancel(h.ctx)
+	ctx = cloud.WithInteractionID(ctx, interactionID)
 	busyCmd := h.model.SetBusy(true)
 	h.model.SetBusyCancel(cancel)
 
@@ -452,7 +462,7 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 		}
 		out, err := pl.HandleAction(actionCtx, *action, &snapshot, spaceID)
 		executed := err == nil && snapshot.Previous != prevBefore
-		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq, id: id, executed: executed}
+		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq, id: id, kind: action.Kind, executed: executed}
 	}
 	return cmdOrWork(work, busyCmd)
 }
@@ -475,6 +485,7 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 // leaving busy correctly true by the time Update returns.
 func (h *handler) OnStreamDone(id string, err error) tea.Cmd {
 	var busyCmd tea.Cmd
+	_, actionPending := h.pendingAction[id]
 	if cancel, ok := h.pendingAction[id]; ok {
 		busyCmd = h.model.SetBusy(true)
 		h.model.SetBusyCancel(cancel)
@@ -487,6 +498,7 @@ func (h *handler) OnStreamDone(id string, err error) tea.Cmd {
 	delete(h.streamUser, id)
 	delete(h.streamState, id)
 	delete(h.streamCtx, id)
+	turnSeq := h.streamTurnSeq[id]
 	delete(h.streamTurnSeq, id)
 	if h.logger != nil {
 		// S11: PathLLMFallback when nothing decided this turn at all (the
@@ -511,7 +523,19 @@ func (h *handler) OnStreamDone(id string, err error) tea.Cmd {
 	delete(h.streamModel, id)
 	delete(h.streamProvider, id)
 	delete(h.streamDecided, id)
-	return busyCmd
+	if actionPending {
+		return busyCmd
+	}
+	turn := h.turnReports[turnSeq]
+	delete(h.turnReports, turnSeq)
+	status, outcome := "completed", "answer_presented"
+	if err != nil {
+		status, outcome = "failed", "provider_failed"
+		if errors.Is(err, context.Canceled) {
+			status, outcome = "cancelled", "cancelled"
+		}
+	}
+	return cmdOrWork(h.reportCommand(turn, status, outcome, "", ""), busyCmd)
 }
 
 // --- chatshell.MsgHandler ----------------------------------------------------
@@ -531,11 +555,15 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 			// S1: a newer turn already started (superseding an Esc-cancelled
 			// one) before this "building the request" phase finished --
 			// drop it, and leave busy alone: the newer turn owns it.
-			return nil
+			turn := h.turnReports[m.seq]
+			delete(h.turnReports, m.seq)
+			return h.reportCommand(turn, "cancelled", "superseded", "", "")
 		}
 		h.model.SetBusy(false) // clears the "building the request" phase; StartStream sets busy again
 		return h.startLLMStream(m)
 	case actionMsg:
+		turn := h.turnReports[m.seq]
+		delete(h.turnReports, m.seq)
 		// M2 (fix round r5 review): this stream's action has now resolved
 		// (current or stale) -- OnStreamDone must stop re-asserting busy for
 		// it.
@@ -565,7 +593,10 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 				h.applyUndoDelta(m.state)
 				h.render(m.output, m.err)
 			}
-			return nil
+			if m.executed {
+				return h.reportCommand(turn, "completed", "action_succeeded", m.kind, "succeeded")
+			}
+			return h.reportCommand(turn, "cancelled", "superseded", m.kind, "")
 		}
 		// M2 (fix round r4 review): the action phase (OnStreamEvent's
 		// EventCompleted branch, re-armed if needed by OnStreamDone) owns
@@ -589,7 +620,7 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 			if h.logger != nil {
 				aidiag.Log(h.ctx, h.logger, aidiag.Turn{Path: aidiag.PathLLMFallback, Errors: []string{aidiag.ErrorCode(m.parseErr)}})
 			}
-			return nil
+			return h.reportCommand(turn, "completed", "action_not_executed", m.kind, "")
 		}
 		// S1: apply only the turn-owned fields (see applyStateDelta) so a
 		// Sidebar pin added while HandleAction was running in the
@@ -597,7 +628,17 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 		// (but current-relative-to-turnSeq) snapshot.
 		h.applyStateDelta(m.state)
 		h.render(m.output, m.err)
-		return nil
+		status, outcome, actionStatus := "completed", "answer_presented", ""
+		if m.err != nil {
+			status, outcome, actionStatus = "failed", "action_failed", "failed"
+			if errors.Is(m.err, context.Canceled) {
+				status, outcome, actionStatus = "cancelled", "cancelled", "cancelled"
+			}
+		}
+		if m.executed {
+			outcome, actionStatus = "action_succeeded", "succeeded"
+		}
+		return h.reportCommand(turn, status, outcome, m.kind, actionStatus)
 	case grid.RowActivatedMsg:
 		if m.Row.Ref != nil {
 			h.state.Focus(m.Row.Ref)
@@ -615,12 +656,24 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 
 func (h *handler) handleSlash(m slashMsg) tea.Cmd {
 	h.applySpaceChange(h.processor.ActiveSpace())
+	status, outcome := "completed", "answer_presented"
 	if m.err != nil {
 		h.model.AppendSystem(h.chatSafeError("slash", m.err))
-		return nil
+		status, outcome = "failed", "action_failed"
+		if errors.Is(m.err, context.Canceled) {
+			status, outcome = "cancelled", "cancelled"
+		}
+	} else {
+		h.appendReplies(m.replies)
 	}
-	h.appendReplies(m.replies)
-	return nil
+	action, known := slashCommandAction(m.text, h.processor.Commands())
+	actionStatus := status
+	if !known {
+		outcome, actionStatus = "unrecognized_command", ""
+	} else if status == "completed" {
+		outcome, actionStatus = "action_succeeded", "succeeded"
+	}
+	return h.reportCommand(&turnReport{id: m.interactionID, text: m.text}, status, outcome, action, actionStatus)
 }
 
 // appendReplies renders a []chat.Reply the same way for a typed slash
@@ -685,8 +738,15 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 		// pipeline.Turn call returned (Esc cancelled it and the user typed
 		// again) -- drop it outright, and leave busy/render to the newer
 		// turn.
-		return nil
+		turn := h.turnReports[m.seq]
+		delete(h.turnReports, m.seq)
+		return h.reportCommand(turn, "cancelled", "superseded", "", "")
 	}
+	turn := h.turnReports[m.seq]
+	if turn != nil {
+		turn.output = m.output
+	}
+	previous := h.state.Previous
 	h.model.SetBusy(false)
 	// S1: apply only the turn-owned fields, never Sidebar (applyStateDelta's
 	// own doc comment) -- a plain `*h.state = m.state` here would silently
@@ -696,13 +756,22 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 	if m.err != nil {
 		h.model.AppendSystem(h.chatSafeError("turn", m.err))
 		h.logTurn(pathFor(m.output), m.output, m.err)
-		return nil
+		delete(h.turnReports, m.seq)
+		if errors.Is(m.err, context.Canceled) {
+			return h.reportCommand(turn, "cancelled", "cancelled", reportAction(m.output), "cancelled")
+		}
+		return h.reportCommand(turn, "failed", "action_failed", reportAction(m.output), "failed")
 	}
 	if !m.output.NeedsLLM {
 		h.render(m.output, nil)
 		h.logTurn(pathFor(m.output), m.output, nil)
 		h.appendHistory(m.text, m.output.Text)
-		return nil
+		delete(h.turnReports, m.seq)
+		actionStatus, outcome := "", "answer_presented"
+		if reportAction(m.output) != "" && (m.state.Previous != previous || m.output.Presentation != "") {
+			actionStatus, outcome = "succeeded", "action_succeeded"
+		}
+		return h.reportCommand(turn, "completed", outcome, reportAction(m.output), actionStatus)
 	}
 	return h.beginLLMStream(m.text, m.output.Decision, m.seq)
 }
@@ -754,7 +823,12 @@ func (h *handler) startLLMStream(m llmRequestReadyMsg) tea.Cmd {
 		// The "building the request" phase was cancelled (Esc/Ctrl+C) before
 		// it finished -- cancelBusy already reported "(stopped)"; starting a
 		// stream now would be a new turn the user never asked to continue.
-		return nil
+		turn := h.turnReports[m.seq]
+		delete(h.turnReports, m.seq)
+		return h.reportCommand(turn, "cancelled", "cancelled", "", "")
+	}
+	if turn := h.turnReports[m.seq]; turn != nil {
+		m.req.InteractionID = turn.id
 	}
 	id := h.nextStreamID()
 	if h.splitters == nil {
@@ -785,6 +859,9 @@ func (h *handler) startLLMStream(m llmRequestReadyMsg) tea.Cmd {
 	h.streamTurnSeq[id] = m.seq
 	h.logStreamRequest(m.decision, m.report)
 	open := func(ctx context.Context) iter.Seq2[ai.Event, error] {
+		if turn := h.turnReports[m.seq]; turn != nil {
+			turn.llmStarted = true
+		}
 		seq, splitter := h.pipeline.Stream(ctx, m.req)
 		h.splitters[id] = splitter
 		// The REAL per-turn cancellable ctx (S1: "Esc cancels via
@@ -1088,8 +1165,10 @@ func (h *handler) logStreamRequest(d *decision.Decision, report ctxmgr.Report) {
 // --- message types the pipeline hands back through tea.Cmd -----------------
 
 type slashMsg struct {
-	replies []chat.Reply
-	err     error
+	replies       []chat.Reply
+	err           error
+	text          string
+	interactionID string
 }
 
 // turnMsg carries the state SNAPSHOT the background pipeline.Turn call
@@ -1144,7 +1223,8 @@ type actionMsg struct {
 	// (fix round r5, M2): OnMsg uses it to release h.pendingAction[id], so
 	// OnStreamDone stops re-asserting busy for a stream whose action has
 	// already resolved.
-	id string
+	id   string
+	kind string
 	// executed is true only when HandleAction was called AND it actually
 	// ran an action (err == nil and state.Previous now differs from the
 	// pointer it held right before the call) -- fix round r6 review

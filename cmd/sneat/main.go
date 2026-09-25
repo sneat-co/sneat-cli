@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"context"
@@ -21,6 +22,7 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/sneat-co/sneat-cli/internal/tokensrc"
 	"github.com/sneat-co/sneat-cli/internal/tui"
+	"github.com/strongo/aichat/ai/clientctx"
 	"github.com/strongo/buildinfo"
 	"github.com/strongo/buildinfo/cobracmd"
 	"github.com/strongo/deviceauth"
@@ -192,21 +194,26 @@ func newEnv(info buildinfo.Info) (commands.Env, error) {
 		// chain + resolver + Context Manager + main LLM) and runs it through
 		// strongo/aichat's tui/chatshell.
 		RunChat: func(args commands.RunChatArgs) error {
+			installationID := ""
+			if configDir, dirErr := userConfigDir(); dirErr == nil {
+				installationID, _ = clientctx.InstallationID(filepath.Join(configDir, "sneat", "installation_id"))
+			}
 			auth := sneatauth.New(sneatauth.Options{APIKey: args.Cfg.APIKey, AuthEmulatorHost: args.Cfg.AuthEmulatorHost})
 			ts := tokensrc.FromEnvOrSession(os.Getenv, context.Background(), store, auth, time.Now)
 			return chatapp.Run(chatapp.Deps{
-				Spaces:       args.Spaces,
-				Contacts:     chatContacts{args.Contacts},
-				UID:          args.UID,
-				Email:        args.Email,
-				Version:      info.Version,
-				Cfg:          args.Cfg,
-				AIConfig:     args.AIConfig,
-				NoJev:        args.NoJev,
-				TokenSource:  ts,
-				Debug:        os.Getenv("SNEAT_DEBUG") != "",
-				CurrentSpace: args.CurrentSpace,
-				TZ:           args.TZ,
+				Spaces:         args.Spaces,
+				Contacts:       chatContacts{args.Contacts},
+				UID:            args.UID,
+				Email:          args.Email,
+				Version:        info.Version,
+				InstallationID: installationID,
+				Cfg:            args.Cfg,
+				AIConfig:       args.AIConfig,
+				NoJev:          args.NoJev,
+				TokenSource:    ts,
+				Debug:          os.Getenv("SNEAT_DEBUG") != "",
+				CurrentSpace:   args.CurrentSpace,
+				TZ:             args.TZ,
 			})
 		},
 	}
