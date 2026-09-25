@@ -22,7 +22,7 @@ func convoCatalogsCmd() *cobra.Command {
 		Use:   "catalogs",
 		Short: "List registered extensions and the vocabulary each listens for",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			registry, err := newConvoRegistry()
+			registry, err := convoRegistryFactory()
 			if err != nil {
 				return err
 			}
@@ -60,7 +60,7 @@ func convoRouteCmd() *cobra.Command {
 		Short: "Show which catalog a message's declared triggers select",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			registry, err := newConvoRegistry()
+			registry, err := convoRegistryFactory()
 			if err != nil {
 				return err
 			}

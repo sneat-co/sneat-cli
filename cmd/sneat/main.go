@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -26,7 +27,36 @@ import (
 	"golang.org/x/term"
 )
 
+// userConfigDir is a seam over os.UserConfigDir so tests can force the rare
+// "no config dir available" error path (newEnv's two DefaultPath/
+// DefaultMetadataPath calls) without touching the real HOME/config dir.
+// Production default is the real os.UserConfigDir.
+var userConfigDir = os.UserConfigDir
+
+// osExit is a seam over os.Exit so main itself can be driven directly in a
+// test: swapped for a code-capturing stub that doesn't terminate the test
+// binary, restored with t.Cleanup. Production default is the real os.Exit.
+var osExit = os.Exit
+
+// newKeyringStore is SecureStore's lazy credential-store factory, split out
+// to a named seam so it can be invoked directly in a test: deviceauth.
+// NewKeyringStore only constructs a *KeyringStore handle (service/account
+// name validation), it never touches the real OS keychain until Save/Load
+// is called on the result, so calling it here is safe and hermetic.
+// Production default/behaviour is unchanged.
+var newKeyringStore = func() (deviceauth.Store, error) {
+	return deviceauth.NewKeyringStore("sneat-cli", "https://auth.sneat.co|sneat-cli")
+}
+
 func main() {
+	osExit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run is main's testable body: it builds the composition-root Env, wires the
+// cobra command tree, executes it against args, and returns the process exit
+// code (0 on success). main itself stays a one-line os.Exit(run(...)) seam so
+// main is covered by driving run directly in tests.
+func run(args []string, stdout, stderr io.Writer) int {
 	// info resolves this build's version/commit/date once, from the
 	// github.com/strongo/buildinfo link-time vars stamped by
 	// .goreleaser.yaml's ldflags (falling back to runtime/debug.BuildInfo
@@ -34,19 +64,70 @@ func main() {
 	// and `sneat version` are wired from this single value below so they
 	// can never disagree.
 	info := buildinfo.Get("sneat")
-	path, err := session.DefaultPath(os.UserConfigDir)
+	env, err := newEnv(info)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "sneat:", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintln(stderr, "sneat:", err)
+		return 1
 	}
-	metadataPath, err := session.DefaultMetadataPath(os.UserConfigDir)
+	root := commands.Root(env)
+	root.SetArgs(args)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	// WireCobra registers the `version` subcommand and wires cobra's own
+	// --version/-v flag from the same Info, so `sneat --version` and
+	// `sneat version` can never disagree
+	// (github.com/strongo/buildinfo/cobracmd.WireCobra).
+	cobracmd.WireCobra(root, info)
+	root.AddCommand(
+		commands.Auth(env),
+		commands.Whoami(env),
+		commands.Space(env),
+		commands.Spaces(env),
+		commands.Ui(env),
+		commands.Chat(env),
+		commands.Contact(env),
+		commands.Contacts(env),
+		commands.Convo(env),
+		commands.Action(env),
+		commands.Context(env),
+		commands.Query(env),
+	)
+	if err := root.Execute(); err != nil {
+		_, _ = fmt.Fprintln(stderr, "sneat:", err)
+		return exitCodeFor(err)
+	}
+	return 0
+}
+
+// exitCodeFor is run's error-to-exit-code mapping, split out so the
+// *commands.ExitCodeError branch (an error that carries its own process exit
+// code, used by the Action Protocol) can be unit-tested directly against a
+// synthetic error instead of needing a real command failure to construct one.
+func exitCodeFor(err error) int {
+	code := 1
+	var exitErr *commands.ExitCodeError
+	if errors.As(err, &exitErr) {
+		code = exitErr.Code
+	}
+	return code
+}
+
+// newEnv builds the composition-root commands.Env: the real, process-wide
+// dependencies (secure session store, Firebase auth, Firestore readers, the
+// sneat-go API client, the interactive TUI/chat runners). It is split out of
+// run so its own construction errors (an unavailable user config dir) can be
+// tested directly, and so each closure below can be invoked directly in
+// tests without going through cobra at all.
+func newEnv(info buildinfo.Info) (commands.Env, error) {
+	path, err := session.DefaultPath(userConfigDir)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "sneat:", err)
-		os.Exit(1)
+		return commands.Env{}, err
 	}
-	store := session.NewLazySecureStore(func() (deviceauth.Store, error) {
-		return deviceauth.NewKeyringStore("sneat-cli", "https://auth.sneat.co|sneat-cli")
-	}, path, metadataPath)
+	metadataPath, err := session.DefaultMetadataPath(userConfigDir)
+	if err != nil {
+		return commands.Env{}, err
+	}
+	store := session.NewLazySecureStore(newKeyringStore, path, metadataPath)
 	env := commands.Env{
 		Getenv: os.Getenv,
 		Now:    time.Now,
@@ -129,35 +210,7 @@ func main() {
 			})
 		},
 	}
-	root := commands.Root(env)
-	// WireCobra registers the `version` subcommand and wires cobra's own
-	// --version/-v flag from the same Info, so `sneat --version` and
-	// `sneat version` can never disagree
-	// (github.com/strongo/buildinfo/cobracmd.WireCobra).
-	cobracmd.WireCobra(root, info)
-	root.AddCommand(
-		commands.Auth(env),
-		commands.Whoami(env),
-		commands.Space(env),
-		commands.Spaces(env),
-		commands.Ui(env),
-		commands.Chat(env),
-		commands.Contact(env),
-		commands.Contacts(env),
-		commands.Convo(env),
-		commands.Action(env),
-		commands.Context(env),
-		commands.Query(env),
-	)
-	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "sneat:", err)
-		code := 1
-		var exitErr *commands.ExitCodeError
-		if errors.As(err, &exitErr) {
-			code = exitErr.Code
-		}
-		os.Exit(code)
-	}
+	return env, nil
 }
 
 // chatContacts adapts the CLI's Firestore-backed contacts reader to the lean

@@ -7,7 +7,6 @@ package commands
 import (
 	"crypto/rand"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/sneat-co/sneat-ai-backend/const4sneatai"
@@ -38,7 +37,7 @@ func actionsDir(env Env) (string, error) {
 	if d := env.Getenv("SNEAT_CONFIG_DIR"); d != "" {
 		return filepath.Join(d, "sneat", "actions"), nil
 	}
-	return actionstore.DefaultDir(os.UserConfigDir)
+	return actionstore.DefaultDir(osUserConfigDir)
 }
 
 func newActionStore(env Env) (*actionstore.Store, error) {
@@ -49,13 +48,18 @@ func newActionStore(env Env) (*actionstore.Store, error) {
 	return actionstore.NewStore(dir), nil
 }
 
+// randRead reads cryptographically random bytes into b. It is a seam over
+// crypto/rand.Read (production default) so newActionID's practically
+// unreachable failure path can be exercised in tests.
+var randRead = rand.Read
+
 // newActionID generates a client-held action id: "act_" + 8 random lowercase
 // base36 characters, matching the const4sneatai.ActionIDPrefix format the
 // backend validates (act_xxxxxxxx).
 func newActionID() (string, error) {
 	const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := randRead(b); err != nil {
 		return "", err
 	}
 	out := make([]byte, 8)

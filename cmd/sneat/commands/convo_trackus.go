@@ -64,7 +64,7 @@ func seedSandboxContacts(ctx context.Context, userID, spaceID string) error {
 	// The facades are membership-gated, and the sandbox context carries only the
 	// DB; the user is attached per turn by the caller.
 	userCtx := facade.NewContextWithUserID(ctx, userID)
-	service := botservice4contactus.New()
+	service := contactusServiceFactory()
 	existing, err := service.ListContacts(userCtx, spaceID)
 	if err != nil {
 		return fmt.Errorf("failed to list sandbox contacts: %w", err)
@@ -84,4 +84,14 @@ func seedSandboxContacts(ctx context.Context, userID, spaceID string) error {
 		}
 	}
 	return nil
+}
+
+// contactusServiceFactory constructs the contact service seedSandboxContacts
+// calls. A package-level var (rather than calling botservice4contactus.New
+// directly) so tests can substitute a fake to exercise the
+// ListContacts/CreateContact error paths and the already-seeded dedup-skip
+// branch without needing two different real transaction kinds to fail
+// against a live DB. Production default is today's real service.
+var contactusServiceFactory = func() contract4contactus.ConvoService {
+	return botservice4contactus.New()
 }

@@ -2,6 +2,11 @@ package commands
 
 import "charm.land/huh/v2"
 
+// runForm executes the built huh form. It is a seam so tests can exercise
+// RunContactForm's error path without a real TTY; production always runs
+// the real form.
+var runForm = func(f *huh.Form) error { return f.Run() }
+
 // RunContactForm collects contact fields interactively via a huh form.
 // It is wired as Env.RunContactForm in production; tests inject a fake.
 func RunContactForm(in *contactInput) error {
@@ -35,7 +40,7 @@ func RunContactForm(in *contactInput) error {
 		huh.NewInput().Title("Phone").Value(&phone),
 		huh.NewInput().Title("Role").Placeholder("member").Value(&role),
 	))
-	if err := form.Run(); err != nil {
+	if err := runForm(form); err != nil {
 		return err
 	}
 	in.Emails = nonEmptySlice(email)
