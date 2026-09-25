@@ -1,9 +1,13 @@
 package chatapp
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"iter"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +16,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/strongo/aichat/ai"
@@ -1117,5 +1123,160 @@ func TestChatshell_Scenario5_MoveItToFriday_ThroughUI_FakeLLM(t *testing.T) {
 	_ = typeAndEnter(t, m, "yes") // result unused, only exec.Executed below is checked
 	if len(exec.Executed) != 1 || exec.Executed[0].Kind != sneatdomain.ModuleCalendar+"."+sneatdomain.IntentRescheduleHappening {
 		t.Fatalf("Executed = %+v, want exactly 1 reschedule after confirming", exec.Executed)
+	}
+}
+
+// --- PERMISSION-DENIED ruling tests (founder bug: "What's on today?" ->
+// "system: error: rpc error: code = PermissionDenied desc = Missing or
+// insufficient permissions.") -----------------------------------------------
+
+func newTestLoggerHandler(t *testing.T) (*handler, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	return &handler{ctx: context.Background(), spaceID: "sp1", logger: logger}, &buf
+}
+
+func TestChatSafeError_NilErr_ReturnsEmpty(t *testing.T) {
+	h, _ := newTestLoggerHandler(t)
+	if got := h.chatSafeError("test", nil); got != "" {
+		t.Fatalf("chatSafeError(nil) = %q, want empty", got)
+	}
+}
+
+// TestIsPermissionDeniedErr_RealGRPCStatus_PrimaryPath covers the PRIMARY
+// detection path (coordinator ruling, PR #56 review round 2): a real
+// *status.Status-backed error, wrapped through an ordinary fmt.Errorf
+// ("...: %w", err) layer the way this codebase's own reader/pipeline code
+// wraps errors -- status.FromError's own errors.As-based unwrapping must
+// see through it and report codes.PermissionDenied, without needing the
+// substring fallback at all.
+func TestIsPermissionDeniedErr_RealGRPCStatus_PrimaryPath(t *testing.T) {
+	if isPermissionDeniedErr(nil) {
+		t.Fatal("isPermissionDeniedErr(nil) = true, want false")
+	}
+	grpcErr := status.New(codes.PermissionDenied, "Missing or insufficient permissions.").Err()
+	wrapped := fmt.Errorf("pipeline: reading happenings: %w", grpcErr)
+	if !isPermissionDeniedErr(wrapped) {
+		t.Fatal("isPermissionDeniedErr did not detect a wrapped real gRPC PermissionDenied status via status.FromError")
+	}
+	// A different real gRPC code must NOT match.
+	notFound := fmt.Errorf("pipeline: reading happenings: %w", status.New(codes.NotFound, "nope").Err())
+	if isPermissionDeniedErr(notFound) {
+		t.Fatal("isPermissionDeniedErr matched a wrapped gRPC NotFound status, want false")
+	}
+}
+
+// TestChatSafeError_PermissionDenied_FriendlyTextAndLogsRaw covers the
+// FALLBACK detection path: an error whose text carries the standard "rpc
+// error: code = PermissionDenied desc = ..." shape but does NOT implement
+// GRPCStatus() (e.g. a test double, or a future error path that
+// stringifies before reaching here) -- isPermissionDeniedErr's substring
+// fallback still catches it.
+func TestChatSafeError_PermissionDenied_FriendlyTextAndLogsRaw(t *testing.T) {
+	h, buf := newTestLoggerHandler(t)
+	raw := fmt.Errorf("pipeline: reading happenings: %w", errors.New("rpc error: code = PermissionDenied desc = Missing or insufficient permissions."))
+	got := h.chatSafeError("turn", raw)
+	if strings.Contains(got, "rpc error") || strings.Contains(got, "PermissionDenied") {
+		t.Fatalf("chatSafeError leaked raw rpc text to the user: %q", got)
+	}
+	if !strings.Contains(got, "sp1") || !strings.Contains(got, "/spaces") {
+		t.Fatalf("chatSafeError = %q, want a friendly message naming the space and /spaces", got)
+	}
+	if !strings.Contains(buf.String(), "PermissionDenied") {
+		t.Fatalf("debug log = %q, want the raw error preserved for diagnostics", buf.String())
+	}
+}
+
+func TestChatSafeError_OtherError_PassesThroughRaw(t *testing.T) {
+	h, _ := newTestLoggerHandler(t)
+	got := h.chatSafeError("turn", errors.New("boom"))
+	if got != "error: boom" {
+		t.Fatalf("chatSafeError(boom) = %q, want \"error: boom\"", got)
+	}
+}
+
+func TestChatSafeError_NoLogger_StillReturnsFriendlyText(t *testing.T) {
+	h := &handler{ctx: context.Background(), spaceID: "sp1"} // logger left nil
+	got := h.chatSafeError("turn", errors.New("rpc error: code = PermissionDenied desc = nope"))
+	if !strings.Contains(got, "sp1") {
+		t.Fatalf("chatSafeError with nil logger = %q, want the friendly text still built", got)
+	}
+}
+
+// failingHappenings is a data.HappeningsReader whose Window always fails
+// with a Firestore-shaped PermissionDenied, for driving a real turn through
+// handleTurn's error branch.
+type failingHappenings struct{ *data.FakeHappenings }
+
+func (failingHappenings) Window(context.Context, string, time.Time, time.Time) ([]data.Happening, error) {
+	return nil, errors.New("rpc error: code = PermissionDenied desc = Missing or insufficient permissions.")
+}
+
+// TestChatshell_PermissionDenied_ShowsFriendlyMessage_NotRawRPCError is the
+// founder's exact reported flow end to end: "What's on today?" hits
+// showDay's deterministic path, whose Readers.Happenings.Window call fails
+// with a PermissionDenied -- the transcript must show the friendly,
+// actionable message, never the raw "rpc error: code = ..." text.
+func TestChatshell_PermissionDenied_ShowsFriendlyMessage_NotRawRPCError(t *testing.T) {
+	h, model := testHandler(t)
+	h.pipeline.Readers.Happenings = failingHappenings{&data.FakeHappenings{}}
+
+	m := typeAndEnter(t, model, "show my calendar today")
+
+	view := m.View().Content
+	if strings.Contains(view, "rpc error") || strings.Contains(view, "PermissionDenied") {
+		t.Fatalf("transcript leaked the raw rpc error:\n%s", view)
+	}
+	if !strings.Contains(view, "sp1") || !strings.Contains(view, "/spaces") {
+		t.Fatalf("expected a friendly message naming the space and /spaces, transcript:\n%s", view)
+	}
+}
+
+// TestOnStreamEvent_UnsupportedKind_LogsRawKind_AndAnswersPlainly drives the
+// full OnStreamEvent(EventCompleted) -> HandleAction path (via a fake LLM
+// streaming an action kind chat has no executor case for, the founder's
+// exact bug class) and asserts: no "system: error: pipeline: no executor
+// case" ever reaches the transcript, the plain explanatory text does, and
+// the raw kind is preserved in the debug log for diagnosing why the model
+// emitted it.
+func TestOnStreamEvent_UnsupportedKind_LogsRawKind_AndAnswersPlainly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		sseWriteHandler(w, `{"model":"gpt-5","choices":[{"delta":{"content":"Got it -- I'll add that to your calendar. <sneat-action>{\"kind\":\"calendar.add_happening\",\"slots\":{\"title\":\"Yoga\"}}</sneat-action>"}}]}`)
+		sseWriteHandler(w, "[DONE]")
+	}))
+	defer srv.Close()
+
+	h, model := testHandler(t)
+	var buf bytes.Buffer
+	h.logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	h.pipeline.LLM = openaicompat.New(openaicompat.Config{BaseURL: srv.URL, APIKey: "sk-test", Model: "gpt-5"})
+	exec := &pipeline.FakeExecutor{}
+	h.pipeline.Executor = exec
+
+	var m tea.Model = model
+	var cmd tea.Cmd
+	m, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = drain(m, cmd, 6)
+	for _, r := range "add a yoga class every Monday" {
+		m, _ = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(m, cmd, 40)
+
+	view := m.View().Content
+	if strings.Contains(view, "system: error") || strings.Contains(view, "no executor case") {
+		t.Fatalf("an unsupported action kind leaked a pipeline error to the user:\n%s", view)
+	}
+	if !strings.Contains(view, "isn't supported yet") {
+		t.Fatalf("expected the plain unsupported-kind explanation, transcript:\n%s", view)
+	}
+	if len(exec.Executed) != 0 {
+		t.Fatalf("an unsupported kind must never reach Executor: %+v", exec.Executed)
+	}
+	if !strings.Contains(buf.String(), "calendar.add_happening") {
+		t.Fatalf("debug log = %q, want the raw unsupported kind logged for diagnostics", buf.String())
 	}
 }
