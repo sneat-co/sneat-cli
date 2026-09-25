@@ -16,6 +16,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/strongo/aichat/ai"
@@ -1142,6 +1144,35 @@ func TestChatSafeError_NilErr_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+// TestIsPermissionDeniedErr_RealGRPCStatus_PrimaryPath covers the PRIMARY
+// detection path (coordinator ruling, PR #56 review round 2): a real
+// *status.Status-backed error, wrapped through an ordinary fmt.Errorf
+// ("...: %w", err) layer the way this codebase's own reader/pipeline code
+// wraps errors -- status.FromError's own errors.As-based unwrapping must
+// see through it and report codes.PermissionDenied, without needing the
+// substring fallback at all.
+func TestIsPermissionDeniedErr_RealGRPCStatus_PrimaryPath(t *testing.T) {
+	if isPermissionDeniedErr(nil) {
+		t.Fatal("isPermissionDeniedErr(nil) = true, want false")
+	}
+	grpcErr := status.New(codes.PermissionDenied, "Missing or insufficient permissions.").Err()
+	wrapped := fmt.Errorf("pipeline: reading happenings: %w", grpcErr)
+	if !isPermissionDeniedErr(wrapped) {
+		t.Fatal("isPermissionDeniedErr did not detect a wrapped real gRPC PermissionDenied status via status.FromError")
+	}
+	// A different real gRPC code must NOT match.
+	notFound := fmt.Errorf("pipeline: reading happenings: %w", status.New(codes.NotFound, "nope").Err())
+	if isPermissionDeniedErr(notFound) {
+		t.Fatal("isPermissionDeniedErr matched a wrapped gRPC NotFound status, want false")
+	}
+}
+
+// TestChatSafeError_PermissionDenied_FriendlyTextAndLogsRaw covers the
+// FALLBACK detection path: an error whose text carries the standard "rpc
+// error: code = PermissionDenied desc = ..." shape but does NOT implement
+// GRPCStatus() (e.g. a test double, or a future error path that
+// stringifies before reaching here) -- isPermissionDeniedErr's substring
+// fallback still catches it.
 func TestChatSafeError_PermissionDenied_FriendlyTextAndLogsRaw(t *testing.T) {
 	h, buf := newTestLoggerHandler(t)
 	raw := fmt.Errorf("pipeline: reading happenings: %w", errors.New("rpc error: code = PermissionDenied desc = Missing or insufficient permissions."))

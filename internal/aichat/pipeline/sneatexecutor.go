@@ -667,26 +667,19 @@ func (e SneatExecutor) deleteTodo(ctx context.Context, spaceID string, action se
 // splitListItemTitle splits a free-text title into one or more items (fix
 // round: founder buy-add-prompt.md reported "buy milk and bread tomorrow"
 // producing a single item titled "milk and bread" instead of two). It
-// splits deterministically on a comma OR the word "and" between two words
-// -- the two separators natural-language list grammar actually uses ("milk,
-// bread", "milk and bread", "milk, bread and eggs") -- rather than asking
-// the model to pick a delimiter, per the coordinator's "prefer splitting in
-// code" ruling.
-//
-// KNOWN TRADE-OFF, accepted rather than left unhandled: a genuinely
-// compound single-item title that itself contains "and" ("fish and chips",
-// "salt and pepper") is indistinguishable from a two-item list at this
-// layer and WILL be split into two items. This MVP slice has no dictionary
-// of compound food/product names to special-case against, and the
-// reported bug ("milk and bread", no comma) only reproduces AT ALL if bare
-// " and " is treated as a separator -- comma-only splitting would leave it
-// unfixed. sneatActionInstruction's slot contract asks the model to
-// comma-separate multiple items in the first place, so " and " splitting
-// is this function's fallback for exactly the phrasing a user actually
-// types, not its primary contract.
+// splits ONLY on a comma, newline, or semicolon -- deliberately NOT on the
+// word "and" (coordinator ruling, PR #56 review round 2): "fish and
+// chips", "salt and pepper", "Q and A" are single items whose title
+// legitimately contains "and", and are indistinguishable from a two-item
+// list by text alone. Splitting on "and" would silently corrupt those.
+// Instead, sneatActionInstruction's slot contract (llm.go) tells the model
+// directly to comma-separate multiple items in slots.title -- so "buy milk
+// and bread" is expected to arrive here as title="milk, bread" already,
+// the model having done the one-item-per-comma normalisation itself. This
+// function's job is only to split what the model was told to comma-join,
+// and to be a harmless no-op (one item) for an ordinary single-item title.
 func splitListItemTitle(title string) []string {
-	normalized := andSeparator.ReplaceAllString(title, ",")
-	parts := strings.Split(normalized, ",")
+	parts := listItemSeparator.Split(title, -1)
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		if p = strings.TrimSpace(p); p != "" {
@@ -696,9 +689,10 @@ func splitListItemTitle(title string) []string {
 	return out
 }
 
-// andSeparator matches " and " (any casing, one or more spaces either
-// side) between two list items -- see splitListItemTitle's doc comment.
-var andSeparator = regexp.MustCompile(`(?i)\s+and\s+`)
+// listItemSeparator matches a comma, semicolon, or newline between list
+// items -- see splitListItemTitle's doc comment. "and" is deliberately not
+// a separator.
+var listItemSeparator = regexp.MustCompile(`[,;\n]`)
 
 // addListItem creates one or more todo/to-buy items (splitListItemTitle) in
 // the PIPELINE's spaceID (B3 ruling: "ignore/strip Args[\"spaceID\"]

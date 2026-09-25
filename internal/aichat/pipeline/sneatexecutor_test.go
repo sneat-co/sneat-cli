@@ -317,11 +317,14 @@ func TestSneatExecutor_DeleteTodo_NoUndo(t *testing.T) {
 	}
 }
 
-// TestSplitListItemTitle covers the deterministic multi-item split (fix
-// round: founder buy-add-prompt.md's "buy milk and bread tomorrow" produced
-// one item titled "milk and bread" instead of two): comma-separated,
-// "and"-separated, a mix of both, surrounding whitespace, and the single-
-// item pass-through (no separator at all).
+// TestSplitListItemTitle covers the deterministic multi-item split: comma,
+// semicolon and newline separated, surrounding whitespace, the single-item
+// pass-through (no separator at all) -- and, per the coordinator's PR #56
+// review round 2, that "and" is NEVER treated as a separator, since a
+// title can legitimately contain it ("fish and chips", "salt and pepper",
+// "Q and A"). Splitting multiple items is now entirely the model's job
+// (sneatActionInstruction tells it to comma-join slots.title); this
+// function only splits what it was told to comma-join.
 func TestSplitListItemTitle(t *testing.T) {
 	cases := []struct {
 		title string
@@ -329,13 +332,16 @@ func TestSplitListItemTitle(t *testing.T) {
 	}{
 		{"milk", []string{"milk"}},
 		{"milk, bread", []string{"milk", "bread"}},
-		{"milk and bread", []string{"milk", "bread"}},
-		{"milk, bread and eggs", []string{"milk", "bread", "eggs"}},
+		{"milk, bread, eggs", []string{"milk", "bread", "eggs"}},
 		{"  milk , bread  ", []string{"milk", "bread"}},
+		{"milk;bread", []string{"milk", "bread"}},
+		{"milk\nbread", []string{"milk", "bread"}},
 		{"", nil},
-		// Documented trade-off (see splitListItemTitle's doc comment): a
-		// genuinely compound single-item title also splits.
-		{"fish and chips", []string{"fish", "chips"}},
+		// "and" is never a separator -- these must all stay ONE item.
+		{"milk and bread", []string{"milk and bread"}},
+		{"fish and chips", []string{"fish and chips"}},
+		{"salt and pepper", []string{"salt and pepper"}},
+		{"Q and A", []string{"Q and A"}},
 	}
 	for _, c := range cases {
 		got := splitListItemTitle(c.title)
@@ -352,10 +358,12 @@ func TestSplitListItemTitle(t *testing.T) {
 	}
 }
 
-// TestSneatExecutor_AddToBuy_MultiItem_SplitsAndUndoesAll is the founder's
-// exact reported bug, fixed: "milk and bread" becomes TWO created items in
-// one CreateListItems call, and the returned undo deletes both (comma-
-// joined itemID), not just the first.
+// TestSneatExecutor_AddToBuy_MultiItem_SplitsAndUndoesAll covers the
+// comma-separated multi-item contract sneatActionInstruction now asks the
+// model to follow (e.g. "milk, bread" for the founder's originally
+// reported "buy milk and bread"): the executor splits it into TWO created
+// items in one CreateListItems call, and the returned undo deletes both
+// (comma-joined itemID), not just the first.
 func TestSneatExecutor_AddToBuy_MultiItem_SplitsAndUndoesAll(t *testing.T) {
 	var sentItems []map[string]any
 	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
@@ -374,7 +382,7 @@ func TestSneatExecutor_AddToBuy_MultiItem_SplitsAndUndoesAll(t *testing.T) {
 	})
 	exec := SneatExecutor{Todo: api}
 	undo, err := exec.Execute(context.Background(), "sp1", session.Action{
-		Kind: "todo.add_to_buy", Args: map[string]string{"title": "milk and bread"},
+		Kind: "todo.add_to_buy", Args: map[string]string{"title": "milk, bread"},
 	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)

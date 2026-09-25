@@ -12,6 +12,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/bots-go-framework/bots-go-core/botkb"
 	"github.com/strongo/aichat/ai"
@@ -793,15 +795,33 @@ func (h *handler) chatSafeError(source string, err error) string {
 	return "error: " + err.Error()
 }
 
-// isPermissionDeniedErr reports whether err is (or wraps, however deeply --
-// string matching sees through every fmt.Errorf("...: %w", err) layer a
-// reader/pipeline call added) a Firestore/gRPC PermissionDenied. The
-// standard gRPC error text is "rpc error: code = PermissionDenied desc =
-// ...", so a plain substring check is simpler and more robust across
-// wrapping than importing google.golang.org/grpc/status to unwrap a
-// GRPCStatus() interface that not every layer here necessarily preserves.
+// isPermissionDeniedErr reports whether err is (or wraps, however deeply) a
+// Firestore/gRPC PermissionDenied.
+//
+// PRIMARY check: status.FromError (coordinator ruling, PR #56 review round
+// 2) uses errors.As internally (google.golang.org/grpc/status@v1.83.2's own
+// FromError), so it sees through every fmt.Errorf("...: %w", err) layer
+// this codebase's own reader/pipeline code adds, AND through
+// dalgo2firestore's own wrapping (github.com/dal-go/dalgo2firestore's
+// getter.go/inserter.go use github.com/pkg/errors.Wrapf, which implements
+// Unwrap() since pkg/errors v0.9.1 -- verified in this module's vendored
+// copy) -- so the real Firestore client's underlying *status.Status (or an
+// apierror.APIError, which also implements GRPCStatus()) is reachable from
+// here in production, not just from a directly-constructed status error.
+//
+// FALLBACK: a plain substring match on the standard "rpc error: code =
+// PermissionDenied desc = ..." text, kept for defense in depth -- a test
+// double or a future error path that stringifies before this point (losing
+// the GRPCStatus() interface) still gets the friendly message instead of
+// silently falling through to the raw-error branch.
 func isPermissionDeniedErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "PermissionDenied")
+	if err == nil {
+		return false
+	}
+	if st, ok := status.FromError(err); ok && st.Code() == codes.PermissionDenied {
+		return true
+	}
+	return strings.Contains(err.Error(), "PermissionDenied")
 }
 
 // render turns a deterministic/action Output into chatshell calls: a

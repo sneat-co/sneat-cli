@@ -362,6 +362,37 @@ func TestStreamRequest_SystemPromptTreatsSpaceContentAsData(t *testing.T) {
 	}
 }
 
+// TestSneatActionInstruction_ConfirmationWording is item 3 of the
+// coordinator's PR #56 review round 2: the instruction must tell the model
+// which actions require the user's "yes" confirmation before they happen
+// (reschedule/cancel a happening, delete a todo -- exactly isDestructive's
+// list in pipeline.go) and phrase those as a proposal, never as already
+// done; and separately confirm which actions run immediately without
+// confirmation (add_todo/add_to_buy/complete_todo/reopen_todo -- the
+// pipeline.runAction path resolveAndAct takes for any non-destructive
+// kind), where saying "done" is accurate.
+func TestSneatActionInstruction_ConfirmationWording(t *testing.T) {
+	text := sneatActionInstruction
+	if !strings.Contains(text, "confirmation") {
+		t.Fatalf("System = %q, want it to mention confirmation is required for some actions", text)
+	}
+	if !strings.Contains(text, `never "Done, I cancelled it."`) {
+		t.Fatalf("System = %q, want an explicit example of the WRONG (already-done) phrasing to avoid for a destructive action", text)
+	}
+	if !strings.Contains(text, "run immediately") {
+		t.Fatalf("System = %q, want it to state that adding/completing/reopening run immediately (no confirmation)", text)
+	}
+	// The three isDestructive kinds must each be named in the same sentence
+	// as "confirmation" -- not merely present anywhere in the instruction
+	// (they are also named earlier, in the per-kind list).
+	confirmSentence := text[strings.Index(text, "Rescheduling"):strings.Index(text, "Adding an item")]
+	for _, kind := range []string{"reschedul", "cancel", "delet"} {
+		if !strings.Contains(strings.ToLower(confirmSentence), kind) {
+			t.Errorf("confirmation sentence = %q, want it to cover %q (isDestructive's list)", confirmSentence, kind)
+		}
+	}
+}
+
 // fakeErroringLLM streams one delta ending mid-tag (held back by the
 // Splitter as a possible tag start) then a fatal stream error, never an
 // EventCompleted -- the shape splitStream's error branch must handle.

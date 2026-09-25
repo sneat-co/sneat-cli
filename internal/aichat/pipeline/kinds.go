@@ -55,12 +55,12 @@ func executorActionKinds() []ActionKindSpec {
 		{
 			Kind:    sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddTodo,
 			Meaning: `Add a new item to the todo ("do") list. No reference -- this always creates a new item.`,
-			Slots:   `"title": the item text. For more than one item, list them separated by commas (e.g. "call dentist, pay rent") -- the app splits them into separate items on its own; never emit more than one action block to add several items`,
+			Slots:   `"title": the item text. For several items, put them comma-separated in slots.title (e.g. "call dentist, pay rent") -- the app splits on commas into separate items; do NOT use the word "and" as a separator (a title like "fish and chips" or "salt and pepper" is one item, and using "and" to join several items would corrupt it), and never emit more than one action block to add several items`,
 		},
 		{
 			Kind:    sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddToBuy,
 			Meaning: `Add a new item to the to-buy (shopping) list. No reference -- this always creates a new item.`,
-			Slots:   `"title": the item text. For more than one item, list them separated by commas (e.g. "milk, bread") -- the app splits them into separate items on its own; never emit more than one action block to add several items`,
+			Slots:   `"title": the item text. For several items, put them comma-separated in slots.title (e.g. "milk and bread" -> "milk, bread") -- the app splits on commas into separate items; do NOT use the word "and" as a separator (a title like "fish and chips" or "salt and pepper" is one item, and using "and" to join several items would corrupt it), and never emit more than one action block to add several items`,
 		},
 	}
 }
