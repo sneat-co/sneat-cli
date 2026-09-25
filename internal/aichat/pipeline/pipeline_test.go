@@ -62,6 +62,86 @@ func TestTurn_ShowWeek(t *testing.T) {
 	}
 }
 
+func TestTurn_ShowRequestedWeekReadsOnlyThatWindow(t *testing.T) {
+	p, st := newTestPipeline(nil)
+	for _, tc := range []struct {
+		request, monday, eventID string
+	}{
+		{"what do I have for next week?", "2026-09-28", "h2"},
+		{"show my schedule for week of 2026-10-01", "2026-09-28", "h2"},
+		{"show my schedule for week of 2026-09-25", "2026-09-21", "h1"},
+	} {
+		out, err := p.Turn(context.Background(), tc.request, st, "sp1")
+		if err != nil || out.NeedsLLM {
+			t.Fatalf("%q: out=%+v err=%v", tc.request, out, err)
+		}
+		if got := out.WeekStart.Format("2006-01-02"); got != tc.monday {
+			t.Errorf("%q: week starts %s, want %s", tc.request, got, tc.monday)
+		}
+		if len(out.Entities) == 0 || out.Entities[0].Keys["happeningID"] != tc.eventID {
+			t.Errorf("%q: entities=%+v, want first %s", tc.request, out.Entities, tc.eventID)
+		}
+	}
+}
+
+func TestShowWeek_LastWeekUsesPreviousCalendarWindow(t *testing.T) {
+	p, st := newTestPipeline(nil)
+	out, err := p.showWeek(context.Background(), st, "sp1", "last_week")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.WeekStart.Format("2006-01-02"); got != "2026-09-14" {
+		t.Fatalf("last week starts %s, want 2026-09-14", got)
+	}
+	if len(out.Entities) != 0 {
+		t.Fatalf("last week should be empty, got %+v", out.Entities)
+	}
+}
+
+func TestTurn_ShowWeek_RecurringSlotAcrossTimezones(t *testing.T) {
+	dublin, err := time.LoadLocation("Europe/Dublin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newYork, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot := dbo4calendarius.HappeningSlot{HappeningSlotTiming: dbo4calendarius.HappeningSlotTiming{
+		Timing: dbo4calendarius.Timing{
+			Start:    dbo4calendarius.DateTime{Date: "2026-09-20", Time: "23:00"},
+			TimeZone: "America/New_York",
+		},
+		Repeats:  dbo4calendarius.RepeatPeriodWeekly,
+		Weekdays: []dbo4calendarius.WeekdayCode{dbo4calendarius.Sunday2},
+	}}
+	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{{
+		ID: "late", SpaceID: "sp1", Title: "Late call", SlotID: "s1", Recurring: true, Slot: &slot,
+		Start: time.Date(2026, 9, 20, 23, 0, 0, 0, newYork),
+	}}}}
+	p := Pipeline{Readers: readers, Now: func() time.Time { return time.Date(2026, 9, 25, 12, 0, 0, 0, dublin) }}
+	out, err := p.showWeek(context.Background(), &session.State{}, "sp1", "next_week")
+	if err != nil || len(out.HappeningRows) != 1 {
+		t.Fatalf("out=%+v err=%v, want one cross-zone recurrence", out, err)
+	}
+	start := out.HappeningRows[0].Start.In(dublin)
+	if got := start.Format("2006-01-02 15:04"); got != "2026-09-28 04:00" {
+		t.Fatalf("start in Dublin = %s, want Monday 04:00", got)
+	}
+	view := controls.NewWeekCalendar("Week", out.WeekStart, out.HappeningRows).View(0, false)
+	if !strings.Contains(view, "Monday, Sep 28\n  Late call  04:00") {
+		t.Fatalf("event should appear under Monday in the requested week:\n%s", view)
+	}
+}
+
+func TestTurn_InvalidRequestedWeekDoesNotInventSchedule(t *testing.T) {
+	p, st := newTestPipeline(nil)
+	out, err := p.Turn(context.Background(), "show my schedule for week of pineapple", st, "sp1")
+	if err != nil || out.NeedsLLM || out.Presentation != "" || !strings.Contains(out.Text, "couldn't identify that week") {
+		t.Fatalf("out=%+v err=%v, want a date hint without fabricated results", out, err)
+	}
+}
+
 // TestTurn_ShowWeek_ProjectsBothRecurringOccurrences is S3: a Mon/Fri
 // recurring happening in a week view produces TWO rows, each carrying its
 // own projected occurrence date -- not the template's single stale date
@@ -72,7 +152,7 @@ func TestTurn_ShowWeek_ProjectsBothRecurringOccurrences(t *testing.T) {
 	readers := data.Readers{Happenings: &data.FakeHappenings{Items: []data.Happening{yoga}}}
 	p := Pipeline{Readers: readers, Now: func() time.Time { return now }}
 	st := &session.State{}
-	out, err := p.showWeek(context.Background(), st, "sp1")
+	out, err := p.showWeek(context.Background(), st, "sp1", "this_week")
 	if err != nil {
 		t.Fatalf("showWeek: %v", err)
 	}

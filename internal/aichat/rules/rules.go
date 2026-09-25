@@ -63,16 +63,60 @@ func showDayRule() rules.Rule {
 }
 
 func showWeekRule() rules.Rule {
-	match := rules.Phrases("this week", "show this week", "what's happening this week", "whats happening this week", "show my week", "calendar this week")
 	return rules.Rule{Name: "calendar.show_week", Match: func(text string, _ session.State) (decision.Decision, bool) {
-		if !match(text) {
+		when, ok := weekRequest(text)
+		if !ok {
 			return decision.Decision{}, false
 		}
 		d := decided(sneatdomain.ModuleCalendar, sneatdomain.IntentShowWeek, sneatdomain.PresentationWeekCalendar)
-		d.Slots = map[string]string{"when": "this_week"}
+		d.Slots = map[string]string{"when": when}
 		d.RequiredData = []string{sneatdomain.DataWeekHappenings}
 		return d, true
 	}}
+}
+
+// weekRequest recognises schedule questions without treating every mention of
+// a future week (for example, "book a dentist next week") as a read request.
+// The rules provider has already normalised case, whitespace and punctuation.
+func weekRequest(text string) (string, bool) {
+	if text == "show my week" || text == "my week" {
+		return "this_week", true
+	}
+	for _, phrase := range []struct{ text, slot string }{
+		{"this week", "this_week"}, {"next week", "next_week"},
+		{"last week", "last_week"}, {"previous week", "last_week"},
+	} {
+		if text == phrase.text || (strings.HasSuffix(text, phrase.text) && scheduleQuestion(text)) {
+			return phrase.slot, true
+		}
+	}
+	for _, marker := range []string{"week of ", "week starting ", "week containing "} {
+		if i := strings.Index(text, marker); i >= 0 && (i == 0 || scheduleQuestion(text)) {
+			when := strings.TrimSpace(text[i+len(marker):])
+			if when != "" {
+				return when, true
+			}
+		}
+	}
+	return "", false
+}
+
+func scheduleQuestion(text string) bool {
+	for _, prefix := range []string{
+		"show this ", "show next ", "show last ", "show previous ",
+		"show my ", "show me my ", "show calendar ", "show schedule ",
+		"calendar ", "my calendar ", "my schedule ", "schedule for ",
+		"what do i have for ", "what do i have on ", "what do we have for ", "what have i got for ",
+		"what's happening ", "whats happening ", "what is happening ",
+		"what's on ", "whats on ", "what is on ",
+		"what's scheduled ", "whats scheduled ", "what is scheduled ",
+		"what are my plans ",
+	} {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func showUpcomingRule() rules.Rule {

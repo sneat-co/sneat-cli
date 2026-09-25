@@ -226,7 +226,7 @@ func (p Pipeline) handleCommand(ctx context.Context, d decision.Decision, st *se
 	case sneatdomain.PresentationDayCalendar:
 		return p.showDay(ctx, st, spaceID, d.Slots["when"])
 	case sneatdomain.PresentationWeekCalendar:
-		return p.showWeek(ctx, st, spaceID)
+		return p.showWeek(ctx, st, spaceID, d.Slots["when"])
 	case sneatdomain.PresentationHappeningsList:
 		return p.showUpcoming(ctx, st, spaceID)
 	case sneatdomain.PresentationTodoList:
@@ -245,7 +245,7 @@ func (p Pipeline) handleCommand(ctx context.Context, d decision.Decision, st *se
 	return Output{NeedsLLM: true, Decision: &d}, nil
 }
 
-const helpText = "I can show your calendar (today, this week, upcoming), your todos and to-buy list, and your contacts. Say things like \"show my calendar today\", \"my todos\", or \"contacts\"."
+const helpText = "I can show your calendar (today, this week, next week, a week of YYYY-MM-DD, upcoming), your todos and to-buy list, and your contacts. Say things like \"what do I have for next week?\", \"my todos\", or \"contacts\"."
 
 // showDay shows one calendar day. when is a decision's "when" slot (m1:
 // "honour decision date slots", e.g. "show my calendar tomorrow" ->
@@ -269,21 +269,40 @@ func (p Pipeline) showDay(ctx context.Context, st *session.State, spaceID, when 
 	return p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationDayCalendar, emptyText, false)
 }
 
-func (p Pipeline) showWeek(ctx context.Context, st *session.State, spaceID string) (Output, error) {
+func (p Pipeline) showWeek(ctx context.Context, st *session.State, spaceID, when string) (Output, error) {
 	now := p.now()
+	anchor := now
+	switch when {
+	case "", "this_week", "this week":
+	case "next_week", "next week":
+		anchor = now.AddDate(0, 0, 7)
+	case "last_week", "last week", "previous_week", "previous week":
+		anchor = now.AddDate(0, 0, -7)
+	default:
+		date, ok := temporal.ParseText(now, when)
+		if !ok {
+			st.LastShown = nil
+			return Output{Text: "I couldn't identify that week. Use a date like YYYY-MM-DD."}, nil
+		}
+		anchor = date
+	}
 	// ISO week: Monday start. time.Weekday is Sunday=0..Saturday=6, so the
 	// offset back to Monday is -6 on a Sunday and -(weekday-1) otherwise
 	// (coordinator ruling TIMEZONES: week start Monday unless locale says
 	// otherwise -- no locale signal is wired yet, so Monday is the default).
-	weekday := int(now.Weekday())
+	weekday := int(anchor.Weekday())
 	offset := -(weekday - 1)
 	if weekday == 0 {
 		offset = -6
 	}
-	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, offset)
+	from := time.Date(anchor.Year(), anchor.Month(), anchor.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, offset)
 	to := from.AddDate(0, 0, 7)
-	out, err := p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationWeekCalendar, "You have nothing scheduled this week.", false)
+	window := fmt.Sprintf("%s–%s", from.Format("Jan 2"), to.AddDate(0, 0, -1).Format("Jan 2, 2006"))
+	out, err := p.showWindow(ctx, st, spaceID, from, to, sneatdomain.PresentationWeekCalendar, "Nothing scheduled for "+window+".", false)
 	out.WeekStart = from // S9 follow-up: controls.NewWeekCalendar needs the Monday to build its day sections.
+	if err == nil && len(out.HappeningRows) > 0 {
+		out.Text = fmt.Sprintf("From your calendar: %d happening(s) for %s.", len(out.HappeningRows), window)
+	}
 	return out, err
 }
 
@@ -397,26 +416,24 @@ func projectOccurrences(h data.Happening, from, to time.Time) []occurrence {
 	if h.Slot == nil || h.Slot.Repeats != dbo4calendarius.RepeatPeriodWeekly || len(h.Slot.Weekdays) == 0 {
 		return nil // filterRecurringToWindow should already have dropped these
 	}
-	loc := h.Start.Location()
-	hour, minute := 0, 0
+	// Calendarius owns recurrence weekday, week-of-month, start-date and DST
+	// rules. Give it the slot's zone and the requested absolute window so a
+	// Sunday evening slot can correctly appear on Monday in another zone.
+	materialised := dbo4calendarius.Occurrences(
+		map[string]*dbo4calendarius.HappeningSlot{h.SlotID: h.Slot}, nil,
+		from, to, h.Start.Location(),
+	)
 	var duration time.Duration
-	if !h.Start.IsZero() {
-		hour, minute = h.Start.Hour(), h.Start.Minute()
-		if !h.End.IsZero() && h.End.After(h.Start) {
-			duration = h.End.Sub(h.Start)
-		}
+	if !h.End.IsZero() && h.End.After(h.Start) {
+		duration = h.End.Sub(h.Start)
 	}
-	var out []occurrence
-	for d := from; d.Before(to); d = d.AddDate(0, 0, 1) {
-		if !weekdayCodeMatches(h.Slot.Weekdays, d.Weekday()) {
-			continue
-		}
-		start := time.Date(d.Year(), d.Month(), d.Day(), hour, minute, 0, 0, loc)
-		var end time.Time
+	out := make([]occurrence, 0, len(materialised))
+	for _, item := range materialised {
+		end := item.End
 		if duration > 0 {
-			end = start.Add(duration)
+			end = item.Start.Add(duration)
 		}
-		out = append(out, occurrence{start, end})
+		out = append(out, occurrence{item.Start, end})
 	}
 	return out
 }
@@ -442,15 +459,10 @@ func filterRecurringToWindow(hs []data.Happening, from, to time.Time) []data.Hap
 // recurrenceHitsWindow reports whether h's weekly recurrence rule produces
 // at least one occurrence in the day-aligned range [from, to).
 func recurrenceHitsWindow(h data.Happening, from, to time.Time) bool {
-	if h.Slot == nil || h.Slot.Repeats != dbo4calendarius.RepeatPeriodWeekly || len(h.Slot.Weekdays) == 0 {
+	if !h.Recurring || h.Slot == nil || h.Slot.Repeats != dbo4calendarius.RepeatPeriodWeekly || len(h.Slot.Weekdays) == 0 {
 		return false
 	}
-	for d := from; d.Before(to); d = d.AddDate(0, 0, 1) {
-		if weekdayCodeMatches(h.Slot.Weekdays, d.Weekday()) {
-			return true
-		}
-	}
-	return false
+	return len(projectOccurrences(h, from, to)) > 0
 }
 
 func (p Pipeline) listTodos(ctx context.Context, st *session.State, spaceID, list string) (Output, error) {
