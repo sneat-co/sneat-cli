@@ -2,7 +2,6 @@ package commands
 
 import (
 	"bytes"
-	"encoding/json"
 	"testing"
 
 	"github.com/sneat-co/sneat-cli/internal/session"
@@ -20,12 +19,8 @@ func TestWhoami_PrintsSession(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	var got map[string]string
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatalf("not JSON: %v", err)
-	}
-	if got["uid"] != "u1" || got["project"] != "sneat-eur3-1" {
-		t.Fatalf("got %+v", got)
+	if buf.String() != "a@b.c\n" {
+		t.Fatalf("whoami output = %q", buf.String())
 	}
 }
 
