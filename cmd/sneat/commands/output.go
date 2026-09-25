@@ -103,6 +103,14 @@ func writeJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
+// jsonUnmarshalGeneric and yamlMarshalFn are seams over encoding/json's
+// Unmarshal and yaml.v3's Marshal so writeYAML's two internal error branches
+// -- otherwise unreachable once json.Marshal(v) has already succeeded, since
+// its own output always re-unmarshals and re-marshals cleanly -- can be
+// exercised in tests. Production always calls the real functions.
+var jsonUnmarshalGeneric = json.Unmarshal
+var yamlMarshalFn = yaml.Marshal
+
 // writeYAML encodes v as YAML, routing through JSON first so the emitted keys
 // match the JSON tags (yaml.v3 does not read json tags).
 func writeYAML(w io.Writer, v any) error {
@@ -111,10 +119,10 @@ func writeYAML(w io.Writer, v any) error {
 		return err
 	}
 	var generic any
-	if err := json.Unmarshal(j, &generic); err != nil {
+	if err := jsonUnmarshalGeneric(j, &generic); err != nil {
 		return err
 	}
-	out, err := yaml.Marshal(generic)
+	out, err := yamlMarshalFn(generic)
 	if err != nil {
 		return err
 	}

@@ -11,11 +11,18 @@ import (
 	"github.com/strongo/aichat/ai/aiconfig"
 )
 
+// osUserConfigDir is a seam over os.UserConfigDir so aiConfigPath's
+// error-fallback branch (and, by pointing it at a temp dir, aiconfig.Load's
+// own read-error branch in runChat) can be exercised in tests without
+// touching the real user config directory. Production always calls the real
+// os.UserConfigDir.
+var osUserConfigDir = os.UserConfigDir
+
 // aiConfigPath returns <UserConfigDir>/sneat/ai.yaml, or "" when the user
 // config directory cannot be determined -- aiconfig.Load treats a missing
 // file as "use defaults", never an error, so "" is a safe fallback too.
 func aiConfigPath() string {
-	dir, err := os.UserConfigDir()
+	dir, err := osUserConfigDir()
 	if err != nil {
 		return ""
 	}
