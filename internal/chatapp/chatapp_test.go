@@ -127,6 +127,82 @@ func TestDefaultSpaceID(t *testing.T) {
 	})
 }
 
+// TestDefaultSpaceID_PseudoSpace covers the PSEUDO-SPACE ruling (founder
+// bug: a session's persisted CurrentSpace of literally "family" sent
+// Firestore reads at spaces/family/..., which PermissionDenied's because
+// that is essentially never a space the signed-in user is a member of):
+// "family"/"private" (case-insensitively) must resolve to the user's real
+// space of that type, not be returned verbatim the way any other
+// currentSpace value is.
+func TestDefaultSpaceID_PseudoSpace(t *testing.T) {
+	spaces := spaceIDFakeSpaces{
+		"space-c": map[string]any{"type": "private"},
+		"space-a": map[string]any{"type": "custom"},
+		"space-b": map[string]any{"type": "family"},
+	}
+
+	t.Run("pseudo family resolves to the real family space", func(t *testing.T) {
+		got := defaultSpaceID(context.Background(), spaces, "u1", "family")
+		if got != "space-b" {
+			t.Fatalf("got %q, want space-b", got)
+		}
+	})
+
+	t.Run("pseudo private resolves to the real private space", func(t *testing.T) {
+		got := defaultSpaceID(context.Background(), spaces, "u1", "private")
+		if got != "space-c" {
+			t.Fatalf("got %q, want space-c", got)
+		}
+	})
+
+	t.Run("pseudo id matched case-insensitively", func(t *testing.T) {
+		got := defaultSpaceID(context.Background(), spaces, "u1", "Family")
+		if got != "space-b" {
+			t.Fatalf("got %q, want space-b", got)
+		}
+	})
+
+	t.Run("unresolvable pseudo id falls back to family-then-sorted", func(t *testing.T) {
+		// No space has type "private" here, so spaceIDByType finds zero
+		// matches and defaultSpaceID must fall back to its ordinary
+		// family-then-sorted default (space-b, the only family space)
+		// rather than returning the unresolved pseudo id "private" itself.
+		noPrivate := spaceIDFakeSpaces{
+			"space-a": map[string]any{"type": "custom"},
+			"space-b": map[string]any{"type": "family"},
+		}
+		got := defaultSpaceID(context.Background(), noPrivate, "u1", "private")
+		if got != "space-b" {
+			t.Fatalf("got %q, want space-b (family fallback)", got)
+		}
+	})
+
+	t.Run("ambiguous pseudo match falls back rather than guessing", func(t *testing.T) {
+		twoFamilies := spaceIDFakeSpaces{
+			"space-a": map[string]any{"type": "family"},
+			"space-b": map[string]any{"type": "family"},
+		}
+		got := defaultSpaceID(context.Background(), twoFamilies, "u1", "family")
+		if got != "space-a" && got != "space-b" {
+			t.Fatalf("got %q, want one of the two family spaces (fallback picks by isFamilySpace, not a guess)", got)
+		}
+	})
+}
+
+// TestIsPseudoSpaceID covers the pseudo/real id distinction directly.
+func TestIsPseudoSpaceID(t *testing.T) {
+	for _, id := range []string{"family", "Family", "FAMILY", "private", "Private"} {
+		if !isPseudoSpaceID(id) {
+			t.Errorf("isPseudoSpaceID(%q) = false, want true", id)
+		}
+	}
+	for _, id := range []string{"", "space-a", "familyish", "myprivate"} {
+		if isPseudoSpaceID(id) {
+			t.Errorf("isPseudoSpaceID(%q) = true, want false", id)
+		}
+	}
+}
+
 // TestIsFamilySpace covers the family-type match, a non-family type, and
 // the defensively-nil/wrong-shape info branches.
 func TestIsFamilySpace(t *testing.T) {

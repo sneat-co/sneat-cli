@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -103,27 +104,47 @@ func (e SneatExecutor) Execute(ctx context.Context, spaceID string, action sessi
 			return nil, fmt.Errorf("pipeline: %q belongs to another space", action.Target.Title)
 		}
 	}
-	switch action.Kind {
-	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening:
-		return e.rescheduleHappening(ctx, spaceID, action)
-	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentCancelHappening:
-		return e.cancelHappening(ctx, spaceID, action)
-	case calendarRevokeCancellationKind:
-		return nil, e.revokeCancellation(ctx, spaceID, action)
-	case calendarCancelAdjustmentKind:
-		return nil, e.cancelAdjustment(ctx, spaceID, action)
-	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentCompleteTodo:
-		return e.setTodoDone(ctx, spaceID, action, true)
-	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentReopenTodo:
-		return e.setTodoDone(ctx, spaceID, action, false)
-	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentDeleteTodo:
-		return nil, e.deleteTodo(ctx, spaceID, action)
-	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddTodo:
-		return e.addListItem(ctx, spaceID, action, data.ListKindDo)
-	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddToBuy:
-		return e.addListItem(ctx, spaceID, action, data.ListKindBuy)
-	default:
+	handler, ok := e.handlers()[action.Kind]
+	if !ok {
 		return nil, fmt.Errorf("pipeline: no executor case for action kind %q", action.Kind)
+	}
+	return handler(ctx, spaceID, action)
+}
+
+// handlers is the single dispatch table Execute runs through. Every key IS
+// a real, reachable executor case -- kinds.go's
+// TestSupportedActionKinds_MatchesExecutor (kinds_test.go) cross-checks
+// this map's keys against SupportedActionKinds()'s executor-backed entries
+// (plus the two undo-only kinds this map also carries, which are
+// deliberately excluded from SupportedActionKinds -- see their own doc
+// comments below), so the kinds this executor can run and the kinds
+// sneatActionInstruction advertises to the model can never drift apart the
+// way the old switch/prose pair did (founder bug, buy-add-prompt.md).
+func (e SneatExecutor) handlers() map[string]func(context.Context, string, session.Action) (*session.Action, error) {
+	return map[string]func(context.Context, string, session.Action) (*session.Action, error){
+		sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening: e.rescheduleHappening,
+		sneatdomain.ModuleCalendar + "." + sneatdomain.IntentCancelHappening:     e.cancelHappening,
+		calendarRevokeCancellationKind: func(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+			return nil, e.revokeCancellation(ctx, spaceID, action)
+		},
+		calendarCancelAdjustmentKind: func(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+			return nil, e.cancelAdjustment(ctx, spaceID, action)
+		},
+		sneatdomain.ModuleTodo + "." + sneatdomain.IntentCompleteTodo: func(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+			return e.setTodoDone(ctx, spaceID, action, true)
+		},
+		sneatdomain.ModuleTodo + "." + sneatdomain.IntentReopenTodo: func(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+			return e.setTodoDone(ctx, spaceID, action, false)
+		},
+		sneatdomain.ModuleTodo + "." + sneatdomain.IntentDeleteTodo: func(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+			return nil, e.deleteTodo(ctx, spaceID, action)
+		},
+		sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddTodo: func(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+			return e.addListItem(ctx, spaceID, action, data.ListKindDo)
+		},
+		sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddToBuy: func(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+			return e.addListItem(ctx, spaceID, action, data.ListKindBuy)
+		},
 	}
 }
 
@@ -622,6 +643,12 @@ func (e SneatExecutor) setTodoDone(ctx context.Context, spaceID string, action s
 	return undo, nil
 }
 
+// deleteTodo deletes one or more items in a single call. Target.Keys
+// ["itemID"] is usually a single ID, but addListItem's own undo (below) can
+// set it to several comma-joined IDs when the add it is undoing created
+// more than one item -- DeleteListItems already accepts a []string, so a
+// plain strings.Split (a no-op comma split for the single-ID case) covers
+// both without a second code path.
 func (e SneatExecutor) deleteTodo(ctx context.Context, spaceID string, action session.Action) error {
 	if e.Todo == nil || action.Target == nil {
 		return fmt.Errorf("pipeline: delete_todo requires Todo API and a resolved target")
@@ -633,29 +660,72 @@ func (e SneatExecutor) deleteTodo(ctx context.Context, spaceID string, action se
 			SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
 			ListID:       dbo4listus.ListKey(listKeyFor(list)),
 		},
-		ItemIDs: []string{itemID},
+		ItemIDs: strings.Split(itemID, ","),
 	})
 }
 
-// addListItem creates a todo/to-buy item in the PIPELINE's spaceID (B3
-// ruling: "ignore/strip Args[\"spaceID\"] everywhere") -- action.Args
-// ["spaceID"] is never read, however this action was built (a model has no
-// legitimate reason to name a space; even a genuine multi-space feature
-// would route through a fresh pipeline call, not a client-supplied field).
+// splitListItemTitle splits a free-text title into one or more items (fix
+// round: founder buy-add-prompt.md reported "buy milk and bread tomorrow"
+// producing a single item titled "milk and bread" instead of two). It
+// splits deterministically on a comma OR the word "and" between two words
+// -- the two separators natural-language list grammar actually uses ("milk,
+// bread", "milk and bread", "milk, bread and eggs") -- rather than asking
+// the model to pick a delimiter, per the coordinator's "prefer splitting in
+// code" ruling.
+//
+// KNOWN TRADE-OFF, accepted rather than left unhandled: a genuinely
+// compound single-item title that itself contains "and" ("fish and chips",
+// "salt and pepper") is indistinguishable from a two-item list at this
+// layer and WILL be split into two items. This MVP slice has no dictionary
+// of compound food/product names to special-case against, and the
+// reported bug ("milk and bread", no comma) only reproduces AT ALL if bare
+// " and " is treated as a separator -- comma-only splitting would leave it
+// unfixed. sneatActionInstruction's slot contract asks the model to
+// comma-separate multiple items in the first place, so " and " splitting
+// is this function's fallback for exactly the phrasing a user actually
+// types, not its primary contract.
+func splitListItemTitle(title string) []string {
+	normalized := andSeparator.ReplaceAllString(title, ",")
+	parts := strings.Split(normalized, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// andSeparator matches " and " (any casing, one or more spaces either
+// side) between two list items -- see splitListItemTitle's doc comment.
+var andSeparator = regexp.MustCompile(`(?i)\s+and\s+`)
+
+// addListItem creates one or more todo/to-buy items (splitListItemTitle) in
+// the PIPELINE's spaceID (B3 ruling: "ignore/strip Args[\"spaceID\"]
+// everywhere") -- action.Args["spaceID"] is never read, however this
+// action was built (a model has no legitimate reason to name a space; even
+// a genuine multi-space feature would route through a fresh pipeline call,
+// not a client-supplied field). The undo it returns deletes every item
+// this call created, not just the first, via deleteTodo's comma-joined
+// itemID contract.
 func (e SneatExecutor) addListItem(ctx context.Context, spaceID string, action session.Action, list string) (*session.Action, error) {
 	if e.Todo == nil {
 		return nil, fmt.Errorf("pipeline: add todo/to-buy requires Todo API")
 	}
-	title := action.Args["title"]
-	if title == "" {
+	titles := splitListItemTitle(action.Args["title"])
+	if len(titles) == 0 {
 		return nil, fmt.Errorf("pipeline: add %s: a title is required", list)
+	}
+	items := make([]dto4listus.CreateListItemRequest, 0, len(titles))
+	for _, title := range titles {
+		items = append(items, dto4listus.CreateListItemRequest{ListItemBase: dbo4listus.ListItemBase{Title: title}})
 	}
 	req := dto4listus.CreateListItemsRequest{
 		ListRequest: dto4listus.ListRequest{
 			SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
 			ListID:       dbo4listus.ListKey(listKeyFor(list)),
 		},
-		Items: []dto4listus.CreateListItemRequest{{ListItemBase: dbo4listus.ListItemBase{Title: title}}},
+		Items: items,
 	}
 	resp, err := e.Todo.CreateListItems(ctx, req)
 	if err != nil {
@@ -664,9 +734,14 @@ func (e SneatExecutor) addListItem(ctx context.Context, spaceID string, action s
 	if len(resp.CreatedItems) == 0 {
 		return nil, nil
 	}
-	created := resp.CreatedItems[0]
-	target := session.EntityRef{Type: sneatdomain.EntityTodo, Title: title,
-		Keys: map[string]string{"spaceID": spaceID, "list": list, "itemID": created.ID}}
+	createdTitles := make([]string, 0, len(resp.CreatedItems))
+	createdIDs := make([]string, 0, len(resp.CreatedItems))
+	for _, it := range resp.CreatedItems {
+		createdTitles = append(createdTitles, it.Title)
+		createdIDs = append(createdIDs, it.ID)
+	}
+	target := session.EntityRef{Type: sneatdomain.EntityTodo, Title: strings.Join(createdTitles, ", "),
+		Keys: map[string]string{"spaceID": spaceID, "list": list, "itemID": strings.Join(createdIDs, ",")}}
 	undo := &session.Action{Kind: sneatdomain.ModuleTodo + "." + sneatdomain.IntentDeleteTodo, Target: &target}
 	return undo, nil
 }

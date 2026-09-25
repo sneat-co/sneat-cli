@@ -155,18 +155,32 @@ func (p Pipeline) turnFromDecision(ctx context.Context, d decision.Decision, st 
 // the LLM path and the rules path cannot drift into two different
 // confirmation behaviours for the same action kind.
 func (p Pipeline) HandleAction(ctx context.Context, a Action, st *session.State, spaceID string) (Output, error) {
-	if isContactLookup(a.Kind) {
+	kind := normalizeActionKind(a.Kind)
+	if !isSupportedActionKind(kind) {
+		// UNSUPPORTED-KIND ruling (founder bug, buy-add-prompt.md
+		// scratchpad): a kind HandleAction/Executor cannot carry out -- a
+		// model-guessed or aliased kind the instruction never listed
+		// ("buy.add"), or a real taxonomy intent that simply has no
+		// chat-side executor ("calendar.add_happening") -- is a normal turn
+		// outcome, never a pipeline failure. It must come back as ordinary
+		// Output text (err == nil) so it never renders as "system: error:
+		// pipeline: no executor case for action kind ...". The caller
+		// (chatapp's diagnostics, via the exported IsSupportedActionKind)
+		// logs the raw kind for debugging; this leaf package has no logger.
+		return Output{Text: unsupportedActionText(kind)}, nil
+	}
+	if isContactLookup(kind) {
 		// S8: find_contact/show_contact are read-only lookups, never an
 		// Executor action -- see findOrShowContact's doc comment.
 		ref := decision.Reference{Kind: sneatdomain.EntityContact, Expression: a.Reference, Pronoun: a.Pronoun}
 		return p.findOrShowContact(ctx, ref, st, spaceID)
 	}
 	if a.Reference == "" && !a.Pronoun {
-		return p.runAction(ctx, spaceID, session.Action{Kind: a.Kind, Args: spaceScopedArgs(a.Slots, spaceID)}, st)
+		return p.runAction(ctx, spaceID, session.Action{Kind: kind, Args: spaceScopedArgs(a.Slots, spaceID)}, st)
 	}
-	kind := entityKindFor(a.Kind)
-	ref := decision.Reference{Kind: kind, Expression: a.Reference, Pronoun: a.Pronoun}
-	return p.resolveAndAct(ctx, a.Kind, ref, a.Slots, st, spaceID)
+	entKind := entityKindFor(kind)
+	ref := decision.Reference{Kind: entKind, Expression: a.Reference, Pronoun: a.Pronoun}
+	return p.resolveAndAct(ctx, kind, ref, a.Slots, st, spaceID)
 }
 
 // spaceScopedArgs copies slots and forces "spaceID" to the pipeline's own

@@ -317,6 +317,101 @@ func TestSneatExecutor_DeleteTodo_NoUndo(t *testing.T) {
 	}
 }
 
+// TestSplitListItemTitle covers the deterministic multi-item split (fix
+// round: founder buy-add-prompt.md's "buy milk and bread tomorrow" produced
+// one item titled "milk and bread" instead of two): comma-separated,
+// "and"-separated, a mix of both, surrounding whitespace, and the single-
+// item pass-through (no separator at all).
+func TestSplitListItemTitle(t *testing.T) {
+	cases := []struct {
+		title string
+		want  []string
+	}{
+		{"milk", []string{"milk"}},
+		{"milk, bread", []string{"milk", "bread"}},
+		{"milk and bread", []string{"milk", "bread"}},
+		{"milk, bread and eggs", []string{"milk", "bread", "eggs"}},
+		{"  milk , bread  ", []string{"milk", "bread"}},
+		{"", nil},
+		// Documented trade-off (see splitListItemTitle's doc comment): a
+		// genuinely compound single-item title also splits.
+		{"fish and chips", []string{"fish", "chips"}},
+	}
+	for _, c := range cases {
+		got := splitListItemTitle(c.title)
+		if len(got) != len(c.want) {
+			t.Errorf("splitListItemTitle(%q) = %v, want %v", c.title, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("splitListItemTitle(%q) = %v, want %v", c.title, got, c.want)
+				break
+			}
+		}
+	}
+}
+
+// TestSneatExecutor_AddToBuy_MultiItem_SplitsAndUndoesAll is the founder's
+// exact reported bug, fixed: "milk and bread" becomes TWO created items in
+// one CreateListItems call, and the returned undo deletes both (comma-
+// joined itemID), not just the first.
+func TestSneatExecutor_AddToBuy_MultiItem_SplitsAndUndoesAll(t *testing.T) {
+	var sentItems []map[string]any
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		if r.URL.Path == "/v0/listus/list_items_create" {
+			items, _ := body["items"].([]any)
+			for _, it := range items {
+				if m, ok := it.(map[string]any); ok {
+					sentItems = append(sentItems, m)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"items":[{"id":"i1","title":"milk"},{"id":"i2","title":"bread"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	exec := SneatExecutor{Todo: api}
+	undo, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "todo.add_to_buy", Args: map[string]string{"title": "milk and bread"},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(sentItems) != 2 {
+		t.Fatalf("sent %d items in one CreateListItems call, want 2: %+v", len(sentItems), sentItems)
+	}
+	if undo == nil || undo.Kind != "todo.delete_todo" || undo.Target.Keys["itemID"] != "i1,i2" {
+		t.Fatalf("undo = %+v, want delete_todo itemID=\"i1,i2\"", undo)
+	}
+
+	// Running the undo must delete BOTH items in one call.
+	var deletedIDs []string
+	api2, _ := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		if ids, ok := body["itemIDs"].([]any); ok {
+			for _, id := range ids {
+				deletedIDs = append(deletedIDs, id.(string))
+			}
+		}
+	})
+	exec2 := SneatExecutor{Todo: api2}
+	if _, err := exec2.Execute(context.Background(), "sp1", *undo); err != nil {
+		t.Fatalf("Execute(undo): %v", err)
+	}
+	if len(deletedIDs) != 2 || deletedIDs[0] != "i1" || deletedIDs[1] != "i2" {
+		t.Fatalf("deletedIDs = %v, want [i1 i2]", deletedIDs)
+	}
+	_ = calls
+}
+
+func TestSneatExecutor_AddListItem_EmptyTitleAfterSplit_Errors(t *testing.T) {
+	e, _ := errAPIServer(t)
+	if _, err := e.addListItem(context.Background(), "sp1", session.Action{Args: map[string]string{"title": "   , , "}}, data.ListKindDo); err == nil {
+		t.Error("addListItem with only-separator title should error (no real items)")
+	}
+}
+
 func TestSneatExecutor_UnknownKindErrors(t *testing.T) {
 	exec := SneatExecutor{}
 	_, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: "contacts.teleport"})

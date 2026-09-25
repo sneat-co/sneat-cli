@@ -356,6 +356,7 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 	}
 	spaceID := h.spaceID
 	pl := h.pipeline // m2: captured here too, not read live inside work below
+	logger := h.logger
 	// M2 (fix round r4/r5 review): the stream itself has already finished by
 	// the time this tea.Cmd runs (that is what EventCompleted means), and
 	// chatshell's tui/stream driver delivers this id's DoneMsg right after
@@ -401,6 +402,15 @@ func (h *handler) OnStreamEvent(id string, ev ai.Event) tea.Cmd {
 		// "really executed" apart from "errored/cancelled/no-op, Previous
 		// is still whatever it already was".
 		prevBefore := snapshot.Previous
+		// UNSUPPORTED-KIND ruling (founder bug, buy-add-prompt.md): HandleAction
+		// answers an unsupported/aliased kind with plain Output text, not an
+		// error (see its own doc comment), so the fact that the model emitted
+		// one at all would otherwise leave no trace -- log the raw kind here,
+		// the one place this session still has it, for diagnosing a model that
+		// keeps guessing at kinds.
+		if logger != nil && !pipeline.IsSupportedActionKind(action.Kind) {
+			logger.WarnContext(actionCtx, "aichat.action.unsupported_kind", "kind", action.Kind)
+		}
 		out, err := pl.HandleAction(actionCtx, *action, &snapshot, spaceID)
 		executed := err == nil && snapshot.Previous != prevBefore
 		return actionMsg{output: out, err: err, state: snapshot, seq: turnSeq, id: id, executed: executed}
@@ -567,7 +577,7 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 func (h *handler) handleSlash(m slashMsg) tea.Cmd {
 	h.applySpaceChange(h.processor.ActiveSpace())
 	if m.err != nil {
-		h.model.AppendSystem("error: " + m.err.Error())
+		h.model.AppendSystem(h.chatSafeError("slash", m.err))
 		return nil
 	}
 	h.appendReplies(m.replies)
@@ -645,7 +655,7 @@ func (h *handler) handleTurn(m turnMsg) tea.Cmd {
 	// running.
 	h.applyStateDelta(m.state)
 	if m.err != nil {
-		h.model.AppendSystem("error: " + m.err.Error())
+		h.model.AppendSystem(h.chatSafeError("turn", m.err))
 		h.logTurn(pathFor(m.output), m.output, m.err)
 		return nil
 	}
@@ -754,11 +764,51 @@ func (h *handler) nextStreamID() string {
 	return "turn-" + strconv.FormatInt(atomic.AddInt64(&h.streamSeq, 1), 10)
 }
 
+// chatSafeError turns a pipeline/reader/processor err into text safe to
+// show a chat user, and separately logs the RAW error to the debug logger
+// when one is configured -- ai/diag's own Turn.Errors deliberately never
+// carries a raw error message (diag.ErrorCode's doc comment: "NEVER a raw
+// error message ... which can carry arbitrary user content or
+// provider-internal detail"), so without this the founder-reported
+// PermissionDenied's full detail would be lost entirely once replaced by
+// the friendly text below, rather than merely hidden from the transcript.
+//
+// PERMISSION-DENIED ruling (founder bug: "What's on today?" -> "system:
+// error: rpc error: code = PermissionDenied desc = Missing or insufficient
+// permissions."): a Firestore reader error surfacing its raw gRPC status
+// text told the user nothing actionable and leaked transport detail. Now
+// it renders as a plain, actionable message naming the space and the fix
+// (/spaces, /space <id>); every other error's message passes through
+// unchanged, same as before this fix.
+func (h *handler) chatSafeError(source string, err error) string {
+	if err == nil {
+		return ""
+	}
+	if h.logger != nil {
+		h.logger.ErrorContext(h.ctx, "aichat.error", "source", source, "error", err.Error())
+	}
+	if isPermissionDeniedErr(err) {
+		return fmt.Sprintf("Couldn't read your data -- you may not have access to space %q. Try /spaces and /space <id>.", h.spaceID)
+	}
+	return "error: " + err.Error()
+}
+
+// isPermissionDeniedErr reports whether err is (or wraps, however deeply --
+// string matching sees through every fmt.Errorf("...: %w", err) layer a
+// reader/pipeline call added) a Firestore/gRPC PermissionDenied. The
+// standard gRPC error text is "rpc error: code = PermissionDenied desc =
+// ...", so a plain substring check is simpler and more robust across
+// wrapping than importing google.golang.org/grpc/status to unwrap a
+// GRPCStatus() interface that not every layer here necessarily preserves.
+func isPermissionDeniedErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "PermissionDenied")
+}
+
 // render turns a deterministic/action Output into chatshell calls: a
 // structured control (when Presentation+Entities are set) and/or plain text.
 func (h *handler) render(out pipeline.Output, err error) {
 	if err != nil {
-		h.model.AppendSystem("error: " + err.Error())
+		h.model.AppendSystem(h.chatSafeError("action", err))
 		return
 	}
 	if len(out.Entities) > 0 {

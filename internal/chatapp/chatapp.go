@@ -198,15 +198,31 @@ func Run(deps Deps) (err error) {
 }
 
 // defaultSpaceID chooses the pipeline's starting space (coordinator ruling
-// SPACE): the session's persisted CurrentSpace wins outright when set; else
-// the user's family space if one exists among their spaces; else the lowest
-// space ID after sorting -- never map iteration order. A read failure or an
-// account with no spaces leaves spaceID empty; every pipeline call that
-// needs one then answers "no space" rather than panicking (Pipeline's
-// readers/executor all validate spaceID through the normal sneat-go 400
-// path).
+// SPACE): the session's persisted CurrentSpace wins outright when set and
+// is a real space ID; a PSEUDO id ("family"/"private", case-insensitive --
+// session.Session.CurrentSpace's own documented shape) is resolved to the
+// user's single space of that type first (see spaceIDByType); failing
+// that, the user's family space if one exists among their spaces; else the
+// lowest space ID after sorting -- never map iteration order. A read
+// failure or an account with no spaces leaves spaceID empty; every pipeline
+// call that needs one then answers "no space" rather than panicking
+// (Pipeline's readers/executor all validate spaceID through the normal
+// sneat-go 400 path).
+//
+// PSEUDO-SPACE ruling (founder bug: "What's on today?" -> "rpc error: code
+// = PermissionDenied"): a prior version returned currentSpace verbatim
+// whenever it was non-empty, so a session whose persisted CurrentSpace was
+// literally the string "family" sent every Firestore read straight at
+// spaces/family/... -- a real document path only by coincidence, one the
+// signed-in user is essentially never a member of, hence PermissionDenied.
+// cmd/sneat/commands/space_resolve.go's resolveSpaceID already resolves
+// this same pseudo-id convention for CLI --space flags via ListSpaces +
+// the space brief's "type" field; this mirrors that convention (not that
+// function -- importing cmd/ from internal/ is out of bounds, per
+// coordinator brief) so chat starts in the same real space the rest of the
+// CLI would.
 func defaultSpaceID(ctx context.Context, spaces chat.SpacesReader, uid, currentSpace string) string {
-	if currentSpace != "" {
+	if currentSpace != "" && !isPseudoSpaceID(currentSpace) {
 		return currentSpace
 	}
 	if spaces == nil {
@@ -215,6 +231,15 @@ func defaultSpaceID(ctx context.Context, spaces chat.SpacesReader, uid, currentS
 	m, err := spaces.ListSpaces(ctx, uid)
 	if err != nil || len(m) == 0 {
 		return ""
+	}
+	if currentSpace != "" {
+		// currentSpace is a pseudo id here (the non-pseudo case returned
+		// above) -- try resolving it to the user's single matching space
+		// before falling back to the family-then-sorted default below, same
+		// as an unset CurrentSpace would.
+		if id, ok := spaceIDByType(m, currentSpace); ok {
+			return id
+		}
 	}
 	ids := make([]string, 0, len(m))
 	for id, info := range m {
@@ -225,6 +250,37 @@ func defaultSpaceID(ctx context.Context, spaces chat.SpacesReader, uid, currentS
 	}
 	slices.Sort(ids)
 	return ids[0]
+}
+
+// isPseudoSpaceID reports whether id is one of session.Session.CurrentSpace's
+// documented pseudo ids ("family"/"private") rather than a real space ID,
+// matching case-insensitively the same way spaceIDByType's own type
+// comparison and cmd/sneat/commands/space_resolve.go's resolveSpaceID do.
+func isPseudoSpaceID(id string) bool {
+	return strings.EqualFold(id, "family") || strings.EqualFold(id, "private")
+}
+
+// spaceIDByType finds the single space among spaces whose brief's "type"
+// field equals spaceType (case-insensitively) -- mirrors
+// cmd/sneat/commands/space_resolve.go's own spaceIDByType (that package is
+// owned by another agent and internal/ cannot import cmd/, so this is a
+// deliberate, small duplication of the same convention rather than a
+// shared helper). ok is false for zero or more than one match -- an
+// ambiguous or absent pseudo-space resolution is never guessed at, it
+// falls back to defaultSpaceID's ordinary family-then-sorted logic.
+func spaceIDByType(spaces map[string]any, spaceType string) (id string, ok bool) {
+	var found []string
+	for spaceID, brief := range spaces {
+		if b, _ := brief.(map[string]any); b != nil {
+			if t, _ := b["type"].(string); strings.EqualFold(t, spaceType) {
+				found = append(found, spaceID)
+			}
+		}
+	}
+	if len(found) != 1 {
+		return "", false
+	}
+	return found[0], true
 }
 
 // sessionClock builds the "now" every part of one chat session resolves
