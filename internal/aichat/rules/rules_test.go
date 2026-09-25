@@ -64,6 +64,7 @@ func TestPhraseTable(t *testing.T) {
 
 func TestWeekRequestSlotsAndMutationGuard(t *testing.T) {
 	for _, tc := range []struct{ text, when string }{
+		{"show my week", "this_week"},
 		{"what do I have for next week?", "next_week"},
 		{"show my schedule for week of 2026-10-05", "2026-10-05"},
 		{"last week", "last_week"},

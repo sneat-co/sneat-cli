@@ -84,6 +84,20 @@ func TestTurn_ShowRequestedWeekReadsOnlyThatWindow(t *testing.T) {
 	}
 }
 
+func TestShowWeek_LastWeekUsesPreviousCalendarWindow(t *testing.T) {
+	p, st := newTestPipeline(nil)
+	out, err := p.showWeek(context.Background(), st, "sp1", "last_week")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.WeekStart.Format("2006-01-02"); got != "2026-09-14" {
+		t.Fatalf("last week starts %s, want 2026-09-14", got)
+	}
+	if len(out.Entities) != 0 {
+		t.Fatalf("last week should be empty, got %+v", out.Entities)
+	}
+}
+
 func TestTurn_ShowWeek_RecurringSlotAcrossTimezones(t *testing.T) {
 	dublin, err := time.LoadLocation("Europe/Dublin")
 	if err != nil {

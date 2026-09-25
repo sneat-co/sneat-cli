@@ -199,9 +199,9 @@ func TestNewWeekCalendar_UsesRequestedCalendarTimezone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := HappeningRow{Title: "Late call", Start: time.Date(2026, 9, 27, 23, 0, 0, 0, newYork)}
+	event := HappeningRow{Title: "Late call", Start: time.Date(2026, 9, 27, 23, 0, 0, 0, newYork), End: time.Date(2026, 9, 27, 23, 30, 0, 0, newYork)}
 	view := NewWeekCalendar("Week", monday, []HappeningRow{event}).View(0, false)
-	if !strings.Contains(view, "Monday, Sep 28\n  Late call  04:00") {
+	if !strings.Contains(view, "Monday, Sep 28\n  Late call  04:00-04:30") {
 		t.Fatalf("event should appear under Monday in the calendar zone:\n%s", view)
 	}
 }
