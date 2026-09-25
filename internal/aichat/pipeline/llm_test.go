@@ -385,8 +385,8 @@ func TestSneatActionInstruction_ConfirmationWording(t *testing.T) {
 	// The three isDestructive kinds must each be named in the same sentence
 	// as "confirmation" -- not merely present anywhere in the instruction
 	// (they are also named earlier, in the per-kind list).
-	confirmSentence := text[strings.Index(text, "Rescheduling"):strings.Index(text, "Adding an item")]
-	for _, kind := range []string{"reschedul", "cancel", "delet"} {
+	confirmSentence := text[strings.Index(text, "Rescheduling"):strings.Index(text, "Adding a todo")]
+	for _, kind := range []string{"reschedul", "cancel", "delet", "add"} {
 		if !strings.Contains(strings.ToLower(confirmSentence), kind) {
 			t.Errorf("confirmation sentence = %q, want it to cover %q (isDestructive's list)", confirmSentence, kind)
 		}

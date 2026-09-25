@@ -51,8 +51,31 @@ func (c *Client) RevokeHappeningCancellation(ctx context.Context, req dto4calend
 	return c.do(ctx, http.MethodPost, calendariusPath("/v0/happenings/revoke_happening_cancellation"), req, nil)
 }
 
-// m9: DeleteHappening (permanent delete, as opposed to CancelHappening) was
-// dead code -- no taxonomy intent or CalendarAPI case ever called it, and
-// the MVP's only calendar-removal action is cancel/revoke-cancel. Removed
-// rather than kept unused; re-add alongside a delete_happening intent if a
-// later slice needs permanent deletion.
+// CreateHappening POSTs happenings/create_happening -- calendar.add_happening
+// (founder ask, add-event-prompt.md scratchpad: "ability to add calendar
+// events -- it's core must have feature"). Returns the created happening's
+// ID so the caller (SneatExecutor.addHappening) can build an undo (permanent
+// delete) and a resolvable EntityRef for the new happening.
+func (c *Client) CreateHappening(ctx context.Context, req dto4calendarius.CreateHappeningRequest) (dto4calendarius.CreateHappeningResponse, error) {
+	var out dto4calendarius.CreateHappeningResponse
+	err := c.do(ctx, http.MethodPost, calendariusPath("/v0/happenings/create_happening"), req, &out)
+	return out, err
+}
+
+// UpdateHappeningTexts POSTs happenings/update_happening_texts -- used for
+// calendar.update_happening's rename-only slice (B: "Rename the sync to
+// Weekly planning"). Every UpdateHappeningRequest field besides Title is a
+// pointer left nil, so this call touches ONLY the title (see that DTO's own
+// doc comment: an absent key is a no-op, not an erase).
+func (c *Client) UpdateHappeningTexts(ctx context.Context, req dto4calendarius.UpdateHappeningRequest) error {
+	return c.do(ctx, http.MethodPost, calendariusPath("/v0/happenings/update_happening_texts"), req, nil)
+}
+
+// DeleteHappening calls DELETE happenings/delete_happening -- m9's "re-add
+// alongside a delete_happening intent if a later slice needs permanent
+// deletion" now applies: this is addHappening's undo (a just-created
+// happening has nothing to preserve, unlike CancelHappening's reversible
+// mark), never something a decision or the main LLM asks for directly.
+func (c *Client) DeleteHappening(ctx context.Context, req dto4calendarius.HappeningRequest) error {
+	return c.do(ctx, http.MethodDelete, calendariusPath("/v0/happenings/delete_happening"), req, nil)
+}

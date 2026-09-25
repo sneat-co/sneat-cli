@@ -48,6 +48,17 @@ type CalendarAPI interface {
 	// Date/SlotID that cancelled it, not just the happening ID (S6: "Cancel of
 	// recurring cancels the occurrence (date/slotID)").
 	RevokeHappeningCancellation(ctx context.Context, req dto4calendarius.CancelHappeningRequest) error
+	// CreateHappening creates a new happening (calendar.add_happening,
+	// founder ask add-event-prompt.md). action.Args are already-resolved
+	// canonical slots (see add_happening.go's addHappeningSlots) by the time
+	// addHappening builds this request -- never free text.
+	CreateHappening(ctx context.Context, req dto4calendarius.CreateHappeningRequest) (dto4calendarius.CreateHappeningResponse, error)
+	// UpdateHappeningTexts renames a happening (calendar.update_happening,
+	// rename-only slice B).
+	UpdateHappeningTexts(ctx context.Context, req dto4calendarius.UpdateHappeningRequest) error
+	// DeleteHappening permanently deletes a happening -- addHappening's undo
+	// ONLY (never something a decision or the main LLM asks for directly).
+	DeleteHappening(ctx context.Context, req dto4calendarius.HappeningRequest) error
 }
 
 // TodoAPI is the subset of internal/sneatapi.Client this executor needs for
@@ -145,7 +156,97 @@ func (e SneatExecutor) handlers() map[string]func(context.Context, string, sessi
 		sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddToBuy: func(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
 			return e.addListItem(ctx, spaceID, action, data.ListKindBuy)
 		},
+		sneatdomain.ModuleCalendar + "." + sneatdomain.IntentAddHappening:    e.addHappening,
+		sneatdomain.ModuleCalendar + "." + sneatdomain.IntentUpdateHappening: e.renameHappening,
+		calendarDeleteHappeningKind: func(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+			return nil, e.deleteHappening(ctx, spaceID, action)
+		},
 	}
+}
+
+// addHappening creates a new happening via calendarius's create_happening
+// (founder ask, add-event-prompt.md: "ability to add calendar events --
+// it's core must have feature"). action.Args are the ALREADY-RESOLVED,
+// canonical slots resolveAddHappeningSlots produced when this action was
+// staged for confirmation (add_happening.go's stageAddHappening) -- this
+// method never re-parses free text like "tomorrow"/"Friday". The undo it
+// returns permanently deletes the happening just created
+// (calendarDeleteHappeningKind), the same "undo of add is delete" shape
+// addListItem's own undo uses for a todo/to-buy item -- a just-created
+// happening has nothing to preserve, unlike cancelHappening's reversible
+// mark.
+func (e SneatExecutor) addHappening(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+	if e.Calendar == nil {
+		return nil, fmt.Errorf("pipeline: add_happening requires Calendar API")
+	}
+	brief, err := buildHappeningBrief(action.Args)
+	if err != nil {
+		return nil, err
+	}
+	req := dto4calendarius.CreateHappeningRequest{
+		SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
+		Happening:    brief,
+	}
+	resp, err := e.Calendar.CreateHappening(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	target := session.EntityRef{Type: sneatdomain.EntityHappening, Title: brief.Title,
+		Keys: map[string]string{"spaceID": spaceID, "happeningID": resp.ID}}
+	undo := &session.Action{Kind: calendarDeleteHappeningKind, Target: &target,
+		Summary: fmt.Sprintf("Delete %q?", brief.Title)}
+	return undo, nil
+}
+
+// renameHappening implements calendar.update_happening's rename-only slice
+// (B) via calendarius's update_happening_texts. Non-destructive -- isDestructive
+// (pipeline.go) does not list update_happening, so a rename runs immediately
+// once its reference resolves, exactly like a todo complete/reopen, with no
+// "yes/no" confirmation (documented policy: a rename does not change WHEN or
+// WHETHER something happens, unlike reschedule/cancel, so brief §17's
+// destructive/ambiguous-only confirmation rule does not apply to it). Its
+// own undo re-runs the same action kind with the original title, mirroring
+// how a non-recurring reschedule's undo re-runs itself with the original
+// "when" (sneatexecutor.go's rescheduleHappening).
+func (e SneatExecutor) renameHappening(ctx context.Context, spaceID string, action session.Action) (*session.Action, error) {
+	if e.Calendar == nil || action.Target == nil {
+		return nil, fmt.Errorf("pipeline: update_happening requires Calendar API and a resolved target")
+	}
+	title := strings.TrimSpace(action.Args["title"])
+	if title == "" {
+		return nil, fmt.Errorf("pipeline: update_happening: a title is required")
+	}
+	happeningID := action.Target.Keys["happeningID"]
+	oldTitle := action.Target.Title
+	req := dto4calendarius.UpdateHappeningRequest{
+		HappeningRequest: dto4calendarius.HappeningRequest{
+			SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
+			HappeningID:  happeningID,
+		},
+		Title: &title,
+	}
+	if err := e.Calendar.UpdateHappeningTexts(ctx, req); err != nil {
+		return nil, err
+	}
+	undoTarget := *action.Target
+	undoTarget.Title = title
+	undo := &session.Action{Kind: action.Kind, Target: &undoTarget,
+		Args: map[string]string{"title": oldTitle}, Summary: fmt.Sprintf("Rename %q back to %q?", title, oldTitle)}
+	return undo, nil
+}
+
+// deleteHappening permanently deletes a happening via calendarius's
+// delete_happening -- addHappening's undo ONLY (never something a decision
+// or the main LLM asks for directly, same shape as
+// calendarRevokeCancellationKind/calendarCancelAdjustmentKind above).
+func (e SneatExecutor) deleteHappening(ctx context.Context, spaceID string, action session.Action) error {
+	if e.Calendar == nil || action.Target == nil {
+		return fmt.Errorf("pipeline: delete_happening requires Calendar API and a resolved target")
+	}
+	return e.Calendar.DeleteHappening(ctx, dto4calendarius.HappeningRequest{
+		SpaceRequest: dto4spaceus.SpaceRequest{SpaceID: coretypes.SpaceID(spaceID)},
+		HappeningID:  action.Target.Keys["happeningID"],
+	})
 }
 
 // calendarRevokeCancellationKind is the undo action kind cancelHappening

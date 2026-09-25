@@ -41,6 +41,16 @@ func executorActionKinds() []ActionKindSpec {
 			Slots:   `"when": optional -- which occurrence to cancel, e.g. "Friday", when the happening is recurring`,
 		},
 		{
+			Kind:    sneatdomain.ModuleCalendar + "." + sneatdomain.IntentAddHappening,
+			Meaning: `Add a new calendar event. No reference -- this always creates a new happening. Either a one-off event on a single date, or a weekly-recurring one.`,
+			Slots:   `"title": the event title (required). For a ONE-OFF event: "date": an absolute date as YYYY-MM-DD, or a relative word like "tomorrow" or "Friday" (resolved by the app, not by you -- never compute the date yourself). For a WEEKLY-RECURRING event instead: "weekdays": comma-separated weekday codes (mo,tu,we,th,fr,sa,su), e.g. "mo" or "tu,th". Give exactly one of "date" or "weekdays", never both. "start": the start time as HH:MM (required). "end": the end time as HH:MM (optional -- defaults to 1 hour after start), or "duration": minutes instead of "end"`,
+		},
+		{
+			Kind:    sneatdomain.ModuleCalendar + "." + sneatdomain.IntentUpdateHappening,
+			Meaning: "Rename an existing happening (only its title -- reference required, name which happening).",
+			Slots:   `"title": the new title`,
+		},
+		{
 			Kind:    sneatdomain.ModuleTodo + "." + sneatdomain.IntentCompleteTodo,
 			Meaning: "Mark a todo item done.",
 		},
@@ -92,10 +102,10 @@ func SupportedActionKinds() []ActionKindSpec {
 // naming the real one (the founder's own reported case: "buy.add" instead
 // of "todo.add_to_buy") -- to the kind HandleAction actually understands.
 // Deliberately small and explicit, never fuzzy: a kind not listed here
-// passes through normalizeActionKind unchanged, and an alias that still
-// isn't a SupportedActionKinds entry (e.g. "calendar.add", which names a
-// real but unsupported taxonomy intent) falls through to
-// unsupportedActionText same as any other unknown kind.
+// passes through normalizeActionKind unchanged. "calendar.add" now resolves
+// to a fully SUPPORTED kind (calendar.add_happening, add-event-prompt.md
+// slice) -- unlike when this comment was first written, it no longer falls
+// through to unsupportedActionText.
 var aliasActionKinds = map[string]string{
 	"buy.add":      sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddToBuy,
 	"to_buy.add":   sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddToBuy,
@@ -144,11 +154,15 @@ func IsSupportedActionKind(kind string) bool {
 // specific gap for a real taxonomy intent that simply has no chat-side
 // executor yet, and a generic refusal for anything else (a kind the model
 // invented outright).
+//
+// calendar.add_happening/update_happening used to be named here explicitly
+// (they had no executor case) -- the add-event-prompt.md slice gave both a
+// real executor case (SneatExecutor.addHappening/renameHappening), so they
+// are now SupportedActionKinds entries and this function is never reached
+// for them; see kinds_test.go's TestSupportedActionKinds_MatchesExecutor for
+// the anti-drift guarantee.
 func unsupportedActionText(kind string) string {
 	switch kind {
-	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentAddHappening,
-		sneatdomain.ModuleCalendar + "." + sneatdomain.IntentUpdateHappening:
-		return "Adding or updating calendar events from chat isn't supported yet -- add it in the Sneat app."
 	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentUpdateTodo:
 		return "Updating a todo's details from chat isn't supported yet -- add it in the Sneat app."
 	default:

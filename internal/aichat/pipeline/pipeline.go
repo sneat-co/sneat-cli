@@ -161,7 +161,7 @@ func (p Pipeline) HandleAction(ctx context.Context, a Action, st *session.State,
 		// scratchpad): a kind HandleAction/Executor cannot carry out -- a
 		// model-guessed or aliased kind the instruction never listed
 		// ("buy.add"), or a real taxonomy intent that simply has no
-		// chat-side executor ("calendar.add_happening") -- is a normal turn
+		// chat-side executor ("todo.update_todo") -- is a normal turn
 		// outcome, never a pipeline failure. It must come back as ordinary
 		// Output text (err == nil) so it never renders as "system: error:
 		// pipeline: no executor case for action kind ...". The caller
@@ -174,6 +174,17 @@ func (p Pipeline) HandleAction(ctx context.Context, a Action, st *session.State,
 		// Executor action -- see findOrShowContact's doc comment.
 		ref := decision.Reference{Kind: sneatdomain.EntityContact, Expression: a.Reference, Pronoun: a.Pronoun}
 		return p.findOrShowContact(ctx, ref, st, spaceID)
+	}
+	if kind == sneatdomain.ModuleCalendar+"."+sneatdomain.IntentAddHappening {
+		// add_happening always creates a NEW happening (no reference, same
+		// shape as add_todo below) but -- unlike add_todo -- creating a
+		// calendar event needs the user's confirmation before it happens
+		// (founder ask, add-event-prompt.md: "executes only on 'yes'"), so it
+		// is staged as a Pending action (add_happening.go) instead of running
+		// immediately through the no-reference runAction branch below. Any
+		// Reference/Pronoun the model attached is ignored, same as add_todo's
+		// own "no reference -- this always creates a new item" contract.
+		return p.stageAddHappening(a.Slots, st, spaceID)
 	}
 	if a.Reference == "" && !a.Pronoun {
 		return p.runAction(ctx, spaceID, session.Action{Kind: kind, Args: spaceScopedArgs(a.Slots, spaceID)}, st)
@@ -873,13 +884,30 @@ func summaryFor(kind string, target session.EntityRef, slots map[string]string) 
 		return fmt.Sprintf("Cancel %q?", title)
 	case sneatdomain.ModuleTodo + "." + sneatdomain.IntentDeleteTodo:
 		return fmt.Sprintf("Delete %q?", title)
+	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentUpdateHappening:
+		newTitle := slots["title"]
+		if newTitle == "" {
+			newTitle = "a new title"
+		}
+		return fmt.Sprintf("Rename %q to %s?", title, newTitle)
 	default:
 		return fmt.Sprintf("%s %q?", kind, title)
 	}
 }
 
 // isDestructive reports whether kind requires confirmation before running
-// (brief §17: destructive/ambiguous operations use confirmation).
+// (brief §17: destructive/ambiguous operations use confirmation). Used only
+// by resolveAndAct's reference-resolved kinds -- calendar.add_happening
+// needs the identical "yes/no before it happens" policy but never reaches
+// this function: it has no reference to resolve, so it is staged directly
+// by stageAddHappening (HandleAction), which is unconditional, the same as
+// isDestructive returning true would make it.
+//
+// calendar.update_happening (rename) is deliberately NOT listed: a rename
+// changes only a label, never WHEN or WHETHER something happens, so brief
+// §17's destructive/ambiguous confirmation policy does not apply to it --
+// documented policy decision (add-event-prompt.md slice B), not an
+// oversight.
 func isDestructive(kind string) bool {
 	switch kind {
 	case sneatdomain.ModuleCalendar + "." + sneatdomain.IntentRescheduleHappening,

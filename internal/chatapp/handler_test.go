@@ -1244,7 +1244,7 @@ func TestOnStreamEvent_UnsupportedKind_LogsRawKind_AndAnswersPlainly(t *testing.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		sseWriteHandler(w, `{"model":"gpt-5","choices":[{"delta":{"content":"Got it -- I'll add that to your calendar. <sneat-action>{\"kind\":\"calendar.add_happening\",\"slots\":{\"title\":\"Yoga\"}}</sneat-action>"}}]}`)
+		sseWriteHandler(w, `{"model":"gpt-5","choices":[{"delta":{"content":"Got it -- I'll update that todo. <sneat-action>{\"kind\":\"todo.update_todo\",\"reference\":\"milk\",\"slots\":{\"title\":\"Yoga\"}}</sneat-action>"}}]}`)
 		sseWriteHandler(w, "[DONE]")
 	}))
 	defer srv.Close()
@@ -1276,7 +1276,7 @@ func TestOnStreamEvent_UnsupportedKind_LogsRawKind_AndAnswersPlainly(t *testing.
 	if len(exec.Executed) != 0 {
 		t.Fatalf("an unsupported kind must never reach Executor: %+v", exec.Executed)
 	}
-	if !strings.Contains(buf.String(), "calendar.add_happening") {
+	if !strings.Contains(buf.String(), "todo.update_todo") {
 		t.Fatalf("debug log = %q, want the raw unsupported kind logged for diagnostics", buf.String())
 	}
 }

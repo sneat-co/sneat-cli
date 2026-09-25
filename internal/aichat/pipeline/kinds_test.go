@@ -35,6 +35,7 @@ func TestSupportedActionKinds_MatchesExecutor(t *testing.T) {
 	undoOnly := map[string]bool{
 		calendarRevokeCancellationKind: true,
 		calendarCancelAdjustmentKind:   true,
+		calendarDeleteHappeningKind:    true,
 	}
 	advertised := map[string]bool{}
 	for _, k := range executorActionKinds() {
@@ -84,8 +85,11 @@ func TestIsSupportedActionKind(t *testing.T) {
 	if !IsSupportedActionKind(sneatdomain.ModuleTodo + "." + sneatdomain.IntentAddToBuy) {
 		t.Error("IsSupportedActionKind(todo.add_to_buy) = false, want true")
 	}
-	if IsSupportedActionKind(sneatdomain.ModuleCalendar + "." + sneatdomain.IntentAddHappening) {
-		t.Error("IsSupportedActionKind(calendar.add_happening) = true, want false (no executor case)")
+	if !IsSupportedActionKind(sneatdomain.ModuleCalendar + "." + sneatdomain.IntentAddHappening) {
+		t.Error("IsSupportedActionKind(calendar.add_happening) = false, want true (SneatExecutor.addHappening)")
+	}
+	if !IsSupportedActionKind(sneatdomain.ModuleCalendar + "." + sneatdomain.IntentUpdateHappening) {
+		t.Error("IsSupportedActionKind(calendar.update_happening) = false, want true (SneatExecutor.renameHappening)")
 	}
 	if IsSupportedActionKind("totally.unknown") {
 		t.Error(`IsSupportedActionKind("totally.unknown") = true, want false`)
@@ -100,8 +104,6 @@ func TestUnsupportedActionText(t *testing.T) {
 		kind string
 		want string
 	}{
-		{sneatdomain.ModuleCalendar + "." + sneatdomain.IntentAddHappening, "Adding or updating calendar events from chat isn't supported yet -- add it in the Sneat app."},
-		{sneatdomain.ModuleCalendar + "." + sneatdomain.IntentUpdateHappening, "Adding or updating calendar events from chat isn't supported yet -- add it in the Sneat app."},
 		{sneatdomain.ModuleTodo + "." + sneatdomain.IntentUpdateTodo, "Updating a todo's details from chat isn't supported yet -- add it in the Sneat app."},
 		{"buy.add", "I can't do that from chat yet."},
 	}
@@ -120,7 +122,7 @@ func TestUnsupportedActionText(t *testing.T) {
 func TestHandleAction_UnsupportedKind_NoError(t *testing.T) {
 	exec := &FakeExecutor{}
 	p, st := newTestPipeline(exec)
-	out, err := p.HandleAction(context.Background(), Action{Kind: "calendar.add_happening", Reference: "yoga"}, st, "sp1")
+	out, err := p.HandleAction(context.Background(), Action{Kind: "todo.update_todo", Reference: "milk"}, st, "sp1")
 	if err != nil {
 		t.Fatalf("HandleAction returned an error for an unsupported kind, want nil: %v", err)
 	}

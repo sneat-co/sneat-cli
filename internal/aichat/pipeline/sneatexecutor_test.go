@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
+	"github.com/sneat-co/calendarius/backend/dto4calendarius"
 	"github.com/strongo/aichat/ai/session"
 	"golang.org/x/oauth2"
 
@@ -811,5 +812,282 @@ func TestSneatExecutor_AddListItem_IgnoresArgsSpaceID(t *testing.T) {
 	}
 	if gotSpaceID != "sp1" {
 		t.Errorf("request spaceID = %q, want sp1 (Execute's own param, not Args[\"spaceID\"]=evil)", gotSpaceID)
+	}
+}
+
+// TestSneatExecutor_AddHappening_OneOff_SendsValidPayloadAndUndoDeletes
+// covers calendar.add_happening's one-off shape end to end: the REAL wire
+// body decodes into the REAL dto4calendarius.CreateHappeningRequest and
+// passes its own NormalizeTags+Validate (founder's "payload correctness"
+// testing requirement -- a payload the backend would 400 must fail here
+// too), the server's returned ID becomes the undo target, and the undo
+// actually calls delete_happening for that ID.
+func TestSneatExecutor_AddHappening_OneOff_SendsValidPayloadAndUndoDeletes(t *testing.T) {
+	var createBody map[string]any
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		switch r.URL.Path {
+		case "/v0/happenings/create_happening":
+			createBody = body
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatalf("re-marshal: %v", err)
+			}
+			var req dto4calendarius.CreateHappeningRequest
+			if err := json.Unmarshal(raw, &req); err != nil {
+				t.Fatalf("decode into real CreateHappeningRequest: %v", err)
+			}
+			req.NormalizeTags()
+			if err := req.Validate(); err != nil {
+				t.Fatalf("real CreateHappeningRequest.Validate(): %v (body: %s)", err, raw)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"h9"}`))
+		case "/v0/happenings/delete_happening":
+			// nothing to assert beyond the call landing -- see calls below.
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	})
+	exec := SneatExecutor{Calendar: api}
+	action := session.Action{
+		Kind: "calendar.add_happening",
+		Args: map[string]string{"spaceID": "sp1", "title": "Dentist", "date": "2026-09-26", "start": "10:30", "end": "11:30"},
+	}
+	undo, err := exec.Execute(context.Background(), "sp1", action)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	happening, _ := createBody["happening"].(map[string]any)
+	if happening["title"] != "Dentist" {
+		t.Errorf("title = %v, want Dentist", happening["title"])
+	}
+	if happening["type"] != "single" {
+		t.Errorf("type = %v, want single (one-off)", happening["type"])
+	}
+	if undo == nil || undo.Kind != calendarDeleteHappeningKind || undo.Target.Keys["happeningID"] != "h9" {
+		t.Fatalf("undo = %+v, want a delete_happening undo targeting the server-assigned ID h9", undo)
+	}
+	if _, err := exec.Execute(context.Background(), "sp1", *undo); err != nil {
+		t.Fatalf("Execute(undo): %v", err)
+	}
+	want := []string{"POST /v0/happenings/create_happening", "DELETE /v0/happenings/delete_happening"}
+	if len(*calls) != 2 || (*calls)[0] != want[0] || (*calls)[1] != want[1] {
+		t.Fatalf("calls = %v, want %v", *calls, want)
+	}
+}
+
+// TestSneatExecutor_AddHappening_Recurring_SendsValidPayload covers the
+// weekly-recurring shape's own wire body against the same real DTO
+// Validate() as the one-off case.
+func TestSneatExecutor_AddHappening_Recurring_SendsValidPayload(t *testing.T) {
+	var createBody map[string]any
+	api, _ := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		createBody = body
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("re-marshal: %v", err)
+		}
+		var req dto4calendarius.CreateHappeningRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		req.NormalizeTags()
+		if err := req.Validate(); err != nil {
+			t.Fatalf("Validate(): %v (body: %s)", err, raw)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"h10"}`))
+	})
+	exec := SneatExecutor{Calendar: api}
+	action := session.Action{
+		Kind: "calendar.add_happening",
+		Args: map[string]string{"spaceID": "sp1", "title": "Yoga", "weekdays": "tu,th", "start": "07:00", "end": "08:00"},
+	}
+	if _, err := exec.Execute(context.Background(), "sp1", action); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	happening, _ := createBody["happening"].(map[string]any)
+	if happening["type"] != "recurring" {
+		t.Errorf("type = %v, want recurring", happening["type"])
+	}
+	slots, _ := happening["slots"].(map[string]any)
+	slot, _ := slots["s1"].(map[string]any)
+	weekdays, _ := slot["weekdays"].([]any)
+	if len(weekdays) != 2 || weekdays[0] != "tu" || weekdays[1] != "th" {
+		t.Errorf("weekdays = %v, want [tu th]", slot["weekdays"])
+	}
+}
+
+// TestSneatExecutor_AddHappening_NoCalendarAPI_Errors covers the defensive
+// nil-Calendar guard.
+func TestSneatExecutor_AddHappening_NoCalendarAPI_Errors(t *testing.T) {
+	exec := SneatExecutor{}
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.add_happening",
+		Args: map[string]string{"title": "X", "date": "2026-09-26", "start": "10:00", "end": "11:00"},
+	})
+	if err == nil {
+		t.Fatal("expected an error with no Calendar API configured")
+	}
+}
+
+// TestSneatExecutor_AddHappening_BadArgs_Errors covers buildHappeningBrief's
+// error path surfacing through Execute without ever calling the API.
+func TestSneatExecutor_AddHappening_BadArgs_Errors(t *testing.T) {
+	api, calls := newTestSneatAPI(t, nil)
+	exec := SneatExecutor{Calendar: api}
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.add_happening", Args: map[string]string{"title": ""},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a missing title")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("calls = %v, want no HTTP call for invalid Args", *calls)
+	}
+}
+
+// TestSneatExecutor_RenameHappening_SendsUpdateAndUndoRenamesBack covers B
+// (rename-only) end to end: the REAL wire body decodes into the REAL
+// dto4calendarius.UpdateHappeningRequest and passes its own Validate, and
+// the undo re-runs the SAME action kind with the original title.
+func TestSneatExecutor_RenameHappening_SendsUpdateAndUndoRenamesBack(t *testing.T) {
+	var titles []string
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("re-marshal: %v", err)
+		}
+		var req dto4calendarius.UpdateHappeningRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Fatalf("decode into real UpdateHappeningRequest: %v", err)
+		}
+		if err := req.Validate(); err != nil {
+			t.Fatalf("real UpdateHappeningRequest.Validate(): %v (body: %s)", err, raw)
+		}
+		if req.Title != nil {
+			titles = append(titles, *req.Title)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	exec := SneatExecutor{Calendar: api}
+	target := session.EntityRef{Type: "happening", Title: "Team sync", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
+	undo, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.update_happening", Target: &target, Args: map[string]string{"title": "Weekly planning"},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if undo == nil || undo.Kind != "calendar.update_happening" || undo.Args["title"] != "Team sync" {
+		t.Fatalf("undo = %+v, want a rename-back-to-original-title undo", undo)
+	}
+	if _, err := exec.Execute(context.Background(), "sp1", *undo); err != nil {
+		t.Fatalf("Execute(undo): %v", err)
+	}
+	if len(titles) != 2 || titles[0] != "Weekly planning" || titles[1] != "Team sync" {
+		t.Fatalf("titles sent = %v, want [Weekly planning, Team sync]", titles)
+	}
+	want := []string{"POST /v0/happenings/update_happening_texts", "POST /v0/happenings/update_happening_texts"}
+	if len(*calls) != 2 || (*calls)[0] != want[0] || (*calls)[1] != want[1] {
+		t.Fatalf("calls = %v, want %v", *calls, want)
+	}
+}
+
+// TestSneatExecutor_RenameHappening_MissingTitleOrTarget_Errors covers both
+// defensive guards without ever calling the API.
+func TestSneatExecutor_RenameHappening_MissingTitleOrTarget_Errors(t *testing.T) {
+	api, calls := newTestSneatAPI(t, nil)
+	exec := SneatExecutor{Calendar: api}
+	target := session.EntityRef{Type: "happening", Title: "Team sync", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
+	if _, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: "calendar.update_happening", Target: &target, Args: map[string]string{"title": "  "}}); err == nil {
+		t.Fatal("expected an error for a blank title")
+	}
+	if _, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: "calendar.update_happening", Args: map[string]string{"title": "X"}}); err == nil {
+		t.Fatal("expected an error for a missing target")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("calls = %v, want no HTTP call for either invalid case", *calls)
+	}
+}
+
+// TestSneatExecutor_DeleteHappening_SendsDelete covers calendarDeleteHappeningKind
+// (addHappening's undo-only kind), including the real
+// dto4calendarius.HappeningRequest.Validate() over the wire body.
+func TestSneatExecutor_DeleteHappening_SendsDelete(t *testing.T) {
+	api, calls := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("re-marshal: %v", err)
+		}
+		var req dto4calendarius.HappeningRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Fatalf("decode into real HappeningRequest: %v", err)
+		}
+		if err := req.Validate(); err != nil {
+			t.Fatalf("real HappeningRequest.Validate(): %v (body: %s)", err, raw)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	exec := SneatExecutor{Calendar: api}
+	target := session.EntityRef{Type: "happening", Title: "Dentist", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h9"}}
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: calendarDeleteHappeningKind, Target: &target})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(*calls) != 1 || (*calls)[0] != "DELETE /v0/happenings/delete_happening" {
+		t.Fatalf("calls = %v", *calls)
+	}
+}
+
+// TestSneatExecutor_DeleteHappening_NoTargetOrAPI_Errors covers both
+// defensive guards.
+func TestSneatExecutor_DeleteHappening_NoTargetOrAPI_Errors(t *testing.T) {
+	api, calls := newTestSneatAPI(t, nil)
+	exec := SneatExecutor{Calendar: api}
+	if _, err := exec.Execute(context.Background(), "sp1", session.Action{Kind: calendarDeleteHappeningKind}); err == nil {
+		t.Fatal("expected an error for a missing target")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("calls = %v, want no HTTP call", *calls)
+	}
+	noAPI := SneatExecutor{}
+	target := session.EntityRef{Keys: map[string]string{"happeningID": "h1"}}
+	if _, err := noAPI.Execute(context.Background(), "sp1", session.Action{Kind: calendarDeleteHappeningKind, Target: &target}); err == nil {
+		t.Fatal("expected an error with no Calendar API configured")
+	}
+}
+
+// TestSneatExecutor_AddHappening_APIError_Propagates covers CreateHappening
+// returning an error (e.g. a 500 or 400 from the real backend) -- addHappening
+// must surface it rather than fabricate an undo for a happening that was
+// never actually created.
+func TestSneatExecutor_AddHappening_APIError_Propagates(t *testing.T) {
+	api, _ := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	})
+	exec := SneatExecutor{Calendar: api}
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.add_happening",
+		Args: map[string]string{"title": "X", "date": "2026-09-26", "start": "10:00", "end": "11:00"},
+	})
+	if err == nil {
+		t.Fatal("expected the backend error to propagate")
+	}
+}
+
+// TestSneatExecutor_RenameHappening_APIError_Propagates covers
+// UpdateHappeningTexts returning an error -- renameHappening must surface it
+// rather than fabricate an undo for a rename that never actually happened.
+func TestSneatExecutor_RenameHappening_APIError_Propagates(t *testing.T) {
+	api, _ := newTestSneatAPI(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	})
+	exec := SneatExecutor{Calendar: api}
+	target := session.EntityRef{Type: "happening", Title: "Team sync", Keys: map[string]string{"spaceID": "sp1", "happeningID": "h1"}}
+	_, err := exec.Execute(context.Background(), "sp1", session.Action{
+		Kind: "calendar.update_happening", Target: &target, Args: map[string]string{"title": "Weekly planning"},
+	})
+	if err == nil {
+		t.Fatal("expected the backend error to propagate")
 	}
 }
