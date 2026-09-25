@@ -78,12 +78,44 @@ func TestReportPreservesDetectedIntentWithoutExecutionAndLLMFallback(t *testing.
 		Decision: &decision.Decision{Module: decision.Scored{Value: "reminder"}, Intent: decision.Scored{Value: "create"}},
 		Trace:    decision.Trace{Attempts: []decision.Attempt{{Provider: "sneat-rules", Outcome: "abstained"}, {Provider: "cloud-decision", Outcome: "decided"}}},
 	}}
+	turn.llmStarted = true
 	_ = h.reportCommand(turn, "completed", "answer_presented", "", "")()
 	r := reporter.reports[0]
 	if len(r.DetectionSteps) != 3 || r.DetectionSteps[1].Actions[0] != "reminder.create" ||
 		r.DetectionSteps[1].Domains[0] != "reminder" || r.DetectionSteps[2].Method != "llm" ||
 		len(r.ActionExecutions) != 0 {
 		t.Fatalf("report=%+v", r)
+	}
+}
+
+func TestSlashCommandReportsSuccessfulDeterministicAction(t *testing.T) {
+	h, _ := testHandler(t)
+	reporter := &fakeInteractionReporter{}
+	h.reporter = reporter
+	action := slashCommandAction("/space current")
+	if action != "slash.space" || slashCommandAction("/space@private") != "slash.unknown" {
+		t.Fatalf("slash action=%q", action)
+	}
+	cmd := h.handleSlash(slashMsg{interactionID: "test-id", text: "/space current"})
+	if cmd == nil {
+		t.Fatal("missing slash report")
+	}
+	_ = cmd()
+	r := reporter.reports[0]
+	if len(r.DetectionSteps) != 1 || r.DetectionSteps[0].Method != "deterministic" ||
+		r.DetectionSteps[0].Actions[0] != action || len(r.ActionExecutions) != 1 ||
+		r.ActionExecutions[0].Status != "succeeded" {
+		t.Fatalf("slash report=%+v", r)
+	}
+}
+
+func TestPlannedButCancelledLLMDoesNotReportExecutedStage(t *testing.T) {
+	reporter := &fakeInteractionReporter{}
+	h := &handler{ctx: context.Background(), reporter: reporter}
+	_ = h.reportCommand(&turnReport{id: "test-id", text: "hello", output: pipeline.Output{NeedsLLM: true}},
+		"cancelled", "cancelled", "", "")()
+	if len(reporter.reports[0].DetectionSteps) != 0 {
+		t.Fatalf("planned stage reported as executed: %+v", reporter.reports[0])
 	}
 }
 

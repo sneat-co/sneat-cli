@@ -666,7 +666,11 @@ func (h *handler) handleSlash(m slashMsg) tea.Cmd {
 	} else {
 		h.appendReplies(m.replies)
 	}
-	return h.reportCommand(&turnReport{id: m.interactionID, text: m.text}, status, outcome, "slash", status)
+	actionStatus := status
+	if status == "completed" {
+		outcome, actionStatus = "action_succeeded", "succeeded"
+	}
+	return h.reportCommand(&turnReport{id: m.interactionID, text: m.text}, status, outcome, slashCommandAction(m.text), actionStatus)
 }
 
 // appendReplies renders a []chat.Reply the same way for a typed slash
@@ -852,6 +856,9 @@ func (h *handler) startLLMStream(m llmRequestReadyMsg) tea.Cmd {
 	h.streamTurnSeq[id] = m.seq
 	h.logStreamRequest(m.decision, m.report)
 	open := func(ctx context.Context) iter.Seq2[ai.Event, error] {
+		if turn := h.turnReports[m.seq]; turn != nil {
+			turn.llmStarted = true
+		}
 		seq, splitter := h.pipeline.Stream(ctx, m.req)
 		h.splitters[id] = splitter
 		// The REAL per-turn cancellable ctx (S1: "Esc cancels via

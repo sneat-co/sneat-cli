@@ -19,9 +19,10 @@ type interactionReporter interface {
 }
 
 type turnReport struct {
-	id     string
-	text   string
-	output pipeline.Output
+	id         string
+	text       string
+	output     pipeline.Output
+	llmStarted bool
 }
 
 func (h *handler) reportCommand(turn *turnReport, status, outcome, action, actionStatus string) tea.Cmd {
@@ -38,6 +39,11 @@ func (h *handler) reportCommand(turn *turnReport, status, outcome, action, actio
 	for _, a := range turn.output.Trace.Attempts {
 		method := detectionMethod(a.Provider)
 		report.DetectionSteps = append(report.DetectionSteps, cloudproto.DetectionStep{Method: method, Detector: a.Provider, Result: a.Outcome})
+	}
+	if strings.HasPrefix(action, "slash.") && len(report.DetectionSteps) == 0 {
+		report.DetectionSteps = append(report.DetectionSteps, cloudproto.DetectionStep{
+			Method: "deterministic", Detector: "sneat-slash", Result: "matched", Actions: []string{action},
+		})
 	}
 	if turn.output.Decision != nil {
 		d := turn.output.Decision
@@ -56,7 +62,7 @@ func (h *handler) reportCommand(turn *turnReport, status, outcome, action, actio
 			}
 		}
 	}
-	if turn.output.NeedsLLM {
+	if turn.llmStarted {
 		result := "answered"
 		if status != "completed" {
 			result = status
@@ -77,6 +83,27 @@ func (h *handler) reportCommand(turn *turnReport, status, outcome, action, actio
 		_ = reporter.ReportInteraction(ctx, report)
 		return nil
 	}
+}
+
+func slashCommandAction(input string) string {
+	fields := strings.Fields(input)
+	if len(fields) == 0 {
+		return "slash.unknown"
+	}
+	name := strings.ToLower(strings.TrimPrefix(fields[0], "/"))
+	if len(name) == 0 || len(name) > 48 {
+		return "slash.unknown"
+	}
+	for _, r := range name {
+		if r < 'a' || r > 'z' {
+			if r < '0' || r > '9' {
+				if r != '-' && r != '_' {
+					return "slash.unknown"
+				}
+			}
+		}
+	}
+	return "slash." + name
 }
 
 func reportAction(out pipeline.Output) string {
