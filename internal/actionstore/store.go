@@ -20,6 +20,10 @@ import (
 // ErrNotFound is returned when a draft with the given id does not exist.
 var ErrNotFound = errors.New("action draft not found")
 
+// jsonMarshalIndent is a seam over json.MarshalIndent so tests can force a
+// marshal failure without needing a genuinely unmarshalable Draft value.
+var jsonMarshalIndent = json.MarshalIndent
+
 // Draft is the on-disk shape of a client-held action.
 type Draft struct {
 	ActionID   string              `json:"actionID"`
@@ -68,7 +72,7 @@ func (s *Store) Save(d Draft) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(d, "", "  ")
+	data, err := jsonMarshalIndent(d, "", "  ")
 	if err != nil {
 		return err
 	}

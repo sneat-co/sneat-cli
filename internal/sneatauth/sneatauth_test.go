@@ -63,6 +63,101 @@ func TestRefresh_OK(t *testing.T) {
 	}
 }
 
+func TestSignInWithCustomToken_OK(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "accounts:signInWithCustomToken") {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"idToken":"idt3","refreshToken":"rft3","localId":"u1","email":"a@b.c","expiresIn":"3600"}`))
+	}))
+	defer srv.Close()
+
+	c := newWithBases(srv.URL, srv.URL, "k", srv.Client())
+	res, err := c.SignInWithCustomToken(context.Background(), "custom-token")
+	if err != nil {
+		t.Fatalf("SignInWithCustomToken: %v", err)
+	}
+	if res.IDToken != "idt3" || res.RefreshToken != "rft3" || res.UID != "u1" {
+		t.Fatalf("bad result: %+v", res)
+	}
+}
+
+func TestSignInWithCustomToken_ErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"INVALID_CUSTOM_TOKEN"}}`))
+	}))
+	defer srv.Close()
+
+	c := newWithBases(srv.URL, srv.URL, "k", srv.Client())
+	if _, err := c.SignInWithCustomToken(context.Background(), "bad"); err == nil ||
+		!strings.Contains(err.Error(), "INVALID_CUSTOM_TOKEN") {
+		t.Fatalf("err = %v, want INVALID_CUSTOM_TOKEN", err)
+	}
+}
+
+func TestRefresh_ErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"INVALID_REFRESH_TOKEN"}}`))
+	}))
+	defer srv.Close()
+
+	c := newWithBases(srv.URL, srv.URL, "k", srv.Client())
+	if _, err := c.Refresh(context.Background(), "bad"); err == nil ||
+		!strings.Contains(err.Error(), "INVALID_REFRESH_TOKEN") {
+		t.Fatalf("err = %v, want INVALID_REFRESH_TOKEN", err)
+	}
+}
+
+func TestDoJSON_InvalidRequestURL(t *testing.T) {
+	// A control character in the endpoint makes http.NewRequestWithContext
+	// fail before any network I/O happens.
+	c := newWithBases("http://\x7f", "http://\x7f", "k", http.DefaultClient)
+	if _, err := c.SignInWithPassword(context.Background(), "a@b.c", "pw"); err == nil {
+		t.Fatalf("expected request construction error")
+	}
+}
+
+func TestDoJSON_DoError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	url := srv.URL
+	srv.Close() // closed: connection refused on any request
+
+	c := newWithBases(url, url, "k", http.DefaultClient)
+	if _, err := c.SignInWithPassword(context.Background(), "a@b.c", "pw"); err == nil {
+		t.Fatalf("expected transport error")
+	}
+}
+
+func TestDoJSON_InvalidJSONResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{not json`))
+	}))
+	defer srv.Close()
+
+	c := newWithBases(srv.URL, srv.URL, "k", srv.Client())
+	if _, err := c.SignInWithPassword(context.Background(), "a@b.c", "pw"); err == nil {
+		t.Fatalf("expected unmarshal error")
+	}
+}
+
+func TestDoJSON_ErrorStatusWithoutMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c := newWithBases(srv.URL, srv.URL, "k", srv.Client())
+	if _, err := c.SignInWithPassword(context.Background(), "a@b.c", "pw"); err == nil ||
+		!strings.Contains(err.Error(), "http 500") {
+		t.Fatalf("err = %v, want http 500", err)
+	}
+}
+
 func TestNew_EmulatorBases(t *testing.T) {
 	c := New(Options{APIKey: "k", AuthEmulatorHost: "localhost:9099"})
 	if !strings.HasPrefix(c.identityBase, "http://localhost:9099/identitytoolkit.googleapis.com") {
