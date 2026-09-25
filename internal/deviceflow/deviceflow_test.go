@@ -286,6 +286,181 @@ func TestRun_ReplacementRevocationWarning(t *testing.T) {
 	}
 }
 
+func TestDeviceInfo(t *testing.T) {
+	info := DeviceInfo("  1.2.3  ")
+	if info.ClientVersion != "1.2.3" {
+		t.Fatalf("ClientVersion = %q", info.ClientVersion)
+	}
+	if info.OS == "" || info.Arch == "" {
+		t.Fatalf("OS/Arch not populated: %+v", info)
+	}
+}
+
+func TestNew_MissingExchange(t *testing.T) {
+	if _, err := New(Options{Store: &memoryStore{}}); err == nil || !strings.Contains(err.Error(), "custom-token exchanger") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNew_MissingStore(t *testing.T) {
+	if _, err := New(Options{Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) { return sneatauth.Result{}, nil })}); err == nil ||
+		!strings.Contains(err.Error(), "credential store is required") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNew_InvalidIssuer(t *testing.T) {
+	_, err := New(Options{
+		Issuer:   "not a url",
+		Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) { return sneatauth.Result{}, nil }),
+		Store:    &memoryStore{},
+	})
+	if err == nil {
+		t.Fatalf("expected error for invalid issuer")
+	}
+}
+
+func TestNew_DefaultsIssuerAndHTTPClient(t *testing.T) {
+	flow, err := New(Options{
+		Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) { return sneatauth.Result{}, nil }),
+		Store:    &memoryStore{},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if flow.options.Issuer != DefaultIssuer {
+		t.Fatalf("Issuer = %q, want %q", flow.options.Issuer, DefaultIssuer)
+	}
+	if flow.options.HTTPClient != http.DefaultClient {
+		t.Fatalf("HTTPClient not defaulted")
+	}
+}
+
+func TestRun_WrongTokenType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth/device/code":
+			_, _ = io.WriteString(w, `{"device_code":"device","user_code":"ABCD-EFGH","verification_uri":"https://verify.example/device","expires_in":300,"interval":1}`)
+		case "/oauth/token":
+			_, _ = io.WriteString(w, `{"access_token":"custom-token","token_type":"Bearer","expires_in":300}`)
+		case "/oauth/revoke":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{IDToken: "firebase-id", UID: "user-1"}, nil
+	}), Store: &memoryStore{}, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = flow.Run(context.Background(), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unexpected token type") {
+		t.Fatalf("Run error = %v, want unexpected token type", err)
+	}
+}
+
+func TestRun_ExchangeError(t *testing.T) {
+	server := newDeviceServer(t, ClientID)
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{}, errors.New("exchange failed")
+	}), Store: &memoryStore{}, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = flow.Run(context.Background(), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "exchange failed") {
+		t.Fatalf("Run error = %v, want exchange failed", err)
+	}
+}
+
+func TestLogout_NotConfigured(t *testing.T) {
+	var nilFlow *Flow
+	if err := nilFlow.Logout(context.Background()); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("err = %v, want not configured", err)
+	}
+	if err := (&Flow{}).Logout(context.Background()); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("err = %v, want not configured", err)
+	}
+}
+
+func TestLogout_NoSession(t *testing.T) {
+	server := newDeviceServer(t, ClientID)
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{}, nil
+	}), Store: &memoryStore{}, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := flow.Logout(context.Background()); err == nil {
+		t.Fatalf("expected error logging out with no stored session")
+	}
+}
+
+func TestLogout_ExpiredWithoutRefresher(t *testing.T) {
+	store := &memoryStore{}
+	server := newDeviceServer(t, ClientID)
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{IDToken: "firebase-id", RefreshToken: "refresh", UID: "user-1", ExpiresIn: time.Hour}, nil
+	}), Store: store, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Run(context.Background(), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	store.value.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := flow.Logout(context.Background()); err == nil || !strings.Contains(err.Error(), "Firebase session refresher is required") {
+		t.Fatalf("err = %v, want refresher required", err)
+	}
+}
+
+// failOnceStore fails its N-th Save call (1-indexed), used to force the
+// "save refreshed Firebase session before logout" error branch, which needs
+// the first Save (in Run) to succeed but a later one (in Logout) to fail.
+type failOnceStore struct {
+	inner  session.SessionStore
+	failOn int
+	calls  int
+}
+
+func (s *failOnceStore) Save(value session.Session) error {
+	s.calls++
+	if s.calls == s.failOn {
+		return errors.New("save boom")
+	}
+	return s.inner.Save(value)
+}
+func (s *failOnceStore) Load() (session.Session, error) { return s.inner.Load() }
+func (s *failOnceStore) Clear() error                   { return s.inner.Clear() }
+
+func TestLogout_SaveRefreshedSessionFails(t *testing.T) {
+	store := &failOnceStore{inner: &memoryStore{}, failOn: 2}
+	server := newDeviceServer(t, ClientID)
+	defer server.Close()
+	flow, err := New(Options{Issuer: server.URL, HTTPClient: server.Client(), Exchange: exchangeFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{IDToken: "old-id", RefreshToken: "old-refresh", UID: "user-1", ExpiresIn: time.Hour}, nil
+	}), Refresh: refreshFunc(func(context.Context, string) (sneatauth.Result, error) {
+		return sneatauth.Result{IDToken: "new-id", RefreshToken: "new-refresh", ExpiresIn: time.Hour}, nil
+	}), Store: store, Project: "sneat-eur3-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Run(context.Background(), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	store.inner.(*memoryStore).value.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := flow.Logout(context.Background()); err == nil || !strings.Contains(err.Error(), "save refreshed Firebase session before logout") {
+		t.Fatalf("err = %v, want save-refreshed-session error", err)
+	}
+}
+
 func newDeviceServer(t *testing.T, audience string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
