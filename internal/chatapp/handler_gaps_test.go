@@ -617,3 +617,58 @@ func TestFocusedScopes_SidebarAndDedup(t *testing.T) {
 		}
 	}
 }
+
+// TestTopBar covers chatshell.TopBarProvider content: title is always
+// "Sneat"; the context string names the active space, or says none is
+// selected -- content only (shared-look cutover, REQ:
+// chatshell-product-bars), no menu items.
+func TestTopBar(t *testing.T) {
+	h, _ := testHandler(t)
+
+	title, context, items := h.topBar(80)
+	if title != "Sneat" {
+		t.Errorf("title = %q, want %q", title, "Sneat")
+	}
+	if context != "space: sp1" {
+		t.Errorf("context = %q, want the active space", context)
+	}
+	if items != nil {
+		t.Errorf("items = %v, want none", items)
+	}
+
+	h.spaceID = ""
+	_, context, _ = h.topBar(80)
+	if context != "no space selected" {
+		t.Errorf("context = %q, want the no-space message", context)
+	}
+}
+
+// TestHints covers chatshell.HintsProvider content: the idle hint set, and
+// the busy set (only a spinner note plus quit) once SetBusy(true) is in
+// effect -- content only, no styling.
+func TestHints(t *testing.T) {
+	h, _ := testHandler(t)
+
+	hints, segments := h.hints(80)
+	if len(hints) == 0 || segments != nil {
+		t.Fatalf("hints = %v, segments = %v, want a non-empty idle hint set and no segments", hints, segments)
+	}
+	foundEnter := false
+	for _, hint := range hints {
+		if hint.Key == "Enter" && hint.Label == "send" {
+			foundEnter = true
+		}
+	}
+	if !foundEnter {
+		t.Fatalf("hints = %v, want an Enter/send hint", hints)
+	}
+
+	h.model.SetBusy(true)
+	hints, segments = h.hints(80)
+	if len(hints) != 1 || hints[0].Key != "Ctrl+C" {
+		t.Fatalf("busy hints = %v, want only Ctrl+C/quit", hints)
+	}
+	if len(segments) != 1 || segments[0] != "Thinking…" {
+		t.Fatalf("busy segments = %v, want the thinking note", segments)
+	}
+}

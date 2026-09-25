@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/bots-go-framework/bots-go-core/botkb"
 	"github.com/strongo/aichat/tui/transcript"
@@ -110,7 +110,14 @@ func (b *buttonsBlock) View(width int, focused bool) string {
 		for ci, btn := range row {
 			label := "[ " + btn.GetText() + " ]"
 			if focused && ri == b.row && ci == b.col {
-				label = lipgloss.NewStyle().Reverse(true).Render(label)
+				// Shared-look cutover: a plain text cursor marker, not a
+				// lipgloss.Reverse fill -- buttonsBlock is product content
+				// inside a themed card (tui/theme.Card already shifts the
+				// whole card's fill/accent-bar on focus); this row has no
+				// close tui/theme counterpart of its own (SelectedRow is for
+				// vertical list rows), so it stays colour-free rather than
+				// hand-rolling a lipgloss style.
+				label = "› " + label
 			}
 			sb.WriteString(label)
 			if ci < len(row)-1 {
@@ -123,10 +130,16 @@ func (b *buttonsBlock) View(width int, focused bool) string {
 
 // clampWidth matches internal/aichat/controls's own helper -- kept as a
 // small unexported duplicate rather than exporting controls' version, since
-// this package must not grow a dependency the other direction.
+// this package must not grow a dependency the other direction. It clamps
+// each line independently (ansi.Truncate, a pure content operation) so a
+// multi-line View is never widened past width on any one line.
 func clampWidth(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
-	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Truncate(line, width, "")
+	}
+	return strings.Join(lines, "\n")
 }
