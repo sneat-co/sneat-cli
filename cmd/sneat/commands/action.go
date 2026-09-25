@@ -7,7 +7,6 @@ package commands
 import (
 	"crypto/rand"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/sneat-co/sneat-ai-backend/const4sneatai"
@@ -38,7 +37,7 @@ func actionsDir(env Env) (string, error) {
 	if d := env.Getenv("SNEAT_CONFIG_DIR"); d != "" {
 		return filepath.Join(d, "sneat", "actions"), nil
 	}
-	return actionstore.DefaultDir(os.UserConfigDir)
+	return actionstore.DefaultDir(osUserConfigDir)
 }
 
 func newActionStore(env Env) (*actionstore.Store, error) {

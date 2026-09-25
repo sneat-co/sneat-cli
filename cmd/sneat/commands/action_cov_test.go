@@ -39,7 +39,9 @@ func TestActionsDir_DefaultsToUserConfigDir(t *testing.T) {
 // path: with $HOME unset, os.UserConfigDir fails on darwin and the error
 // must propagate rather than being swallowed.
 func TestActionsDir_UserConfigDirError_Propagates(t *testing.T) {
-	t.Setenv("HOME", "")
+	origUserConfigDir := osUserConfigDir
+	osUserConfigDir = func() (string, error) { return "", errors.New("no user config dir") }
+	t.Cleanup(func() { osUserConfigDir = origUserConfigDir })
 	env := testEnv(&fakeStore{}, sneatauth.Result{})
 	env.Getenv = func(string) string { return "" }
 
@@ -51,7 +53,9 @@ func TestActionsDir_UserConfigDirError_Propagates(t *testing.T) {
 // TestNewActionStore_PropagatesActionsDirError covers newActionStore's own
 // error branch, reached when actionsDir fails.
 func TestNewActionStore_PropagatesActionsDirError(t *testing.T) {
-	t.Setenv("HOME", "")
+	origUserConfigDir := osUserConfigDir
+	osUserConfigDir = func() (string, error) { return "", errors.New("no user config dir") }
+	t.Cleanup(func() { osUserConfigDir = origUserConfigDir })
 	env := testEnv(&fakeStore{}, sneatauth.Result{})
 	env.Getenv = func(string) string { return "" }
 
@@ -109,13 +113,16 @@ func TestNewActionID_Shape(t *testing.T) {
 // --- shared test helpers for the action_*.go coverage tests below ---
 
 // actionsEnvWithBrokenStore builds an Env whose newActionStore(env) call
-// always fails: no SNEAT_CONFIG_DIR override and no $HOME to fall back to,
-// so actionstore.DefaultDir(os.UserConfigDir) errors. Used to exercise every
+// always fails: no SNEAT_CONFIG_DIR override and the osUserConfigDir seam
+// forced to fail, so actionstore.DefaultDir errors (hermetic: os.UserConfigDir
+// itself still succeeds on Linux with an empty $HOME when XDG_CONFIG_HOME is set). Used to exercise every
 // action_*.go command's `if err != nil { return err }` right after
 // newActionStore(env).
 func actionsEnvWithBrokenStore(t *testing.T, api *fakeActionsAPI) Env {
 	t.Helper()
-	t.Setenv("HOME", "")
+	origUserConfigDir := osUserConfigDir
+	osUserConfigDir = func() (string, error) { return "", errors.New("no user config dir") }
+	t.Cleanup(func() { osUserConfigDir = origUserConfigDir })
 	env := actionsEnv(api, "")
 	env.Getenv = func(string) string { return "" }
 	return env

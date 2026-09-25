@@ -66,7 +66,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	info := buildinfo.Get("sneat")
 	env, err := newEnv(info)
 	if err != nil {
-		fmt.Fprintln(stderr, "sneat:", err)
+		_, _ = fmt.Fprintln(stderr, "sneat:", err)
 		return 1
 	}
 	root := commands.Root(env)
@@ -93,7 +93,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		commands.Query(env),
 	)
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(stderr, "sneat:", err)
+		_, _ = fmt.Fprintln(stderr, "sneat:", err)
 		return exitCodeFor(err)
 	}
 	return 0
