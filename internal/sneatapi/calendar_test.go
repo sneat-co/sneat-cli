@@ -44,6 +44,13 @@ func TestCalendarEndpoints(t *testing.T) {
 		{"RevokeHappeningCancellation", func() error {
 			return c.RevokeHappeningCancellation(ctx, dto4calendarius.CancelHappeningRequest{})
 		}, "happenings/revoke_happening_cancellation"},
+		{"CreateHappening", func() error {
+			_, err := c.CreateHappening(ctx, dto4calendarius.CreateHappeningRequest{})
+			return err
+		}, "happenings/create_happening"},
+		{"UpdateHappeningTexts", func() error {
+			return c.UpdateHappeningTexts(ctx, dto4calendarius.UpdateHappeningRequest{})
+		}, "happenings/update_happening_texts"},
 	}
 
 	for _, tc := range cases {
@@ -59,6 +66,28 @@ func TestCalendarEndpoints(t *testing.T) {
 				t.Fatalf("%s: path = %q, want suffix %q", tc.name, gotPath, tc.wantSuffix)
 			}
 		})
+	}
+}
+
+// TestDeleteHappening_UsesDELETE covers DeleteHappening separately from
+// TestCalendarEndpoints's table (which asserts every case is a POST) --
+// DeleteHappening is the one calendar.go method that isn't.
+func TestDeleteHappening_UsesDELETE(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, fakeTS{}, srv.Client())
+	if err := c.DeleteHappening(context.Background(), dto4calendarius.HappeningRequest{}); err != nil {
+		t.Fatalf("DeleteHappening: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Fatalf("method = %q, want DELETE", gotMethod)
+	}
+	if !strings.HasSuffix(gotPath, "happenings/delete_happening") {
+		t.Fatalf("path = %q, want suffix happenings/delete_happening", gotPath)
 	}
 }
 
