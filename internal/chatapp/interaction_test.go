@@ -151,3 +151,79 @@ func TestCancelledDeterministicTurnReportsCancellation(t *testing.T) {
 		t.Fatalf("reports=%+v", reporter.reports)
 	}
 }
+
+func TestTelemetryCoversDecisionWithoutTraceAndFailedModelStage(t *testing.T) {
+	reporter := &fakeInteractionReporter{}
+	h := &handler{ctx: context.Background(), reporter: reporter}
+	turn := &turnReport{id: "id", text: "show calendar", llmStarted: true, output: pipeline.Output{
+		Decision: &decision.Decision{Module: decision.Scored{Value: "calendar"}, Intent: decision.Scored{Value: "show"}},
+	}}
+	_ = h.reportCommand(turn, "failed", "provider_failed", "", "")()
+	r := reporter.reports[0]
+	if len(r.DetectionSteps) != 2 || r.DetectionSteps[0].Method != "unknown" ||
+		r.DetectionSteps[0].Actions[0] != "calendar.show" || r.DetectionSteps[1].Result != "failed" {
+		t.Fatalf("decision and failed model stages=%+v", r)
+	}
+}
+
+func TestTelemetryActionAndDetectorFallbacks(t *testing.T) {
+	if reportAction(pipeline.Output{}) != "" ||
+		reportAction(pipeline.Output{Decision: &decision.Decision{}}) != "" ||
+		reportAction(pipeline.Output{Decision: &decision.Decision{Module: decision.Scored{Value: "calendar"}, Intent: decision.Scored{Value: "show"}}}) != "calendar.show" {
+		t.Fatal("action extraction did not distinguish absent and present intent")
+	}
+	for provider, want := range map[string]string{"custom-llm": "llm", "other": "unknown"} {
+		if got := detectionMethod(provider); got != want {
+			t.Fatalf("provider=%q method=%q want=%q", provider, got, want)
+		}
+	}
+}
+
+func TestTelemetryReportsCancelledStreamAndActions(t *testing.T) {
+	h, _ := testHandler(t)
+	reporter := &fakeInteractionReporter{}
+	h.reporter = reporter
+	h.turnSeq = 1
+	h.turnReports = map[int64]*turnReport{1: {id: "id", text: "request", llmStarted: true}}
+	h.streamTurnSeq = map[string]int64{"stream": 1}
+	cmd := h.OnStreamDone("stream", context.Canceled)
+	if cmd == nil {
+		t.Fatal("missing stream report")
+	}
+	_ = cmd()
+	if reporter.reports[0].Status != "cancelled" {
+		t.Fatalf("stream=%+v", reporter.reports[0])
+	}
+	for _, err := range []error{errors.New("action failed"), context.Canceled} {
+		h.turnReports = map[int64]*turnReport{1: {id: "id", text: "request"}}
+		cmd = h.OnMsg(actionMsg{seq: 1, err: err, kind: "calendar.show", state: *h.state})
+		if cmd == nil {
+			t.Fatal("missing action report")
+		}
+		_ = cmd()
+	}
+	if reporter.reports[1].ActionExecutions[0].Status != "failed" ||
+		reporter.reports[2].ActionExecutions[0].Status != "cancelled" {
+		t.Fatalf("action reports=%+v", reporter.reports)
+	}
+}
+
+func TestTelemetryReportsCancelledSlashAndDeterministicAction(t *testing.T) {
+	h, _ := testHandler(t)
+	reporter := &fakeInteractionReporter{}
+	h.reporter = reporter
+	cmd := h.handleSlash(slashMsg{interactionID: "id", text: "/space", err: context.Canceled})
+	_ = cmd()
+	if reporter.reports[0].Status != "cancelled" {
+		t.Fatalf("slash=%+v", reporter.reports[0])
+	}
+	h.turnSeq = 1
+	h.turnReports = map[int64]*turnReport{1: {id: "id", text: "show calendar"}}
+	cmd = h.handleTurn(turnMsg{seq: 1, text: "show calendar", state: *h.state, output: pipeline.Output{
+		Presentation: "done", Decision: &decision.Decision{Module: decision.Scored{Value: "calendar"}, Intent: decision.Scored{Value: "show"}},
+	}})
+	_ = cmd()
+	if reporter.reports[1].Outcome != "action_succeeded" || reporter.reports[1].ActionExecutions[0].Status != "succeeded" {
+		t.Fatalf("deterministic action=%+v", reporter.reports[1])
+	}
+}
