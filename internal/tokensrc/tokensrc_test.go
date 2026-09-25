@@ -11,13 +11,20 @@ import (
 )
 
 type fakeStore struct {
-	sess  session.Session
-	saved *session.Session
-	err   error
+	sess    session.Session
+	saved   *session.Session
+	err     error
+	saveErr error
 }
 
 func (f *fakeStore) Load() (session.Session, error) { return f.sess, f.err }
-func (f *fakeStore) Save(s session.Session) error   { f.saved = &s; return nil }
+func (f *fakeStore) Save(s session.Session) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.saved = &s
+	return nil
+}
 
 type fakeRefresher struct {
 	res    sneatauth.Result
@@ -87,5 +94,14 @@ func TestToken_RefreshError(t *testing.T) {
 	src := New(context.Background(), store, ref, func() time.Time { return now })
 	if _, err := src.Token(); err == nil {
 		t.Fatalf("expected refresh error")
+	}
+}
+
+func TestToken_SaveErrorAfterRefresh(t *testing.T) {
+	store := &fakeStore{sess: session.Session{ExpiresAt: at(-time.Hour)}, saveErr: errors.New("save boom")}
+	ref := &fakeRefresher{res: sneatauth.Result{IDToken: "new", ExpiresIn: time.Hour}}
+	src := New(context.Background(), store, ref, func() time.Time { return now })
+	if _, err := src.Token(); err == nil || err.Error() != "save boom" {
+		t.Fatalf("err = %v, want save boom", err)
 	}
 }

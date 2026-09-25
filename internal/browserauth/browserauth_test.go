@@ -2,7 +2,9 @@ package browserauth
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -92,6 +94,57 @@ func TestFlow_Run_NilOpenBrowser(t *testing.T) {
 	f := Flow{APIKey: "k"}
 	if _, err := f.Run(context.Background()); err == nil {
 		t.Fatalf("expected error when OpenBrowser is nil")
+	}
+}
+
+func TestFlow_Run_RenderPageError(t *testing.T) {
+	prev := jsonMarshal
+	jsonMarshal = func(any) ([]byte, error) { return nil, errors.New("marshal boom") }
+	t.Cleanup(func() { jsonMarshal = prev })
+
+	f := Flow{OpenBrowser: func(string) error { return nil }}
+	if _, err := f.Run(context.Background()); err == nil || err.Error() != "marshal boom" {
+		t.Fatalf("err = %v, want marshal boom", err)
+	}
+}
+
+func TestFlow_Run_ListenError(t *testing.T) {
+	prev := netListen
+	netListen = func(string, string) (net.Listener, error) { return nil, errors.New("listen boom") }
+	t.Cleanup(func() { netListen = prev })
+
+	f := Flow{OpenBrowser: func(string) error { return nil }}
+	if _, err := f.Run(context.Background()); err == nil || err.Error() != "listen boom" {
+		t.Fatalf("err = %v, want listen boom", err)
+	}
+}
+
+func TestFlow_Run_UnknownPathIsNotFound(t *testing.T) {
+	open := func(pageURL string) error {
+		base := strings.TrimSuffix(pageURL, "/")
+		go func() {
+			resp, err := http.Get(base + "/unknown")
+			if err != nil {
+				t.Errorf("GET /unknown: %v", err)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusNotFound {
+				t.Errorf("status = %d, want 404", resp.StatusCode)
+			}
+			good := `{"idToken":"idt","refreshToken":"rft","uid":"u1","email":"a@b.c","expiresIn":3600}`
+			if r, err := http.Post(base+"/callback", "application/json", strings.NewReader(good)); err == nil {
+				_ = r.Body.Close()
+			}
+		}()
+		return nil
+	}
+	res, err := Flow{OpenBrowser: open}.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.IDToken != "idt" {
+		t.Fatalf("idToken = %q", res.IDToken)
 	}
 }
 

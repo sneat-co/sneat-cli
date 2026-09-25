@@ -17,6 +17,12 @@ import (
 //go:embed signin.html
 var signinHTML string
 
+// jsonMarshal and netListen are test seams over hard-to-fail stdlib calls.
+var (
+	jsonMarshal = json.Marshal
+	netListen   = net.Listen
+)
+
 // Result is the captured Firebase session from the browser sign-in.
 type Result struct {
 	IDToken      string
@@ -37,7 +43,7 @@ type Flow struct {
 
 // renderPage returns the sign-in HTML with the Firebase config injected.
 func (f Flow) renderPage() ([]byte, error) {
-	cfg, err := json.Marshal(map[string]string{
+	cfg, err := jsonMarshal(map[string]string{
 		"apiKey":           f.APIKey,
 		"authDomain":       f.AuthDomain,
 		"project":          f.Project,
@@ -63,7 +69,7 @@ func (f Flow) Run(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := netListen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return Result{}, err
 	}

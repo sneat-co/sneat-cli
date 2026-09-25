@@ -87,3 +87,36 @@ func TestDefaultPath(t *testing.T) {
 		t.Fatalf("path = %q", p)
 	}
 }
+
+func TestDefaultMetadataPath_Error(t *testing.T) {
+	if _, err := DefaultMetadataPath(func() (string, error) { return "", errBoom }); err == nil {
+		t.Fatalf("expected propagated error")
+	}
+}
+
+func TestDefaultMetadataPath(t *testing.T) {
+	p, err := DefaultMetadataPath(func() (string, error) { return "/cfg", nil })
+	if err != nil {
+		t.Fatalf("DefaultMetadataPath: %v", err)
+	}
+	if p != "/cfg/sneat/session-metadata.json" {
+		t.Fatalf("path = %q", p)
+	}
+}
+
+func TestStore_Save_MarshalError(t *testing.T) {
+	withSeam(t, &jsonMarshalIndentFn, func(any, string, string) ([]byte, error) { return nil, errBoom })
+	s := NewStore(filepath.Join(t.TempDir(), "s.json"))
+	if err := s.Save(Session{}); !errors.Is(err, errBoom) {
+		t.Fatalf("err = %v, want errBoom", err)
+	}
+}
+
+func TestStore_Load_ReadError(t *testing.T) {
+	// A directory in place of the session file makes os.ReadFile fail with a
+	// non-ErrNotExist error.
+	dir := t.TempDir()
+	if _, err := NewStore(dir).Load(); err == nil {
+		t.Fatalf("expected read error for a directory path")
+	}
+}
