@@ -23,6 +23,7 @@ import (
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
 	"github.com/strongo/aichat/tui/grid"
+	"github.com/strongo/aichat/tui/theme"
 	"github.com/strongo/aichat/tui/transcript"
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/controls"
@@ -155,6 +156,42 @@ func (h *handler) appendHistory(user, assistant string) {
 	if len(h.history) > max {
 		h.history = h.history[len(h.history)-max:]
 	}
+}
+
+// --- chatshell.TopBarProvider / HintsProvider -------------------------------
+//
+// Shared-look cutover (strongo/aichat#chat-shared-look, REQ:
+// chatshell-product-bars): both methods return CONTENT ONLY -- title/
+// context/menu items, and a hint/segment list -- never a colour, padding or
+// border. chatshell renders them through the shared theme.TopBar/
+// theme.RenderHints chrome on every render.
+
+// topBar is chatshell.TopBarProvider.
+func (h *handler) topBar(int) (title, context string, items []theme.MenuItem) {
+	space := h.spaceID
+	if space == "" {
+		space = "no space selected"
+	} else {
+		space = "space: " + space
+	}
+	return "Sneat", space, nil
+}
+
+// hints is chatshell.HintsProvider. While busy (a live stream or a bare
+// SetBusy(true) phase), only the spinner note and quit hint apply -- the
+// composer/chip/focus hints below are all disabled while busy anyway (see
+// chatshell's own REQ: chatshell-composer-chips).
+func (h *handler) hints(int) (hints []theme.Hint, segments []string) {
+	if h.model.Busy() {
+		return []theme.Hint{{Key: "Ctrl+C", Label: "quit"}}, []string{"Thinking…"}
+	}
+	return []theme.Hint{
+		{Key: "Enter", Label: "send"},
+		{Key: "Shift+↑↓", Label: "navigate"},
+		{Key: "F6/Shift+→", Label: "pinned"},
+		{Key: "Esc", Label: "cancel/clear"},
+		{Key: "Ctrl+C", Label: "quit"},
+	}, nil
 }
 
 // --- chatshell.Handler -----------------------------------------------------
@@ -759,7 +796,14 @@ func (h *handler) startLLMStream(m llmRequestReadyMsg) tea.Cmd {
 		h.streamCtx[id] = ctx
 		return seq
 	}
-	return h.model.StartStream(id, open)
+	// StartStreamMarkdown (not StartStream): the LLM's own streamed reply is
+	// prose that may carry real markdown (lists, emphasis, code) and is the
+	// one path this product renders through the shared tui/mdrender look
+	// (chatapp.go's WithMarkdownRenderer) -- deterministic pipeline output
+	// (h.render, appendReplies) stays plain AppendAssistant/AppendSystem,
+	// unchanged, since it is already plain text chosen by this codebase, not
+	// model prose.
+	return h.model.StartStreamMarkdown(id, open)
 }
 
 func (h *handler) nextStreamID() string {

@@ -18,7 +18,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui"
@@ -145,43 +145,50 @@ func (b *ListBlock) Update(msg tea.Msg) (transcript.Block, tea.Cmd) {
 	return b, nil
 }
 
+// View is content only (no lipgloss colour/padding/border of its own --
+// shared-look cutover, strongo/aichat#chat-shared-look): the block renders
+// inside a tui/theme.Card, which already supplies the card's own
+// focus/fill treatment (REQ: theme-card-rendering); the ">"/"  " prefix
+// below is this block's own plain-text cursor marker, not a styled one.
 func (b *ListBlock) View(width int, focused bool) string {
 	var sb strings.Builder
-	heading := b.Heading
-	if focused {
-		heading = lipgloss.NewStyle().Bold(true).Render(heading)
-	}
-	sb.WriteString(heading)
+	sb.WriteString(b.Heading)
 	if len(b.Items) == 0 {
 		sb.WriteString("\n(nothing here)")
 		return clampWidth(sb.String(), width)
 	}
 	for i, it := range b.Items {
 		if it.Header {
-			sb.WriteString("\n" + lipgloss.NewStyle().Bold(true).Render(it.Title))
+			sb.WriteString("\n" + it.Title)
 			continue
 		}
 		line := "\n  " + it.Title
 		if it.Subtitle != "" {
-			line += "  " + lipgloss.NewStyle().Faint(true).Render(it.Subtitle)
+			line += "  " + it.Subtitle
 		}
 		if focused && i == b.cursor {
 			line = "\n> " + it.Title
 			if it.Subtitle != "" {
 				line += "  " + it.Subtitle
 			}
-			line = lipgloss.NewStyle().Reverse(true).Render(line)
 		}
 		sb.WriteString(line)
 	}
 	return clampWidth(sb.String(), width)
 }
 
+// clampWidth clamps each line independently (ansi.Truncate, a pure content
+// operation -- no colour/padding/border) so a multi-line View is never
+// widened past width on any one line.
 func clampWidth(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
-	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Truncate(line, width, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // CardBlock renders one entity's detail -- HappeningCard and ContactCard.
@@ -218,15 +225,12 @@ func (b *CardBlock) Update(msg tea.Msg) (transcript.Block, tea.Cmd) {
 	return b, nil
 }
 
-func (b *CardBlock) View(width int, focused bool) string {
-	title := b.Title
-	if focused {
-		title = lipgloss.NewStyle().Bold(true).Reverse(true).Render(title)
-	} else {
-		title = lipgloss.NewStyle().Bold(true).Render(title)
-	}
+// View is content only (shared-look cutover: no lipgloss colour/padding/
+// border of its own -- the wrapping tui/theme.Card already supplies the
+// card's own bold-header/focus-fill treatment, REQ: theme-card-rendering).
+func (b *CardBlock) View(width int, _ bool) string {
 	var sb strings.Builder
-	sb.WriteString(title)
+	sb.WriteString(b.Title)
 	for _, f := range b.Fields {
 		fmt.Fprintf(&sb, "\n%s: %s", f[0], f[1])
 	}

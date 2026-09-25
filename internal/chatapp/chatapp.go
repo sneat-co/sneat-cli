@@ -17,13 +17,14 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/strongo/aichat/ai/aiconfig"
 	"github.com/strongo/aichat/ai/ctxmgr"
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
+	"github.com/strongo/aichat/tui/mdrender"
 	"golang.org/x/oauth2"
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/data"
@@ -186,11 +187,22 @@ func Run(deps Deps) (err error) {
 	h := &handler{
 		ctx: ctx, pipeline: pl, processor: processor, state: &session.State{}, spaceID: spaceID, logger: logger,
 	}
+	// Shared-look cutover (strongo/aichat#chat-shared-look): sneat supplies
+	// CONTENT ONLY -- WithTopBarProvider/WithHintsProvider (h.topBar/h.hints,
+	// handler.go) replace the plain WithTitle default and take priority over
+	// it, and WithMarkdownRenderer wires the shared glamour-backed
+	// tui/mdrender look into every markdown-flagged transcript entry
+	// (startLLMStream uses StartStreamMarkdown for the LLM's own streamed
+	// reply -- see its own doc comment for why deterministic pipeline output
+	// stays plain AppendAssistant). No colour/padding/border decision is made
+	// here or anywhere else in this package; tui/theme owns all of that.
 	model := chatshell.New(h,
-		chatshell.WithTitle("sneat chat"),
 		chatshell.WithContext(ctx),
 		chatshell.WithCommands(slashCommands(processor.Commands())),
 		chatshell.WithSidebarRenderer(sidebarRender),
+		chatshell.WithTopBarProvider(h.topBar),
+		chatshell.WithHintsProvider(h.hints),
+		chatshell.WithMarkdownRenderer(mdrender.Render),
 	)
 	h.model = model
 
@@ -380,12 +392,15 @@ func sidebarRender(ref session.EntityRef, width int) string {
 		icon = "👤"
 	}
 	line := icon + " " + title
-	// m8: truncate by lipgloss's DISPLAY width, not len() (bytes) -- byte
-	// truncation both cuts a multi-byte rune (icon, or any non-ASCII title)
-	// mid-sequence and, for a wide rune, allows more bytes than the sidebar
-	// column can actually display.
+	// m8: truncate by DISPLAY width, not len() (bytes) -- byte truncation
+	// both cuts a multi-byte rune (icon, or any non-ASCII title) mid-sequence
+	// and, for a wide rune, allows more bytes than the sidebar column can
+	// actually display. ansi.Truncate is a pure content operation (no
+	// colour/padding/border) -- sidebarRender supplies tui/sidebar.Renderer
+	// content only; tui/theme (via sidebar.Model.View) owns the row's own
+	// SelectedRow/PanelHeader styling.
 	if width <= 0 {
 		return line
 	}
-	return lipgloss.NewStyle().MaxWidth(width).Render(line)
+	return ansi.Truncate(line, width, "")
 }
