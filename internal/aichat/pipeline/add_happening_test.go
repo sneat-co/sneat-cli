@@ -9,6 +9,7 @@ import (
 
 	"github.com/sneat-co/calendarius/backend/dbo4calendarius"
 	"github.com/sneat-co/calendarius/backend/dto4calendarius"
+	"github.com/sneat-co/sneat-ai-backend/temporal"
 	"github.com/sneat-co/sneat-core-modules/spaceus/dto4spaceus"
 	"github.com/sneat-co/sneat-go-core/coretypes"
 	"github.com/strongo/aichat/ai/session"
@@ -458,5 +459,100 @@ func TestCapitalizeFirst(t *testing.T) {
 	}
 	if got := capitalizeFirst(""); got != "" {
 		t.Fatalf("capitalizeFirst(\"\") = %q, want \"\"", got)
+	}
+}
+
+// TestResolveAddHappeningDate_WeekdayRules is the coordinator's PR #58
+// review fix: temporal.ParseText's own weekday resolution (NextWeekday,
+// "today included") strips "next "/"this " unconditionally and has no
+// notion of an event's own start time, so on its own it (a) let "next
+// Friday" resolve to TODAY when asked on a Friday, and (b) let a bare
+// "Friday 10:30" resolve to today even after 10:30 had already passed.
+// resolveAddHappeningDate's own weekday handling (not a passthrough to
+// ParseText) fixes both; this table asserts the EXACT resolved date for
+// every case the coordinator named, anchored to a fixed Friday clock.
+func TestResolveAddHappeningDate_WeekdayRules(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC) // Friday, noon
+	cases := []struct {
+		name      string
+		dateRaw   string
+		startTime string // HH:MM, feeds startMin
+		want      string // YYYY-MM-DD
+	}{
+		// Bare weekday naming TODAY, start already passed (10:30 < 12:00) ->
+		// rolls to the SAME weekday next week, not an event in the past.
+		{"bare weekday, today, start already passed", "Friday", "10:30", "2026-10-02"},
+		// Bare weekday naming TODAY, start still ahead (14:00 > 12:00) ->
+		// stays today.
+		{"bare weekday, today, start not yet passed", "Friday", "14:00", "2026-09-25"},
+		// "next <weekday>" naming today NEVER stays today, even with a start
+		// time still ahead -- "next Friday" said Friday morning means the
+		// COMING Friday.
+		{"next weekday, today, start not yet passed", "next Friday", "14:00", "2026-10-02"},
+		// "this <weekday>" carries no special meaning beyond ParseText's own
+		// stripping -- same result as the bare weekday case above.
+		{"this weekday, today, start not yet passed", "this Friday", "14:00", "2026-09-25"},
+		// A DIFFERENT weekday's own next occurrence is unaffected by any of
+		// the today-specific rules.
+		{"different weekday", "Monday", "09:00", "2026-09-28"},
+		// "next <weekday>" asked when that weekday is NOT today (mid-week)
+		// is just its ordinary next occurrence -- no double bump.
+		{"next weekday, not today", "next Monday", "09:00", "2026-09-28"},
+		// "tomorrow" is not a weekday phrase at all -- unaffected, falls
+		// through to temporal.ParseText's literal "tomorrow" handling.
+		{"tomorrow", "tomorrow", "09:00", "2026-09-26"},
+		// The literal word "today" is a deliberate exception to the
+		// already-passed rule: it always stays today (past events allowed).
+		{"explicit today, start already passed", "today", "08:00", "2026-09-25"},
+		// An absolute ISO date is never touched by any weekday rule, even
+		// when it names today with a start time already passed.
+		{"explicit ISO date, start already passed", "2026-09-25", "08:00", "2026-09-25"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			startNorm, err := temporal.NormalizeTime(c.startTime)
+			if err != nil {
+				t.Fatalf("NormalizeTime(%q): %v", c.startTime, err)
+			}
+			startMin, _ := minutesOfDay(startNorm.Time)
+			got, ok := resolveAddHappeningDate(now, c.dateRaw, startMin)
+			if !ok {
+				t.Fatalf("resolveAddHappeningDate(%q) ok = false", c.dateRaw)
+			}
+			if gotStr := got.Format("2006-01-02"); gotStr != c.want {
+				t.Errorf("resolveAddHappeningDate(%q, start=%s) = %s, want %s", c.dateRaw, c.startTime, gotStr, c.want)
+			}
+		})
+	}
+}
+
+// TestResolveAddHappeningSlots_WeekdayAlreadyPassed_RollsToNextWeek is the
+// same bug, exercised through the full resolveAddHappeningSlots entry point
+// (not resolveAddHappeningDate directly) -- catches a regression in the
+// start-before-date resolution ORDER the fix depends on.
+func TestResolveAddHappeningSlots_WeekdayAlreadyPassed_RollsToNextWeek(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC) // Friday, noon
+	got, err := resolveAddHappeningSlots(now, "", map[string]string{
+		"title": "Dentist", "date": "Friday", "start": "10:30",
+	})
+	if err != nil {
+		t.Fatalf("resolveAddHappeningSlots: %v", err)
+	}
+	if gotStr := got.Date.Format("2006-01-02"); gotStr != "2026-10-02" {
+		t.Errorf("date = %s, want 2026-10-02 (next Friday, since 10:30 already passed today)", gotStr)
+	}
+}
+
+// TestAddHappeningSlots_Summary_ShowsWeekdayAndYear is the coordinator's
+// preview-clarity fix: the one-off confirmation text must name the weekday
+// and year so a resolution like the one above is obviously "next Friday",
+// not silently "today", before the user says yes.
+func TestAddHappeningSlots_Summary_ShowsWeekdayAndYear(t *testing.T) {
+	s := addHappeningSlots{Title: "Dentist", Date: time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC), StartTime: "10:30", EndTime: "11:30"}
+	got := s.summary()
+	for _, want := range []string{"Fri", "2 Oct 2026", "10:30-11:30"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary = %q, want it to contain %q", got, want)
+		}
 	}
 }

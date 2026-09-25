@@ -119,14 +119,62 @@ func minutesOfDay(hhmm string) (int, bool) {
 	return t.Hour()*60 + t.Minute(), true
 }
 
-// resolveAddHappeningDate resolves the "date" slot: an absolute YYYY-MM-DD
-// (parsed, not trusted blindly) or, failing that, a relative phrase
-// ("tomorrow", "Friday") resolved deterministically via sneat-ai-backend's
-// temporal package -- the SAME package reschedule's parseWhen (resolver.go)
-// reuses, per the reuse-existing-sneat-code rule -- rather than trusting the
-// model's own date arithmetic (founder ask, add-event-prompt.md).
-func resolveAddHappeningDate(now time.Time, dateRaw string) (time.Time, bool) {
+// resolveAddHappeningDate resolves the "date" slot for a one-off event: an
+// absolute YYYY-MM-DD (parsed, not trusted blindly) or, failing that, a
+// relative phrase ("tomorrow", "Friday", "next Friday") resolved
+// deterministically via sneat-ai-backend's temporal package -- the SAME
+// package reschedule's parseWhen (resolver.go) reuses, per the
+// reuse-existing-sneat-code rule -- rather than trusting the model's own
+// date arithmetic (founder ask, add-event-prompt.md).
+//
+// startMin (the event's OWN already-resolved start time, minutes since
+// midnight) anchors two rules temporal.ParseText's own weekday resolution
+// (NextWeekday, "today included") does not implement on its own, and that a
+// bare temporal.ParseText call got wrong for creating a NEW event
+// (coordinator review, PR #58): a reschedule's "when" has an existing
+// occurrence to anchor against, but add_happening has none, so "Friday
+// 10:30" asked on a Friday afternoon must not silently resolve to a start
+// time already in the past.
+//
+//  1. "next <weekday>" NEVER resolves to today, even when asked before that
+//     weekday's start time would pass: "next Friday" said on Friday morning
+//     means the COMING Friday (a week out), the common reading of "next" --
+//     not "next" meaning nothing because delta-0 already satisfies "the next
+//     Friday on/after today" (temporal.NextWeekday's own semantics, meant for
+//     an unqualified bare weekday, not one explicitly marked "next").
+//  2. A BARE weekday ("Friday", "this Friday" -- "this" carries no special
+//     meaning here beyond temporal.ParseText's own stripping) that names
+//     TODAY, whose start time has ALREADY PASSED in the session clock, rolls
+//     to the same weekday next week instead of creating an event in the
+//     past nobody asked to log.
+//
+// The literal word "today" is a DELIBERATE exception to rule 2: it always
+// stays today even when startMin has already passed -- an explicit "today"
+// is read as "log this for today" (past events are allowed elsewhere in
+// this resolver too, e.g. an explicit YYYY-MM-DD in the past), not as "the
+// next day that happens to be named today".
+func resolveAddHappeningDate(now time.Time, dateRaw string, startMin int) (time.Time, bool) {
 	if d, err := time.ParseInLocation("2006-01-02", dateRaw, now.Location()); err == nil {
+		return d, true
+	}
+	lower := strings.ToLower(strings.TrimSpace(dateRaw))
+	if lower == "today" {
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()), true
+	}
+	hasNext := strings.Contains(lower, "next")
+	// Strip the same "next "/"this " prefixes temporal.ParseText itself
+	// strips internally, so ParseWeekday sees a bare weekday name either way
+	// -- this is our OWN weekday resolution (not a call into ParseText),
+	// because only here can rules 1/2 above be applied before returning.
+	stripped := strings.TrimSpace(strings.NewReplacer("next ", "", "this ", "").Replace(lower))
+	if code, ok := temporal.ParseWeekday(stripped); ok {
+		d, _ := temporal.NextWeekday(now, code)
+		if sameCalendarDay(d, now) {
+			nowMin := now.Hour()*60 + now.Minute()
+			if hasNext || startMin <= nowMin {
+				d = d.AddDate(0, 0, 7)
+			}
+		}
 		return d, true
 	}
 	if d, ok := temporal.ParseText(now, dateRaw); ok {
@@ -161,21 +209,11 @@ func resolveAddHappeningSlots(now time.Time, sessionTZ string, args map[string]s
 		out.TZ = sessionTZ
 	}
 
-	if weekdaysRaw != "" {
-		codes, err := parseWeekdayList(weekdaysRaw)
-		if err != nil {
-			return addHappeningSlots{}, err
-		}
-		out.Recurring = true
-		out.Weekdays = codes
-	} else {
-		d, ok := resolveAddHappeningDate(now, dateRaw)
-		if !ok {
-			return addHappeningSlots{}, fmt.Errorf("didn't understand the date %q", dateRaw)
-		}
-		out.Date = d
-	}
-
+	// The start time is resolved BEFORE the one-off date, not after: a bare
+	// weekday that names TODAY needs to compare against the event's OWN
+	// start time to decide whether that occurrence has already passed (see
+	// resolveAddHappeningDate's doc comment, rule 2) -- recurring events
+	// need no such comparison (a weekly slot has no single "today").
 	startRaw := strings.TrimSpace(args["start"])
 	if startRaw == "" {
 		return addHappeningSlots{}, fmt.Errorf("what time does %q start?", title)
@@ -192,6 +230,21 @@ func resolveAddHappeningSlots(now time.Time, sessionTZ string, args map[string]s
 	// format, not a user-input problem this function should try to explain.
 	startMin, _ := minutesOfDay(startNorm.Time)
 	out.StartTime = startNorm.Time
+
+	if weekdaysRaw != "" {
+		codes, err := parseWeekdayList(weekdaysRaw)
+		if err != nil {
+			return addHappeningSlots{}, err
+		}
+		out.Recurring = true
+		out.Weekdays = codes
+	} else {
+		d, ok := resolveAddHappeningDate(now, dateRaw, startMin)
+		if !ok {
+			return addHappeningSlots{}, fmt.Errorf("didn't understand the date %q", dateRaw)
+		}
+		out.Date = d
+	}
 
 	endMin := startMin + defaultEventDurationMinutes
 	switch {
@@ -266,12 +319,17 @@ func (s addHappeningSlots) toArgs(spaceID string) map[string]string {
 }
 
 // summary builds the "yes/no" confirmation preview (founder ask: "a preview
-// (title, date or weekly days, start-end)").
+// (title, date or weekly days, start-end)"). The one-off date is rendered
+// WITH its weekday name and year ("Fri 2 Oct 2026", not just "Oct 2") --
+// coordinator review (PR #58): resolveAddHappeningDate's weekday rules
+// (today vs. next week, "next" handling) are subtle enough that a
+// mis-resolution must be visually obvious in the confirmation, before "yes"
+// commits to it, not discoverable only after the happening is created.
 func (s addHappeningSlots) summary() string {
 	if s.Recurring {
 		return fmt.Sprintf("Add %q every %s, %s-%s?", s.Title, weekdayListLabel(s.Weekdays), s.StartTime, s.EndTime)
 	}
-	return fmt.Sprintf("Add %q on %s, %s-%s?", s.Title, s.Date.Format("Mon Jan 2"), s.StartTime, s.EndTime)
+	return fmt.Sprintf("Add %q on %s, %s-%s?", s.Title, s.Date.Format("Mon 2 Jan 2006"), s.StartTime, s.EndTime)
 }
 
 // stageAddHappening resolves and validates calendar.add_happening's slots
