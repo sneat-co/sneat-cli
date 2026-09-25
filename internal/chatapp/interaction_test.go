@@ -92,8 +92,8 @@ func TestSlashCommandReportsSuccessfulDeterministicAction(t *testing.T) {
 	h, _ := testHandler(t)
 	reporter := &fakeInteractionReporter{}
 	h.reporter = reporter
-	action := slashCommandAction("/space current")
-	if action != "slash.space" || slashCommandAction("/space@private") != "slash.unknown" {
+	action, known := slashCommandAction("/space current", h.processor.Commands())
+	if action != "slash.space" || !known {
 		t.Fatalf("slash action=%q", action)
 	}
 	cmd := h.handleSlash(slashMsg{interactionID: "test-id", text: "/space current"})
@@ -106,6 +106,23 @@ func TestSlashCommandReportsSuccessfulDeterministicAction(t *testing.T) {
 		r.DetectionSteps[0].Actions[0] != action || len(r.ActionExecutions) != 1 ||
 		r.ActionExecutions[0].Status != "succeeded" {
 		t.Fatalf("slash report=%+v", r)
+	}
+}
+
+func TestUnknownSlashCommandHasNoActionOrRawIdentifier(t *testing.T) {
+	h, _ := testHandler(t)
+	reporter := &fakeInteractionReporter{}
+	h.reporter = reporter
+	if action, known := slashCommandAction("/sk-private-token", h.processor.Commands()); known || action != "" {
+		t.Fatalf("unknown command became action %q", action)
+	}
+	cmd := h.handleSlash(slashMsg{interactionID: "test-id", text: "/sk-private-token"})
+	_ = cmd()
+	r := reporter.reports[0]
+	if r.Outcome != "unrecognized_command" || len(r.ActionExecutions) != 0 ||
+		len(r.DetectionSteps) != 1 || r.DetectionSteps[0].Result != "unknown" ||
+		len(r.DetectionSteps[0].Actions) != 0 {
+		t.Fatalf("unknown slash report=%+v", r)
 	}
 }
 

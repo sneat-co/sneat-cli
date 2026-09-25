@@ -666,11 +666,14 @@ func (h *handler) handleSlash(m slashMsg) tea.Cmd {
 	} else {
 		h.appendReplies(m.replies)
 	}
+	action, known := slashCommandAction(m.text, h.processor.Commands())
 	actionStatus := status
-	if status == "completed" {
+	if !known {
+		outcome, actionStatus = "unrecognized_command", ""
+	} else if status == "completed" {
 		outcome, actionStatus = "action_succeeded", "succeeded"
 	}
-	return h.reportCommand(&turnReport{id: m.interactionID, text: m.text}, status, outcome, slashCommandAction(m.text), actionStatus)
+	return h.reportCommand(&turnReport{id: m.interactionID, text: m.text}, status, outcome, action, actionStatus)
 }
 
 // appendReplies renders a []chat.Reply the same way for a typed slash
