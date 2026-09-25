@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -19,7 +20,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/strongo/aichat/ai"
 	"github.com/strongo/aichat/ai/aiconfig"
+	"github.com/strongo/aichat/ai/clientctx"
+	"github.com/strongo/aichat/ai/cloud"
 	"github.com/strongo/aichat/ai/ctxmgr"
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
@@ -38,14 +42,15 @@ import (
 
 // Deps are what Run needs to build and launch one chat session.
 type Deps struct {
-	Spaces   chat.SpacesReader
-	Contacts chat.ContactsReader
-	UID      string
-	Email    string
-	Version  string
-	Cfg      config.Config
-	AIConfig aiconfig.Config
-	NoJev    bool
+	Spaces         chat.SpacesReader
+	Contacts       chat.ContactsReader
+	UID            string
+	Email          string
+	Version        string
+	InstallationID string
+	Cfg            config.Config
+	AIConfig       aiconfig.Config
+	NoJev          bool
 	// TokenSource yields the signed-in user's bearer token, for Firestore
 	// reads, sneatapi mutations, and (unless BYOK) the LLM/decision cloud
 	// calls.
@@ -157,9 +162,11 @@ func Run(deps Deps) (err error) {
 	api := sneatapi.New(deps.Cfg.APIBaseURL, deps.TokenSource, httpClient)
 	executor := pipeline.SneatExecutor{Calendar: api, Todo: api, Happenings: readers.Happenings, Now: now}
 
+	clientContext := newClientContext(deps.Version, deps.InstallationID)
 	providers, err := buildAIConfig(deps.AIConfig, aiconfig.Deps{
 		Product: Product, CloudToken: cloudTokenFunc(deps.TokenSource), CloudBaseURL: deps.Cfg.APIBaseURL,
-		EnvPrefix: "SNEAT_", HTTPClient: httpClient,
+		ClientContext: clientContext,
+		EnvPrefix:     "SNEAT_", HTTPClient: httpClient,
 		ExtraDecision:        []decision.Provider{sneatrules.New()},
 		DisableCloudDecision: deps.NoJev,
 	})
@@ -187,6 +194,9 @@ func Run(deps Deps) (err error) {
 	h := &handler{
 		ctx: ctx, pipeline: pl, processor: processor, state: &session.State{}, spaceID: spaceID, logger: logger,
 	}
+	if deps.TokenSource != nil && deps.Cfg.APIBaseURL != "" {
+		h.reporter = cloud.New(cloud.Config{BaseURL: deps.Cfg.APIBaseURL, Product: Product, Token: cloudTokenFunc(deps.TokenSource), ClientContext: clientContext, HTTPClient: httpClient})
+	}
 	// Shared-look cutover (strongo/aichat#chat-shared-look): sneat supplies
 	// CONTENT ONLY -- WithTopBarProvider/WithHintsProvider (h.topBar/h.hints,
 	// handler.go) replace the plain WithTitle default and take priority over
@@ -207,6 +217,17 @@ func Run(deps Deps) (err error) {
 	h.model = model
 
 	return runProgram(model)
+}
+
+func newClientContext(version, installationID string) *ai.ClientContext {
+	chatSessionID, _ := clientctx.NewUUID()
+	return &ai.ClientContext{
+		InstallationID: installationID,
+		SessionID:      chatSessionID,
+		Feature:        "chat",
+		Client:         ai.ClientInfo{Type: "cli", Name: "sneat", Version: version},
+		Platform:       ai.PlatformInfo{OS: runtime.GOOS, Arch: runtime.GOARCH},
+	}
 }
 
 // defaultSpaceID chooses the pipeline's starting space (coordinator ruling
