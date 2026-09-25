@@ -12,6 +12,7 @@ import (
 	togdactions "github.com/sneat-co/sneat-bots/extensions/togethered/convoactions"
 	"github.com/sneat-co/sneat-bots/platform/convo/convomodel"
 	"github.com/sneat-co/sneat-bots/platform/convo/convoruntime"
+	"github.com/sneat-co/sneat-bots/platform/convo/convospec"
 	"github.com/sneat-co/sneat-go-core/coretypes"
 	"github.com/sneat-co/sneat-go-core/facade"
 	"github.com/spf13/cobra"
@@ -48,11 +49,39 @@ func newConvoRuntime() (*convoruntime.Runtime, error) {
 	return convosetup.NewMockRuntime(convoServices(), togdStubCatalog())
 }
 
+// convoRuntimeAPI is the subset of *convoruntime.Runtime the convo
+// subcommands call. Defining it lets tests substitute a fake runtime to
+// exercise error-propagation paths (a malformed model reply, a stale pending
+// action, a marshal failure) that are impractical to provoke from the real
+// deterministic mock LLM and its fixed, always-valid catalog set.
+type convoRuntimeAPI interface {
+	SpecJSON(scope []string) ([]byte, error)
+	ActionDefs(scope []string) []convospec.ActionDef
+	HandleText(ctx context.Context, request convomodel.Request) (convomodel.Response, error)
+	ResolvePending(ctx context.Context, request convomodel.Request, pending convomodel.PendingAction, approved bool) (convomodel.Response, error)
+}
+
+// convoRuntimeFactory builds the runtime object the convo subcommands call
+// against. A package-level var (rather than calling newConvoRuntime
+// directly) so tests can inject a composition failure, or a fake satisfying
+// convoRuntimeAPI, without corrupting the real, fixed catalog set
+// newConvoRuntime always composes. Production default is today's real call.
+var convoRuntimeFactory = func() (convoRuntimeAPI, error) {
+	return newConvoRuntime()
+}
+
 // newConvoRegistry composes the same catalogs without an LLM, for the
 // introspection commands that only read what is registered.
 func newConvoRegistry() (*convoruntime.Registry, error) {
 	return convosetup.NewCatalogRegistry(convoServices(), togdStubCatalog())
 }
+
+// convoRegistryFactory builds the registry `convo catalogs`/`convo route`
+// introspect. A package-level var (rather than calling newConvoRegistry
+// directly) so tests can exercise the composition-failure branch without
+// corrupting the real, fixed catalog set newConvoRegistry always composes.
+// Production default is today's real call.
+var convoRegistryFactory = newConvoRegistry
 
 // togdStubCatalog returns a convoruntime.Catalog for the togethered scope
 // with stub execute functions (deterministic summaries from args, no DB).
@@ -98,7 +127,7 @@ func setupSandbox(spaceID coretypes.SpaceID, userID string) (context.Context, er
 	// binds the same Contactus-backed shape; without it "20 push-ups" would
 	// error out here with "trackus contact resolver is not configured".
 	configureConvoServices()
-	ctx, _, err := convodev.SetupSandboxWithDB(db, spaceID, userID)
+	ctx, _, err := sandboxSetupFn(db, spaceID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +137,14 @@ func setupSandbox(spaceID coretypes.SpaceID, userID string) (context.Context, er
 	return ctx, seedSandboxContacts(ctx, userID, string(spaceID))
 }
 
+// sandboxSetupFn wires the sandbox DB into a context. A package-level var
+// (rather than calling convodev.SetupSandboxWithDB directly) so tests can
+// exercise setupSandbox's own error-propagation branch without needing a
+// real seeding failure from convodev (e.g. an invalid sandbox space that
+// would panic deeper in dbo4spaceus.NewSpaceKey rather than error).
+// Production default is today's real call.
+var sandboxSetupFn = convodev.SetupSandboxWithDB
+
 // convoActionsCmd returns the `sneat convo actions` subcommand.
 func convoActionsCmd() *cobra.Command {
 	var scope []string
@@ -115,7 +152,7 @@ func convoActionsCmd() *cobra.Command {
 		Use:   "actions",
 		Short: "List available conversational action definitions",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			rt, err := newConvoRuntime()
+			rt, err := convoRuntimeFactory()
 			if err != nil {
 				return err
 			}
@@ -185,7 +222,7 @@ func runSaySession(cmd *cobra.Command, messages []string, scope []string, spaceI
 		return fmt.Errorf("sandbox setup: %w", err)
 	}
 
-	rt, err := newConvoRuntime()
+	rt, err := convoRuntimeFactory()
 	if err != nil {
 		return err
 	}
@@ -298,7 +335,7 @@ func runReplaySession(cmd *cobra.Command, scriptFile string, scope []string, spa
 		return fmt.Errorf("sandbox setup: %w", err)
 	}
 
-	rt, err := newConvoRuntime()
+	rt, err := convoRuntimeFactory()
 	if err != nil {
 		return err
 	}
