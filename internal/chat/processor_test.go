@@ -5,6 +5,7 @@ import (
 	"errors"
 	"go/parser"
 	"go/token"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -939,6 +940,243 @@ func TestProcessor_ContactsCardListsAndOffersBack(t *testing.T) {
 	}
 	if !strings.Contains(buttonLabelsFlat(card.Keyboard), "Back") {
 		t.Errorf("the contacts card has no ← Back button; its buttons are %q", buttonLabelsFlat(card.Keyboard))
+	}
+}
+
+// --- remaining branch coverage ---
+
+func TestProcessor_ActiveSpaceReportsTheField(t *testing.T) {
+	p := NewProcessor(Deps{Spaces: fakeSpaces{}, UID: "u1", CurrentSpace: "seeded1"})
+	if got := p.ActiveSpace(); got != "seeded1" {
+		t.Errorf("ActiveSpace() = %q, want %q", got, "seeded1")
+	}
+}
+
+func TestProcessor_WhoAmIWithNoEmailSaysSo(t *testing.T) {
+	p := NewProcessor(Deps{Spaces: fakeSpaces{}, UID: "u1"})
+	got := send(t, p, "/who-am-i").Text
+	if !strings.Contains(strings.ToLower(got), "no email") {
+		t.Errorf("/who-am-i with no email = %q, want it to say so", got)
+	}
+}
+
+func TestProcessor_VersionWithNoVersionSaysUnknown(t *testing.T) {
+	p := NewProcessor(Deps{Spaces: fakeSpaces{}, UID: "u1"})
+	got := send(t, p, "/version").Text
+	if !strings.Contains(got, "unknown") {
+		t.Errorf("/version with no build version = %q, want it to say unknown", got)
+	}
+}
+
+// TestProcessor_SpaceCmdWithSeededActiveSpaceFetchesFreshly covers
+// spaceLabelByID's fetch path: an active space seeded directly (not by
+// pressing a button) is not in the last listing, so /space must fetch it.
+func TestProcessor_SpaceCmdWithSeededActiveSpaceFetchesFreshly(t *testing.T) {
+	t.Run("reader error is returned", func(t *testing.T) {
+		p := NewProcessor(Deps{Spaces: fakeSpaces{err: errors.New("boom")}, UID: "u1", CurrentSpace: "family1"})
+		_, err := p.SendText(context.Background(), "/space")
+		if err == nil {
+			t.Fatal("/space with a failing reader = nil error, want it returned")
+		}
+	})
+
+	t.Run("id found in the fetched spaces", func(t *testing.T) {
+		p := NewProcessor(Deps{Spaces: fakeSpaces{spaces: twoSpaces()}, UID: "u1", CurrentSpace: "family1"})
+		got := send(t, p, "/space").Text
+		if !strings.Contains(got, "Family") {
+			t.Errorf("/space = %q, want it to name Family via the fetch fallback", got)
+		}
+	})
+
+	t.Run("id absent from the fetched spaces falls back to the bare id", func(t *testing.T) {
+		p := NewProcessor(Deps{Spaces: fakeSpaces{spaces: twoSpaces()}, UID: "u1", CurrentSpace: "ghost1"})
+		got := send(t, p, "/space").Text
+		if !strings.Contains(got, "ghost1") {
+			t.Errorf("/space = %q, want it to fall back to the bare id \"ghost1\"", got)
+		}
+	})
+}
+
+func TestProcessor_ContactsResolveSpaceReaderErrorIsReturned(t *testing.T) {
+	p := NewProcessor(Deps{Spaces: fakeSpaces{err: errors.New("boom")}, UID: "u1"})
+	_, err := p.SendText(context.Background(), "/contacts family")
+	if err == nil {
+		t.Fatal("/contacts <type> with a failing reader = nil error, want it returned")
+	}
+}
+
+func TestProcessor_ContactsWithNoReaderConfigured(t *testing.T) {
+	p := NewProcessor(Deps{Spaces: fakeSpaces{spaces: map[string]any{"s1": map[string]any{"type": "family"}}}, UID: "u1"})
+	_, err := p.SendText(context.Background(), "/contacts family")
+	if err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Errorf("err = %v, want a \"contacts are not available\" error", err)
+	}
+}
+
+func TestProcessor_ContactsOfEmptySpaceSaysSo(t *testing.T) {
+	p := NewProcessor(Deps{
+		Spaces:   fakeSpaces{spaces: map[string]any{"s1": map[string]any{"type": "family"}}},
+		Contacts: fakeContacts{bySpace: map[string][]Contact{}},
+		UID:      "u1",
+	})
+	got := send(t, p, "/contacts family").Text
+	if !strings.Contains(strings.ToLower(got), "no contacts") {
+		t.Errorf("/contacts on an empty space = %q, want it to say there are no contacts", got)
+	}
+}
+
+func TestProcessor_ContactsWithoutANameFallsBackToUnnamed(t *testing.T) {
+	p := NewProcessor(Deps{
+		Spaces:   fakeSpaces{spaces: map[string]any{"s1": map[string]any{"type": "family"}}},
+		Contacts: fakeContacts{bySpace: map[string][]Contact{"s1": {{Name: ""}}}},
+		UID:      "u1",
+	})
+	got := send(t, p, "/contacts family").Text
+	if !strings.Contains(got, "(unnamed)") {
+		t.Errorf("/contacts with an unnamed contact = %q, want it to show (unnamed)", got)
+	}
+}
+
+// TestProcessor_UnhandleableContactsPress covers PressButton's cbContacts
+// branch when the required "space" argument is missing.
+func TestProcessor_UnhandleableContactsPressMissingArg(t *testing.T) {
+	p := newTestProcessor(twoSpaces())
+	replies, err := p.PressButton(context.Background(), "contacts")
+	if err != nil {
+		t.Fatalf("PressButton(contacts): unexpected error: %v", err)
+	}
+	if len(replies) != 1 || !strings.Contains(strings.ToLower(replies[0].Text), "could not be handled") {
+		t.Errorf("replies = %v, want the unhandled-press reply", replies)
+	}
+}
+
+// TestProcessor_EncodeCallbackDataFailuresAreReturned forces
+// encodeCallbackDataFn to fail at each of its four call sites (spacesList,
+// spaceCard's two buttons, contactsCard's back button) — unreachable through
+// real callers, since every call site passes a fixed, safe command constant.
+func TestProcessor_EncodeCallbackDataFailuresAreReturned(t *testing.T) {
+	boom := errors.New("encode boom")
+	orig := encodeCallbackDataFn
+	t.Cleanup(func() { encodeCallbackDataFn = orig })
+
+	t.Run("spacesList button", func(t *testing.T) {
+		encodeCallbackDataFn = func(string, url.Values) (string, error) { return "", boom }
+		p := newTestProcessor(twoSpaces())
+		_, err := p.SendText(context.Background(), "/spaces")
+		if !errors.Is(err, boom) {
+			t.Errorf("err = %v, want it to wrap the encode failure", err)
+		}
+	})
+
+	t.Run("spaceCard contacts button", func(t *testing.T) {
+		encodeCallbackDataFn = orig
+		p := newTestProcessor(twoSpaces()).(*processor)
+		send(t, p, "/spaces")
+		encodeCallbackDataFn = func(cmd string, _ url.Values) (string, error) {
+			if cmd == cbContacts {
+				return "", boom
+			}
+			return orig(cmd, url.Values{})
+		}
+		_, err := p.PressButton(context.Background(), "space?id=family1")
+		if !errors.Is(err, boom) {
+			t.Errorf("err = %v, want it to wrap the contacts-button encode failure", err)
+		}
+	})
+
+	t.Run("spaceCard back button", func(t *testing.T) {
+		encodeCallbackDataFn = orig
+		p := newTestProcessor(twoSpaces()).(*processor)
+		send(t, p, "/spaces")
+		encodeCallbackDataFn = func(cmd string, args url.Values) (string, error) {
+			if cmd == cbSpaces {
+				return "", boom
+			}
+			return orig(cmd, args)
+		}
+		_, err := p.PressButton(context.Background(), "space?id=family1")
+		if !errors.Is(err, boom) {
+			t.Errorf("err = %v, want it to wrap the spaces-button encode failure", err)
+		}
+	})
+
+	t.Run("contactsCard back button", func(t *testing.T) {
+		encodeCallbackDataFn = orig
+		p := cardSetup(t)
+		press(t, p, "space?id=vaoyj")
+		encodeCallbackDataFn = func(cmd string, args url.Values) (string, error) {
+			if cmd == cbSpace {
+				return "", boom
+			}
+			return orig(cmd, args)
+		}
+		_, err := p.PressButton(context.Background(), "contacts?space=vaoyj")
+		if !errors.Is(err, boom) {
+			t.Errorf("err = %v, want it to wrap the back-button encode failure", err)
+		}
+	})
+}
+
+func TestProcessor_ContactsCardWithNoReaderConfigured(t *testing.T) {
+	p := NewProcessor(Deps{
+		Spaces: fakeSpaces{spaces: map[string]any{"vaoyj": map[string]any{"type": "family"}}},
+		UID:    "u1",
+	}).(*processor)
+	send(t, p, "/spaces")
+	_, err := p.PressButton(context.Background(), "contacts?space=vaoyj")
+	if err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Errorf("err = %v, want a \"contacts are not available\" error", err)
+	}
+}
+
+func TestProcessor_ContactsCardReaderErrorIsReturned(t *testing.T) {
+	p := NewProcessor(Deps{
+		Spaces:   fakeSpaces{spaces: map[string]any{"vaoyj": map[string]any{"type": "family"}}},
+		Contacts: fakeContacts{err: errors.New("boom")},
+		UID:      "u1",
+	}).(*processor)
+	send(t, p, "/spaces")
+	_, err := p.PressButton(context.Background(), "contacts?space=vaoyj")
+	if err == nil {
+		t.Fatal("contactsCard with a failing reader = nil error, want it returned")
+	}
+}
+
+func TestProcessor_ContactsCardOfEmptySpaceSaysSo(t *testing.T) {
+	p := NewProcessor(Deps{
+		Spaces:   fakeSpaces{spaces: map[string]any{"vaoyj": map[string]any{"type": "family"}}},
+		Contacts: fakeContacts{bySpace: map[string][]Contact{}},
+		UID:      "u1",
+	}).(*processor)
+	send(t, p, "/spaces")
+	card, err := p.PressButton(context.Background(), "contacts?space=vaoyj")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(card[0].Text), "no contacts") {
+		t.Errorf("contacts card = %q, want it to say there are no contacts", card[0].Text)
+	}
+}
+
+func TestProcessor_ContactsCardUnnamedContactFallsBack(t *testing.T) {
+	p := NewProcessor(Deps{
+		Spaces:   fakeSpaces{spaces: map[string]any{"vaoyj": map[string]any{"type": "family"}}},
+		Contacts: fakeContacts{bySpace: map[string][]Contact{"vaoyj": {{Name: ""}}}},
+		UID:      "u1",
+	}).(*processor)
+	send(t, p, "/spaces")
+	card, err := p.PressButton(context.Background(), "contacts?space=vaoyj")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(card[0].Text, "(unnamed)") {
+		t.Errorf("contacts card = %q, want it to show (unnamed)", card[0].Text)
+	}
+}
+
+func TestCapitalize_Empty(t *testing.T) {
+	if got := capitalize(""); got != "" {
+		t.Errorf("capitalize(\"\") = %q, want \"\"", got)
 	}
 }
 

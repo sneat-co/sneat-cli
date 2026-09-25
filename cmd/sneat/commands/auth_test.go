@@ -3,12 +3,13 @@ package commands
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/sneat-co/sneat-cli/internal/browserauth"
 	"github.com/sneat-co/sneat-cli/internal/config"
@@ -142,12 +143,8 @@ func TestAuthLogin_DeviceFlowDoesNotSaveTwice(t *testing.T) {
 	if store.saved != nil {
 		t.Fatalf("device login was saved by the command after the shared flow: %+v", store.saved)
 	}
-	var got map[string]string
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatalf("output not JSON: %v", err)
-	}
-	if got["email"] != "b@b.c" {
-		t.Fatalf("email = %q", got["email"])
+	if buf.String() != "Signed in as b@b.c.\n" {
+		t.Fatalf("output = %q", buf.String())
 	}
 }
 
@@ -170,12 +167,11 @@ func TestAuthLogin_SavesSessionAndPrintsUser(t *testing.T) {
 	if !store.saved.ExpiresAt.Equal(time.Unix(1000, 0).Add(time.Hour)) {
 		t.Fatalf("expiresAt = %v", store.saved.ExpiresAt)
 	}
-	var got map[string]string
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatalf("output not JSON: %v (%q)", err, buf.String())
+	if buf.String() != "Signed in as a@b.c.\n" {
+		t.Fatalf("output = %q", buf.String())
 	}
-	if got["email"] != "a@b.c" {
-		t.Fatalf("email = %q", got["email"])
+	if strings.Contains(buf.String(), "sneat-eur3-1") || strings.Contains(buf.String(), "u1") {
+		t.Fatalf("login output exposed the project or UID: %q", buf.String())
 	}
 }
 
@@ -206,5 +202,17 @@ func TestAuthStatus_PrintsNoSecret(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "never-print") || strings.Contains(output.String(), "also-never-print") {
 		t.Fatalf("status exposed a credential: %q", output.String())
+	}
+	if output.String() != "Signed in as a@b.c.\n" {
+		t.Fatalf("status output = %q", output.String())
+	}
+}
+
+func TestPrintSignedIn_WithoutEmail(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	if err := printSignedIn(cmd, ""); err != nil || buf.String() != "Signed in.\n" {
+		t.Fatalf("printSignedIn(\"\") = %q, %v", buf.String(), err)
 	}
 }

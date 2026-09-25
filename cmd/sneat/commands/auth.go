@@ -75,9 +75,7 @@ func authLogin(env Env, insecureStorage *bool) *cobra.Command {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: --insecure-storage writes the Firebase session unencrypted to the local session file.")
 			}
 			if deviceLogin {
-				return writeJSON(cmd.OutOrStdout(), map[string]string{
-					"uid": tok.UID, "email": tok.Email, "project": cfg.Project,
-				})
+				return printSignedIn(cmd, tok.Email)
 			}
 			return saveAndPrint(cmd, store, env, cfg, tok)
 		},
@@ -101,10 +99,7 @@ func authStatus(env Env, insecureStorage *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), map[string]string{
-				"uid": sess.UID, "email": sess.Email, "project": sess.Project,
-				"expiresAt": sess.ExpiresAt.UTC().Format(time.RFC3339),
-			})
+			return printSignedIn(cmd, sess.Email)
 		},
 	}
 }
@@ -118,9 +113,19 @@ func saveAndPrint(cmd *cobra.Command, store SessionStore, env Env, cfg config.Co
 	if err := store.Save(sess); err != nil {
 		return err
 	}
-	return writeJSON(cmd.OutOrStdout(), map[string]string{
-		"uid": tok.UID, "email": tok.Email, "project": cfg.Project,
-	})
+	return printSignedIn(cmd, tok.Email)
+}
+
+// printSignedIn reports a signed-in session in plain words. It deliberately
+// shows no JSON, UID or Firebase project ID (founder, 2026-09-25): those are
+// implementation details, not something a person signing in needs to see.
+func printSignedIn(cmd *cobra.Command, email string) error {
+	line := "Signed in."
+	if email != "" {
+		line = "Signed in as " + email + "."
+	}
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), line)
+	return err
 }
 
 func authLogout(env Env, insecureStorage *bool) *cobra.Command {
