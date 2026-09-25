@@ -93,6 +93,13 @@ func spaceWebURL(id string) string {
 	return "https://sneat.app/space/" + id
 }
 
+// encodeCallbackDataFn is a seam over encodeCallbackData. Every call site here
+// passes one of the fixed command constants (cbSpace, cbContacts, cbSpaces),
+// none of which can actually fail the round-trip check, so the "cannot be
+// encoded" branch is unreachable through real callers. Tests swap this var to
+// force that branch without weakening the production check itself.
+var encodeCallbackDataFn = encodeCallbackData
+
 // command is one slash command: how it is typed, how /help and the palette
 // describe it, and what runs when text routes to it.
 //
@@ -525,7 +532,7 @@ func (p *processor) spacesList(spaces map[string]any, edit bool) ([]Reply, error
 		// Built through the encoder, which verifies the data parses back as
 		// this command under the router's own contract, rather than by pasting
 		// the string together here.
-		data, err := encodeCallbackData(cbSpace, url.Values{cbArgSpaceID: {id}})
+		data, err := encodeCallbackDataFn(cbSpace, url.Values{cbArgSpaceID: {id}})
 		if err != nil {
 			return nil, fmt.Errorf("failed to build the button for space %q: %w", id, err)
 		}
@@ -556,11 +563,11 @@ func (p *processor) spaceCard(id string) ([]Reply, error) {
 	p.setActiveSpace(id)
 	label := spaceLabel(brief, id)
 
-	contactsData, err := encodeCallbackData(cbContacts, url.Values{cbArgSpace: {id}})
+	contactsData, err := encodeCallbackDataFn(cbContacts, url.Values{cbArgSpace: {id}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build the contacts button: %w", err)
 	}
-	backData, err := encodeCallbackData(cbSpaces, nil)
+	backData, err := encodeCallbackDataFn(cbSpaces, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build the spaces button: %w", err)
 	}
@@ -604,7 +611,7 @@ func (p *processor) contactsCard(ctx context.Context, spaceID string) ([]Reply, 
 			_, _ = fmt.Fprintf(&b, "\n%s", name)
 		}
 	}
-	backData, err := encodeCallbackData(cbSpace, url.Values{cbArgSpaceID: {spaceID}})
+	backData, err := encodeCallbackDataFn(cbSpace, url.Values{cbArgSpaceID: {spaceID}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build the back button: %w", err)
 	}
