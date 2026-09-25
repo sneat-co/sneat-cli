@@ -67,9 +67,13 @@ func DefaultMetadataPath(userConfigDir func() (string, error)) (string, error) {
 	return filepath.Join(dir, "sneat", "session-metadata.json"), nil
 }
 
+// jsonMarshalIndentFn is a test seam over json.MarshalIndent (Session always
+// marshals successfully today, so an error here is otherwise unreachable).
+var jsonMarshalIndentFn = json.MarshalIndent
+
 // Save writes the session as 0600 JSON, creating the parent dir (0700).
 func (s *Store) Save(sess Session) error {
-	data, err := json.MarshalIndent(sess, "", "  ")
+	data, err := jsonMarshalIndentFn(sess, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -92,9 +96,13 @@ func (s *Store) Load() (Session, error) {
 	return sess, nil
 }
 
+// removeFileFn is a test seam over os.Remove, shared by every Clear path in
+// this package.
+var removeFileFn = os.Remove
+
 // Clear removes the session file; absence is not an error.
 func (s *Store) Clear() error {
-	err := os.Remove(s.path)
+	err := removeFileFn(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -255,7 +263,7 @@ func (s *InsecureStore) Save(value Session) error {
 	if err := s.legacy.Save(value); err != nil {
 		return err
 	}
-	data, err := json.Marshal(metadata{Project: value.Project, CurrentSpace: value.CurrentSpace, Insecure: true})
+	data, err := jsonMarshalFn(metadata{Project: value.Project, CurrentSpace: value.CurrentSpace, Insecure: true})
 	if err != nil {
 		return err
 	}
@@ -268,7 +276,7 @@ func (s *InsecureStore) Clear() error {
 	if err := s.legacy.Clear(); err != nil {
 		return err
 	}
-	err := os.Remove(s.metadataPath)
+	err := removeFileFn(s.metadataPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -299,7 +307,7 @@ func (s *SecureStore) clearPlaintextSession() error {
 	if err := s.legacy.Clear(); err != nil {
 		return err
 	}
-	err := os.Remove(s.metadataPath)
+	err := removeFileFn(s.metadataPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -372,58 +380,81 @@ func (s *DeviceAuthStore) Delete() error {
 	return s.store.Clear()
 }
 
+// jsonMarshalFn is a test seam over json.Marshal, shared by InsecureStore.Save
+// and saveMetadata (both marshal the always-marshalable metadata struct, so
+// an error here is otherwise unreachable).
+var jsonMarshalFn = json.Marshal
+
 func (s *SecureStore) saveMetadata(meta metadata) error {
 	if s.metadataPath == "" {
 		return errors.New("secure session metadata path is required")
 	}
-	data, err := json.Marshal(meta)
+	data, err := jsonMarshalFn(meta)
 	if err != nil {
 		return err
 	}
 	return atomicWriteFile(s.metadataPath, data, 0o600)
 }
 
+// The following package-level vars are test seams over the individual OS
+// calls made by atomicWriteFile. Each defaults to the real stdlib behavior;
+// tests swap one at a time to force an otherwise hard-to-reach error branch,
+// then restore it with t.Cleanup. Production behavior is unchanged.
+var (
+	mkdirAllFn   = os.MkdirAll
+	createTempFn = os.CreateTemp
+	chmodFileFn  = func(f *os.File, mode os.FileMode) error { return f.Chmod(mode) }
+	writeFileFn  = func(f *os.File, data []byte) (int, error) { return f.Write(data) }
+	syncFileFn   = func(f *os.File) error { return f.Sync() }
+	closeFileFn  = func(f *os.File) error { return f.Close() }
+	renameFileFn = os.Rename
+	chmodPathFn  = os.Chmod
+	openDirFn    = os.Open
+	syncDirFn    = func(f *os.File) error { return f.Sync() }
+	closeDirFn   = func(f *os.File) error { return f.Close() }
+)
+
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	parent := filepath.Dir(path)
-	if err := os.MkdirAll(parent, 0o700); err != nil {
+	if err := mkdirAllFn(parent, 0o700); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(parent, ".session-*")
+	temp, err := createTempFn(parent, ".session-*")
 	if err != nil {
 		return err
 	}
 	tempPath := temp.Name()
 	defer func() { _ = os.Remove(tempPath) }()
-	if err := temp.Chmod(mode); err != nil {
+	if err := chmodFileFn(temp, mode); err != nil {
 		_ = temp.Close()
 		return err
 	}
-	if _, err := temp.Write(data); err != nil {
+	if _, err := writeFileFn(temp, data); err != nil {
 		_ = temp.Close()
 		return err
 	}
-	if err := temp.Sync(); err != nil {
+	if err := syncFileFn(temp); err != nil {
 		_ = temp.Close()
 		return err
 	}
-	if err := temp.Close(); err != nil {
+	if err := closeFileFn(temp); err != nil {
 		return err
 	}
-	if err := os.Rename(tempPath, path); err != nil {
+	if err := renameFileFn(tempPath, path); err != nil {
 		return err
 	}
-	if err := os.Chmod(path, mode); err != nil {
+	if err := chmodPathFn(path, mode); err != nil {
 		return err
 	}
-	dir, err := os.Open(parent)
+	dir, err := openDirFn(parent)
 	if err != nil {
 		return err
 	}
-	if err := dir.Sync(); err != nil {
+	if err := syncDirFn(dir); err != nil {
 		_ = dir.Close()
 		return err
 	}
-	return dir.Close()
+	return closeDirFn(dir)
 }
 
 func (s *SecureStore) loadMetadata() (metadata, error) {
