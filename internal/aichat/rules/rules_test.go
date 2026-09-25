@@ -38,6 +38,8 @@ func TestPhraseTable(t *testing.T) {
 		{"today", sneatdomain.ModuleCalendar, sneatdomain.IntentShowDay, sneatdomain.PresentationDayCalendar},
 		{"this week", sneatdomain.ModuleCalendar, sneatdomain.IntentShowWeek, sneatdomain.PresentationWeekCalendar},
 		{"what's happening this week?", sneatdomain.ModuleCalendar, sneatdomain.IntentShowWeek, sneatdomain.PresentationWeekCalendar},
+		{"what do I have for next week?", sneatdomain.ModuleCalendar, sneatdomain.IntentShowWeek, sneatdomain.PresentationWeekCalendar},
+		{"show my schedule for week of 2026-10-05", sneatdomain.ModuleCalendar, sneatdomain.IntentShowWeek, sneatdomain.PresentationWeekCalendar},
 		{"my todos", sneatdomain.ModuleTodo, sneatdomain.IntentListTodos, sneatdomain.PresentationTodoList},
 		{"todo list", sneatdomain.ModuleTodo, sneatdomain.IntentListTodos, sneatdomain.PresentationTodoList},
 		{"contacts", sneatdomain.ModuleContacts, sneatdomain.IntentListContacts, sneatdomain.PresentationContactsGrid},
@@ -56,6 +58,24 @@ func TestPhraseTable(t *testing.T) {
 		}
 		if !d.CanHandleDeterministically || d.NeedsLLM {
 			t.Errorf("%q: expected deterministic, no-LLM decision", c.text)
+		}
+	}
+}
+
+func TestWeekRequestSlotsAndMutationGuard(t *testing.T) {
+	for _, tc := range []struct{ text, when string }{
+		{"what do I have for next week?", "next_week"},
+		{"show my schedule for week of 2026-10-05", "2026-10-05"},
+		{"last week", "last_week"},
+	} {
+		d, ok := decide(t, tc.text, session.State{})
+		if !ok || d.Slots["when"] != tc.when {
+			t.Errorf("%q: decision=%+v ok=%v, want when=%q", tc.text, d, ok, tc.when)
+		}
+	}
+	for _, mutation := range []string{"book a dentist next week", "schedule dentist next week", "what should I book for next week", "show me how to book a dentist next week", "what do I have to do next week"} {
+		if _, ok := decide(t, mutation, session.State{}); ok {
+			t.Errorf("%q: a calendar mutation must not be mistaken for a week read", mutation)
 		}
 	}
 }

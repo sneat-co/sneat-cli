@@ -875,7 +875,7 @@ func (h *handler) render(out pipeline.Output, err error) {
 		h.model.AppendSystem(h.chatSafeError("action", err))
 		return
 	}
-	if len(out.Entities) > 0 {
+	if len(out.Entities) > 0 || (out.Presentation == sneatdomain.PresentationWeekCalendar && !out.WeekStart.IsZero()) {
 		h.model.AppendBlock(blockFor(out))
 	}
 	if out.Text != "" {
@@ -914,12 +914,13 @@ func blockFor(out pipeline.Output) transcript.Block {
 	if presentation == sneatdomain.PresentationHappeningCard && len(out.HappeningRows) == 1 {
 		return controls.NewHappeningCard(out.HappeningRows[0])
 	}
+	if presentation == sneatdomain.PresentationWeekCalendar && !out.WeekStart.IsZero() {
+		return controls.NewWeekCalendar("Week of "+out.WeekStart.Format("Jan 2, 2006"), out.WeekStart, out.HappeningRows)
+	}
 	if len(out.HappeningRows) > 0 {
 		switch presentation {
 		case sneatdomain.PresentationDayCalendar:
 			return controls.NewDayCalendar(headingFor(presentation), out.HappeningRows)
-		case sneatdomain.PresentationWeekCalendar:
-			return controls.NewWeekCalendar(headingFor(presentation), out.WeekStart, out.HappeningRows)
 		case sneatdomain.PresentationHappeningsList:
 			return controls.NewHappeningsList(headingFor(presentation), out.HappeningRows)
 		}
