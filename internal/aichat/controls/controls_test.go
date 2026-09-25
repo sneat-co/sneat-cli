@@ -188,6 +188,24 @@ func TestNewWeekCalendar_GroupsByDayAndSkipsHeadersOnNavigation(t *testing.T) {
 	}
 }
 
+func TestNewWeekCalendar_UsesRequestedCalendarTimezone(t *testing.T) {
+	dublin, err := time.LoadLocation("Europe/Dublin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	monday := time.Date(2026, 9, 28, 0, 0, 0, 0, dublin)
+	// Sunday night in New York is Monday morning in Dublin.
+	newYork, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := HappeningRow{Title: "Late call", Start: time.Date(2026, 9, 27, 23, 0, 0, 0, newYork), End: time.Date(2026, 9, 27, 23, 30, 0, 0, newYork)}
+	view := NewWeekCalendar("Week", monday, []HappeningRow{event}).View(0, false)
+	if !strings.Contains(view, "Monday, Sep 28\n  Late call  04:00-04:30") {
+		t.Fatalf("event should appear under Monday in the calendar zone:\n%s", view)
+	}
+}
+
 // TestNewTodoList_ShowsDoneState covers S9: TodoList/BuyList show done
 // state via a marker, not just the title.
 func TestNewTodoList_ShowsDoneState(t *testing.T) {

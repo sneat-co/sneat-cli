@@ -225,6 +225,41 @@ func TestChatshell_ShowCalendarThisWeek_ShowsRealTimes(t *testing.T) {
 	}
 }
 
+func TestChatshell_ShowNextWeek_UsesStoredHappeningsAndInteractiveCalendar(t *testing.T) {
+	h, model := testHandler(t)
+	h.pipeline.Readers.Happenings = &data.FakeHappenings{Items: []data.Happening{
+		{ID: "next", SpaceID: "sp1", Title: "Dentist next week", Start: time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)},
+		{ID: "other-space", SpaceID: "sp2", Title: "Private elsewhere", Start: time.Date(2026, 9, 30, 11, 0, 0, 0, time.UTC)},
+		{ID: "following", SpaceID: "sp1", Title: "Too late", Start: time.Date(2026, 10, 5, 10, 0, 0, 0, time.UTC)},
+	}}
+	m := typeAndEnter(t, model, "what do I have for next week?")
+	view := m.View().Content
+	for _, want := range []string{"Week of Sep 28, 2026", "Wednesday, Sep 30", "Dentist next week", "10:00", "From your calendar: 1 happening(s)"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	for _, absent := range []string{"Private elsewhere", "Too late", "no main LLM configured"} {
+		if strings.Contains(view, absent) {
+			t.Fatalf("view unexpectedly contains %q:\n%s", absent, view)
+		}
+	}
+	if len(h.state.LastShown) != 1 || h.state.LastShown[0].Keys["happeningID"] != "next" {
+		t.Fatalf("LastShown = %+v, want the stored event", h.state.LastShown)
+	}
+}
+
+func TestChatshell_EmptyGivenWeek_StillShowsCalendar(t *testing.T) {
+	_, model := testHandler(t)
+	m := typeAndEnter(t, model, "show my schedule for week of 2026-10-05")
+	view := m.View().Content
+	for _, want := range []string{"Week of Oct 5, 2026", "Monday, Oct 5", "Sunday, Oct 11", "Nothing scheduled for Oct 5–Oct 11, 2026"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 // TestChatshell_UnknownText_AttemptsMainLLM is the scenario-13 headless
 // smoke test: free text the deterministic chain cannot handle starts a
 // stream attempt (which fails cleanly, since this test has no LLM

@@ -101,7 +101,7 @@ func TestHandleCommand_NeedsLLM(t *testing.T) {
 func TestShowWeek_SundayUsesLastWeekOffset(t *testing.T) {
 	sunday := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC) // a Sunday
 	p := Pipeline{Readers: data.Readers{Happenings: &data.FakeHappenings{}}, Now: func() time.Time { return sunday }}
-	out, err := p.showWeek(context.Background(), &session.State{}, "sp1")
+	out, err := p.showWeek(context.Background(), &session.State{}, "sp1", "this_week")
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}

@@ -381,6 +381,12 @@ func NewWeekCalendar(heading string, weekStart time.Time, happenings []Happening
 		if h.Start.IsZero() {
 			continue // nothing to file under a day section without a resolved date
 		}
+		// File and label the occurrence in the requested calendar's zone.
+		// A slot's own zone may put its local date on a different weekday.
+		h.Start = h.Start.In(weekStart.Location())
+		if !h.End.IsZero() {
+			h.End = h.End.In(weekStart.Location())
+		}
 		key := h.Start.Format("2006-01-02")
 		byDay[key] = append(byDay[key], h)
 	}
