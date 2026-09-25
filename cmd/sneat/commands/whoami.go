@@ -1,8 +1,13 @@
 package commands
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
 
-// Whoami prints the currently signed-in user as JSON.
+	"github.com/spf13/cobra"
+)
+
+// Whoami prints the email of the currently signed-in user (no UID or Firebase
+// project ID).
 func Whoami(env Env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "whoami",
@@ -12,9 +17,8 @@ func Whoami(env Env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), map[string]string{
-				"uid": sess.UID, "email": sess.Email, "project": sess.Project,
-			})
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), sess.Email)
+			return err
 		},
 	}
 }
