@@ -2,7 +2,9 @@ package commands
 
 import (
 	"errors"
+	"io/fs"
 	"testing"
+	"testing/fstest"
 
 	"github.com/strongo/cli-helpers/selfupdate"
 	"github.com/strongo/cli-helpers/skillsync"
@@ -118,3 +120,85 @@ func TestSneatSkillsSyncConfig_DevVersion(t *testing.T) {
 		t.Errorf("Source.Version = %q, want 0.0.0 for dev version", cfg.Bundles[0].Source.Version)
 	}
 }
+
+type errFS struct {
+	err error
+}
+
+func (e errFS) Open(name string) (fs.File, error) {
+	return nil, e.err
+}
+
+type badDigestFS struct{}
+
+func (badDigestFS) Open(name string) (fs.File, error) {
+	if name == "." {
+		return badDir{}, nil
+	}
+	return nil, errors.New("open error")
+}
+
+type badDir struct{}
+
+func (badDir) Stat() (fs.FileInfo, error) { return nil, errors.New("stat error") }
+func (badDir) Read([]byte) (int, error)  { return 0, errors.New("read error") }
+func (badDir) Close() error              { return nil }
+
+func TestSkillsCommand_ConfigError(t *testing.T) {
+	prev := sneatSkillsFS
+	sneatSkillsFS = errFS{err: errors.New("injected fs error")}
+	t.Cleanup(func() { sneatSkillsFS = prev })
+
+	cmd := SkillsCommand("0.15.0")
+	if cmd.RunE == nil {
+		t.Fatal("expected cmd.RunE to be set when config has error")
+	}
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("expected RunE to return an error, got nil")
+	}
+	var exitErr *ExitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected ExitCodeError, got %T: %v", err, err)
+	}
+	if exitErr.Code != 1 {
+		t.Errorf("expected exit code 1, got %d", exitErr.Code)
+	}
+}
+
+type errSubFS struct{}
+
+func (errSubFS) Open(name string) (fs.File, error) { return nil, errors.New("open error") }
+func (errSubFS) Sub(dir string) (fs.FS, error)     { return nil, errors.New("sub error") }
+
+func TestSneatSkillsSyncConfig_SubError(t *testing.T) {
+	prev := sneatSkillsFS
+	sneatSkillsFS = errSubFS{}
+	t.Cleanup(func() { sneatSkillsFS = prev })
+
+	_, err := sneatSkillsSyncConfig("0.15.0")
+	if err == nil {
+		t.Fatal("expected error from sneatSkillsSyncConfig with errSubFS, got nil")
+	}
+}
+
+func TestSneatSkillsSyncConfig_DigestError(t *testing.T) {
+	prev := sneatSkillsFS
+	sneatSkillsFS = fstest.MapFS{
+		"skills": &fstest.MapFile{Mode: fs.ModeDir},
+		"skills/test": &fstest.MapFile{Data: []byte("invalid"), Mode: 0},
+	}
+	t.Cleanup(func() { sneatSkillsFS = prev })
+
+	// Corrupt fs.Sub
+	sneatSkillsFS = fstest.MapFS{
+		"skills": &fstest.MapFile{
+			Mode: fs.ModeDir,
+		},
+	}
+	_, err := sneatSkillsSyncConfig("0.15.0")
+	if err == nil {
+		t.Fatal("expected error from sneatSkillsSyncConfig when skills directory has no valid bundle digest, got nil")
+	}
+}
+

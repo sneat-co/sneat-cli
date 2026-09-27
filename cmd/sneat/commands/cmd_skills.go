@@ -20,6 +20,7 @@ const (
 var (
 	sneatSkillsCLI    = skillsync.Identity{Publisher: "sneat", Name: "sneat"}
 	sneatSkillsPlugin = skillsync.PluginIdentity{Publisher: "sneat", Name: "sneat"}
+	sneatSkillsFS     = fs.FS(ai.SkillsFS)
 )
 
 type skillsErrors struct{}
@@ -55,7 +56,7 @@ func SkillsCommand(ver string) *cobra.Command {
 }
 
 func sneatSkillsSyncConfig(ver string) (skillsync.Config, error) {
-	source, err := fs.Sub(ai.SkillsFS, "skills")
+	source, err := fs.Sub(sneatSkillsFS, "skills")
 	if err != nil {
 		return skillsync.Config{}, err
 	}
