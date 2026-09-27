@@ -190,8 +190,8 @@ github.com/sneat-co/calendarius/backend v0.10.1 h1:UzQM5R6RqgWEthGXwRmsTsHoHu4QI
 github.com/sneat-co/calendarius/backend v0.10.1/go.mod h1:yiC5obwZXOmyVYI/Z1iToE1zrF6bm7xb6pR623tZDhk=
 github.com/sneat-co/commitius/backend v0.8.0 h1:Y8PjQmbxnfiyMkEm/yD63DkVIyZEx7q13vXS77edJR4=
 github.com/sneat-co/commitius/backend v0.8.0/go.mod h1:a0mRvhg/m8EezgETCR1GBXmHskRWiEvc+pUMbTPC/uE=
-github.com/sneat-co/contactus/backend v0.3.6 h1:bTLescP5cAgSShx8eHvrYSrXqlwyO/9eFsVvAu0Mqlg=
-github.com/sneat-co/contactus/backend v0.3.6/go.mod h1:QKQOBwPRX03oMPVeOB2oWEFlYTEOZ7ychOuvAzEoYdo=
+github.com/sneat-co/contactus/backend v0.6.0 h1:gbinVvN24gQ8Pn6L2nroBZsPCuDWIBMQUPPAU2EjYN4=
+github.com/sneat-co/contactus/backend v0.6.0/go.mod h1:X6HxNWFpKoz8XzD33h0qNUPCjl9rWA22ZQNKT6tcmjQ=
 github.com/sneat-co/listus/backend v0.1.14 h1:1jJpT9dKuGy6oHwyFc5P7tPgzRkYf0iu3B9oNi1URfc=
 github.com/sneat-co/listus/backend v0.1.14/go.mod h1:Xp4JK5uVm84BOQgaKHj0+eYnab+5e8Q+mfHBa1stcKU=
 github.com/sneat-co/sneat-ai-backend v0.10.2 h1:c7oF85tw+aSHpSMF8HU/HfAzYwWC9bXL/CaL/kj9u4k=

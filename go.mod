@@ -15,7 +15,7 @@ require (
 	github.com/dal-go/dalgo2openvaultdb v0.3.2
 	github.com/dal-go/record v0.1.4
 	github.com/sneat-co/calendarius/backend v0.10.1
-	github.com/sneat-co/contactus/backend v0.3.6
+	github.com/sneat-co/contactus/backend v0.6.0
 	github.com/sneat-co/listus/backend v0.1.14
 	github.com/sneat-co/sneat-ai-backend v0.10.2
 	github.com/sneat-co/sneat-bots v0.30.26
