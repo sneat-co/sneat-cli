@@ -17,10 +17,10 @@ require (
 	github.com/sneat-co/calendarius/backend v0.10.1
 	github.com/sneat-co/contactus/backend v0.3.6
 	github.com/sneat-co/listus/backend v0.1.14
-	github.com/sneat-co/sneat-ai-backend v0.0.6
+	github.com/sneat-co/sneat-ai-backend v0.10.2
 	github.com/sneat-co/sneat-bots v0.30.26
-	github.com/sneat-co/sneat-core-modules v0.73.0
-	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.9
+	github.com/sneat-co/sneat-core-modules v0.75.2
+	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.10
 	github.com/sneat-co/sneat-go-core v0.71.1
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
@@ -96,8 +96,9 @@ require (
 	github.com/sneat-co/commitius/backend v0.8.0 // indirect
 	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.6 // indirect
 	github.com/sneat-co/sneat-ext-contracts/listus v0.0.6 // indirect
+	github.com/sneat-co/sneat-ext-contracts/media v0.1.1 // indirect
 	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.1 // indirect
-	github.com/sneat-co/sneat-translations v0.10.5 // indirect
+	github.com/sneat-co/sneat-translations v0.10.6 // indirect
 	github.com/sneat-co/trackus/backend v0.1.7 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
