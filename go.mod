@@ -28,7 +28,7 @@ require (
 	github.com/strongo/buildinfo v0.3.0
 	github.com/strongo/cli-helpers v0.24.0
 	github.com/strongo/deviceauth v0.1.0
-	github.com/strongo/strongoapp v0.31.58
+	github.com/strongo/strongoapp v0.31.61
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
 	google.golang.org/api v0.297.0
