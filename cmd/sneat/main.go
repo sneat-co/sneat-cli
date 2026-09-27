@@ -93,6 +93,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		commands.Action(env),
 		commands.Context(env),
 		commands.Query(env),
+		commands.SelfUpdateCommand(info.Version),
+		commands.InstallCommand(),
+		commands.UninstallCommand(),
+		commands.UpgradeCommand(info.Version),
+		commands.SkillsCommand(info.Version),
 	)
 	if err := root.Execute(); err != nil {
 		_, _ = fmt.Fprintln(stderr, "sneat:", err)
@@ -113,6 +118,11 @@ func exitCodeFor(err error) int {
 	}
 	return code
 }
+
+var (
+	runTUI  = tui.Run
+	runChat = chatapp.Run
+)
 
 // newEnv builds the composition-root commands.Env: the real, process-wide
 // dependencies (secure session store, Firebase auth, Firestore readers, the
@@ -187,7 +197,7 @@ func newEnv(info buildinfo.Info) (commands.Env, error) {
 		IsTerminal:     func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
 		RunContactForm: commands.RunContactForm,
 		RunTUI: func(spaces commands.SpacesReader, contacts commands.ContactsReader, deleter commands.ContactDeleter, uid string) error {
-			return tui.Run(spaces, contacts, deleter, uid)
+			return runTUI(spaces, contacts, deleter, uid)
 		},
 		// RunChat is the chat session's composition root: internal/chatapp
 		// builds the aichat MVP pipeline (deterministic rules + decision
@@ -200,7 +210,7 @@ func newEnv(info buildinfo.Info) (commands.Env, error) {
 			}
 			auth := sneatauth.New(sneatauth.Options{APIKey: args.Cfg.APIKey, AuthEmulatorHost: args.Cfg.AuthEmulatorHost})
 			ts := tokensrc.FromEnvOrSession(os.Getenv, context.Background(), store, auth, time.Now)
-			return chatapp.Run(chatapp.Deps{
+			return runChat(chatapp.Deps{
 				Spaces:         args.Spaces,
 				Contacts:       chatContacts{args.Contacts},
 				UID:            args.UID,

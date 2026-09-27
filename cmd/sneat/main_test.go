@@ -8,13 +8,14 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/sneat-co/contactus/backend/dbo4contactus"
 	"github.com/sneat-co/sneat-cli/cmd/sneat/commands"
+	"github.com/sneat-co/sneat-cli/internal/chatapp"
 	"github.com/sneat-co/sneat-cli/internal/config"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
 	"github.com/sneat-co/sneat-cli/internal/session"
+	"github.com/sneat-co/sneat-cli/internal/tui"
 	"github.com/strongo/aichat/ai/aiconfig"
 	"github.com/strongo/buildinfo"
 	"github.com/strongo/strongoapp/person"
@@ -228,55 +229,63 @@ func TestNewEnv_RunTUI(t *testing.T) {
 	tmp := t.TempDir()
 	restore := setUserConfigDir(func() (string, error) { return tmp, nil })
 	defer restore()
+
+	called := false
+	orig := runTUI
+	runTUI = func(spaces tui.SpacesReader, contacts tui.ContactsReader, deleter tui.ContactDeleter, uid string) error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() { runTUI = orig })
+
 	env, err := newEnv(buildinfo.Info{Version: "test-version"})
 	if err != nil {
 		t.Fatalf("newEnv() error = %v", err)
 	}
 
-	done := make(chan error, 1)
-	go func() {
-		done <- env.RunTUI(fakeSpaces{}, fakeContacts{}, fakeDeleter{}, "u1")
-	}()
-	select {
-	case err := <-done:
-		t.Logf("RunTUI returned: %v", err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("RunTUI hung instead of returning without a controlling terminal")
+	if err := env.RunTUI(fakeSpaces{}, fakeContacts{}, fakeDeleter{}, "u1"); err != nil {
+		t.Errorf("RunTUI() error = %v", err)
+	}
+	if !called {
+		t.Error("RunTUI did not invoke the underlying runner")
 	}
 }
 
 // TestNewEnv_RunChat covers RunChat's closure body (building chatapp.Deps and
-// delegating to chatapp.Run). chatapp.Run's own real-default path ultimately
-// reaches the same tea-program-without-a-tty condition exercised in
-// TestNewEnv_RunTUI and in internal/chatapp's own tests, so it too returns
-// promptly under a bounded timeout instead of blocking on real stdin/network.
+// delegating to chatapp.Run).
 func TestNewEnv_RunChat(t *testing.T) {
 	tmp := t.TempDir()
 	restore := setUserConfigDir(func() (string, error) { return tmp, nil })
 	defer restore()
+
+	called := false
+	orig := runChat
+	runChat = func(deps chatapp.Deps) error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() { runChat = orig })
+
 	env, err := newEnv(buildinfo.Info{Version: "test-version"})
 	if err != nil {
 		t.Fatalf("newEnv() error = %v", err)
 	}
 
-	done := make(chan error, 1)
-	go func() {
-		done <- env.RunChat(commands.RunChatArgs{
-			Spaces:   fakeSpaces{},
-			Contacts: fakeContacts{},
-			UID:      "u1",
-			Email:    "u1@example.test",
-			AIConfig: aiconfig.Config{},
-			NoJev:    true,
-			Cfg:      config.Config{Project: "p1", APIKey: "k1", APIBaseURL: "https://example.test/v0/"},
-			TZ:       "UTC",
-		})
-	}()
-	select {
-	case err := <-done:
-		t.Logf("RunChat returned: %v", err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("RunChat hung instead of returning without a controlling terminal")
+	err = env.RunChat(commands.RunChatArgs{
+		Spaces:   fakeSpaces{},
+		Contacts: fakeContacts{},
+		UID:      "u1",
+		Email:    "u1@example.test",
+		AIConfig: aiconfig.Config{},
+		NoJev:    true,
+		Cfg:      config.Config{Project: "p1", APIKey: "k1", APIBaseURL: "https://example.test/v0/"},
+		TZ:       "UTC",
+	})
+	if err != nil {
+		t.Errorf("RunChat() error = %v", err)
+	}
+	if !called {
+		t.Error("RunChat did not invoke the underlying runner")
 	}
 }
 
@@ -378,3 +387,54 @@ func TestNewKeyringStore(t *testing.T) {
 		t.Fatal("newKeyringStore() store = nil")
 	}
 }
+
+// TestRun_SkillsHelp covers driving `sneat skills --help` through run().
+func TestRun_SkillsHelp(t *testing.T) {
+	tmp := t.TempDir()
+	restore := setUserConfigDir(func() (string, error) { return tmp, nil })
+	defer restore()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"skills", "--help"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run(skills --help) code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "skills") {
+		t.Fatalf("run(skills --help) stdout = %q, want usage text containing skills", stdout.String())
+	}
+}
+
+// TestRun_SkillsSyncDryRun covers driving `sneat skills sync --dry-run --dir <tmp>` through run().
+func TestRun_SkillsSyncDryRun(t *testing.T) {
+	tmp := t.TempDir()
+	restore := setUserConfigDir(func() (string, error) { return tmp, nil })
+	defer restore()
+
+	skillsDir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"skills", "sync", "--dry-run", "--dir", skillsDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run(skills sync --dry-run) code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "sneat") {
+		t.Fatalf("run(skills sync --dry-run) stdout = %q, want output mentioning sneat", stdout.String())
+	}
+}
+
+// TestRun_UninstallHelp covers driving `sneat uninstall --help` through run().
+func TestRun_UninstallHelp(t *testing.T) {
+	tmp := t.TempDir()
+	restore := setUserConfigDir(func() (string, error) { return tmp, nil })
+	defer restore()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"uninstall", "--help"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run(uninstall --help) code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "uninstall") {
+		t.Fatalf("run(uninstall --help) stdout = %q, want usage text containing uninstall", stdout.String())
+	}
+}
+
+
