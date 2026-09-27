@@ -208,8 +208,8 @@ github.com/sneat-co/sneat-ext-contracts/listus v0.0.6 h1:ZpR6sROe6hoPxQGz3zIP3VD
 github.com/sneat-co/sneat-ext-contracts/listus v0.0.6/go.mod h1:hZKhiGnJnTPgxKY3mJ3qhtSkHbKyXKfRS0rYt0x9Ebk=
 github.com/sneat-co/sneat-ext-contracts/trackus v0.1.1 h1:XisJ6u0OrhZgtuoRB2kNJER8tQS53tVTlubMllEUWgc=
 github.com/sneat-co/sneat-ext-contracts/trackus v0.1.1/go.mod h1:2NwlFiOgm86h7enEAOXekQ5eqJwZf1SxQ18rOffQS40=
-github.com/sneat-co/sneat-go-core v0.69.0 h1:Sx/amKfAjaC9BciL0To1hB3p/Sek5axSW/UjfWqtvKI=
-github.com/sneat-co/sneat-go-core v0.69.0/go.mod h1:GPwMYQudxpBkeOn5ccCXobsMKRsd6EADNfxFez1/oO8=
+github.com/sneat-co/sneat-go-core v0.71.1 h1:BbByjbVLq4JSMClvU3sRSH/Lz1VQFn8xqceF1srKfOI=
+github.com/sneat-co/sneat-go-core v0.71.1/go.mod h1:CFIwxXwOnLnK4u7gUzijdvfAt1LVDB4hdxcrpADlCt0=
 github.com/sneat-co/sneat-go-core/convospec v0.1.2 h1:Mf+dFH0c9c2GlpFWP+sc3KRuOmcK0fw4yPbMPXBMkL4=
 github.com/sneat-co/sneat-go-core/convospec v0.1.2/go.mod h1:Ju/+fggN9yJ1C7/q+o81qulm8xUBVUvAQ75yaohPTgE=
 github.com/sneat-co/sneat-translations v0.10.5 h1:xk0OWTBCPrge3YId7ABTPTzvCzoywuanmIwlwU8Oxic=
@@ -231,8 +231,8 @@ github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWD
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/strongo/aichat v0.4.0 h1:+WYHcQieHW33Xd5+mRoRsnApt8urhmUbGPd+0jLlriI=
 github.com/strongo/aichat v0.4.0/go.mod h1:ZiYqFfUKZyWWb2kf2rwUsE46dPiU3orz2vBX3B8JUqs=
-github.com/strongo/analytics v0.2.8 h1:h0snZrFba1DDI7H/RcePbq3V8MeuOrZFC8kj5ZJkp/I=
-github.com/strongo/analytics v0.2.8/go.mod h1:/pf7goR1CZtkvZHrJH5sXpJJl6IAefWCx82eSGUZ2V0=
+github.com/strongo/analytics v0.2.9 h1:Sc5NiJNQWfdA0O62F5ylNC5mOyKCMyrGzXSKZ7Ubamw=
+github.com/strongo/analytics v0.2.9/go.mod h1:o9czh6b7MoBhoQe7DSd5Mr1t8Ndfjc7NSZDMtkXFedw=
 github.com/strongo/buildinfo v0.3.0 h1:nPbCrSA+7I3bct6mwZ24U6SHfV7TaRafoYzDucwl1Qg=
 github.com/strongo/buildinfo v0.3.0/go.mod h1:JpxZ3Jku81LJC1RNIqCNYwguDzLk90eemxUXx4JnSlA=
 github.com/strongo/cli-helpers v0.24.0 h1:xvh7Y8w1WmhxH3ZJGSNptlfX2F7dbkQSMQkkWuksRF0=
@@ -245,8 +245,8 @@ github.com/strongo/deviceauth v0.1.0 h1:wl+VrsRkDGQqYrqnm0IiCmPGldnBLdzzA1nfNwgD
 github.com/strongo/deviceauth v0.1.0/go.mod h1:bPTivN2eqTgfphYuyB+WKvlBmRNfbyrpMOEGz5T172o=
 github.com/strongo/i18n v0.8.20 h1:3mScLMeVP1qfiYyi05u6dFJ3zL3/GCte8ytCV2S+1Dk=
 github.com/strongo/i18n v0.8.20/go.mod h1:7BRe5UVQUIpBaATr/qvSbHVf/gH8iW0hAZSc4WO3maU=
-github.com/strongo/logus v0.4.3 h1:hAT2VNAj41SXta7A2bRPmk/RgWXAO930faHga5Fc58w=
-github.com/strongo/logus v0.4.3/go.mod h1:seJ+rxoeqfq1mS8LHlVfmS3ZfO+aTzeX0eW+zvpkH8U=
+github.com/strongo/logus v0.4.4 h1:zv0t1tSCE1pHEOpmZnlwKRDb8pfxaCeP/Hk2PCj6swg=
+github.com/strongo/logus v0.4.4/go.mod h1:mVugDWLg/FXFiNAunrt+gvuEJtsSeCgwosU22FV1myY=
 github.com/strongo/random v0.0.2 h1:lnISBL6GM6xkWCJDRZRoOXaOUoytg76IyWkx6CLUHKg=
 github.com/strongo/random v0.0.2/go.mod h1:V/TldevwaA3XYhJApc5kQUmpAVUZhoEcsdl5m1+emx4=
 github.com/strongo/slice v0.3.10 h1:FeODEVCsR+1WHbw44eshB4++HhY1fNR9zJyJ6zns6zo=

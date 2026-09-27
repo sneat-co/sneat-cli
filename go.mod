@@ -21,7 +21,7 @@ require (
 	github.com/sneat-co/sneat-bots v0.30.26
 	github.com/sneat-co/sneat-core-modules v0.73.0
 	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.9
-	github.com/sneat-co/sneat-go-core v0.69.0
+	github.com/sneat-co/sneat-go-core v0.71.1
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/aichat v0.4.0
@@ -101,11 +101,11 @@ require (
 	github.com/sneat-co/trackus/backend v0.1.7 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
-	github.com/strongo/analytics v0.2.8 // indirect
+	github.com/strongo/analytics v0.2.9 // indirect
 	github.com/strongo/decimal v0.1.2 // indirect
 	github.com/strongo/delaying v0.2.6 // indirect
 	github.com/strongo/i18n v0.8.20 // indirect
-	github.com/strongo/logus v0.4.3 // indirect
+	github.com/strongo/logus v0.4.4 // indirect
 	github.com/strongo/random v0.0.2 // indirect
 	github.com/strongo/slice v0.3.10 // indirect
 	github.com/strongo/validation v0.0.13 // indirect
