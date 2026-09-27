@@ -13,7 +13,7 @@ require (
 	github.com/dal-go/dalgo v0.79.4
 	github.com/dal-go/dalgo2firestore v0.10.17
 	github.com/dal-go/dalgo2openvaultdb v0.3.1
-	github.com/dal-go/record v0.1.3
+	github.com/dal-go/record v0.1.4
 	github.com/sneat-co/calendarius/backend v0.10.1
 	github.com/sneat-co/contactus/backend v0.3.6
 	github.com/sneat-co/listus/backend v0.1.14
@@ -28,7 +28,7 @@ require (
 	github.com/strongo/buildinfo v0.3.0
 	github.com/strongo/cli-helpers v0.24.0
 	github.com/strongo/deviceauth v0.1.0
-	github.com/strongo/strongoapp v0.31.61
+	github.com/strongo/strongoapp v0.31.63
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
 	google.golang.org/api v0.297.0
