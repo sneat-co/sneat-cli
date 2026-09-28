@@ -26,7 +26,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/aichat v0.4.0
 	github.com/strongo/buildinfo v0.3.0
-	github.com/strongo/cli-helpers v0.24.0
+	github.com/strongo/cli-helpers v0.25.0
 	github.com/strongo/deviceauth v0.1.0
 	github.com/strongo/strongoapp v0.31.63
 	golang.org/x/oauth2 v0.37.0

@@ -237,8 +237,8 @@ github.com/strongo/analytics v0.2.9 h1:Sc5NiJNQWfdA0O62F5ylNC5mOyKCMyrGzXSKZ7Uba
 github.com/strongo/analytics v0.2.9/go.mod h1:o9czh6b7MoBhoQe7DSd5Mr1t8Ndfjc7NSZDMtkXFedw=
 github.com/strongo/buildinfo v0.3.0 h1:nPbCrSA+7I3bct6mwZ24U6SHfV7TaRafoYzDucwl1Qg=
 github.com/strongo/buildinfo v0.3.0/go.mod h1:JpxZ3Jku81LJC1RNIqCNYwguDzLk90eemxUXx4JnSlA=
-github.com/strongo/cli-helpers v0.24.0 h1:xvh7Y8w1WmhxH3ZJGSNptlfX2F7dbkQSMQkkWuksRF0=
-github.com/strongo/cli-helpers v0.24.0/go.mod h1:2eUFIkQELgeWLeYz9g3hKer+Kcf+3vnAzHMOPDE7ItA=
+github.com/strongo/cli-helpers v0.25.0 h1:sda3kioUi5nAu5ADL4KjcmMRRtzug1SIRLj0kJaS3jI=
+github.com/strongo/cli-helpers v0.25.0/go.mod h1:2eUFIkQELgeWLeYz9g3hKer+Kcf+3vnAzHMOPDE7ItA=
 github.com/strongo/decimal v0.1.3 h1:zV6cF1bNv5YlPaDZDk2St3oQQUkyUxrhlnSHNWpq7Ms=
 github.com/strongo/decimal v0.1.3/go.mod h1:33ctX4SHxjNeeDLdihA6Yyu/Wf6mSFvZ9NbfOr0sVzU=
 github.com/strongo/delaying v0.2.6 h1:7JHbs/T3DdPFqTkY1SucofY+Oyff0uo/5dwxSr3Ivac=
