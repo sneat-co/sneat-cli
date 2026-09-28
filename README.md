@@ -26,13 +26,13 @@ brew install --cask sneat-co/tap/sneat
 ### Direct install (macOS or Linux)
 
 ```shell
-(p=$(mktemp) && trap 'rm -f "$p"' EXIT && curl -fsSL https://sneat.app/install.sh -o "$p" && sh "$p")
+(p=$(mktemp) && trap 'rm -f "$p"' EXIT && curl -fsSL https://sneat.ai/install/get-cli -o "$p" && sh "$p")
 ```
 
 ### Direct install (Windows PowerShell, amd64)
 
 ```powershell
-$p=Join-Path $env:TEMP ("sneat-"+[guid]::NewGuid()+".ps1"); try { irm https://sneat.app/install.ps1 -OutFile $p -EA Stop; & $p } finally { Remove-Item $p -EA SilentlyContinue }
+$p=Join-Path $env:TEMP ("sneat-"+[guid]::NewGuid()+".ps1"); try { irm https://sneat.ai/install/get-cli.ps1 -OutFile $p -EA Stop; & $p } finally { Remove-Item $p -EA SilentlyContinue }
 ```
 
 The direct installers select the current operating system and architecture,

@@ -8,27 +8,27 @@ require (
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.6
 	cloud.google.com/go/firestore v1.26.0
-	github.com/bots-go-framework/bots-go-core v0.3.3
+	github.com/bots-go-framework/bots-go-core v0.3.5
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/dal-go/dalgo v0.88.0
-	github.com/dal-go/dalgo2firestore v0.10.27
+	github.com/dal-go/dalgo2firestore v0.10.28
 	github.com/dal-go/dalgo2openvaultdb v0.3.2
 	github.com/dal-go/record v0.1.4
 	github.com/sneat-co/calendarius/backend v0.11.7
 	github.com/sneat-co/contactus/backend v0.6.0
-	github.com/sneat-co/listus/backend v0.1.14
+	github.com/sneat-co/listus/backend v0.1.18
 	github.com/sneat-co/sneat-ai-backend v0.10.2
-	github.com/sneat-co/sneat-bots v0.30.26
-	github.com/sneat-co/sneat-core-modules v0.75.2
+	github.com/sneat-co/sneat-bots v0.30.31
+	github.com/sneat-co/sneat-core-modules v0.80.4
 	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.11
-	github.com/sneat-co/sneat-go-core v0.71.1
+	github.com/sneat-co/sneat-go-core v0.71.2
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/aichat v0.4.0
-	github.com/strongo/buildinfo v0.3.0
+	github.com/strongo/buildinfo v0.3.2
 	github.com/strongo/cli-helpers v0.25.0
-	github.com/strongo/deviceauth v0.1.0
-	github.com/strongo/strongoapp v0.31.63
+	github.com/strongo/deviceauth v0.1.2
+	github.com/strongo/strongoapp v0.31.64
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.46.0
 	google.golang.org/api v0.299.0
@@ -52,7 +52,7 @@ require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
-	github.com/bots-go-framework/bots-fw-store v0.14.1 // indirect
+	github.com/bots-go-framework/bots-fw-store v0.14.2 // indirect
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -92,24 +92,24 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
-	github.com/sneat-co/assetus/backend v0.8.2 // indirect
-	github.com/sneat-co/commitius/backend v0.8.0 // indirect
+	github.com/sneat-co/assetus/backend v0.11.2 // indirect
+	github.com/sneat-co/commitius/backend v0.9.6 // indirect
 	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.8 // indirect
-	github.com/sneat-co/sneat-ext-contracts/listus v0.0.6 // indirect
+	github.com/sneat-co/sneat-ext-contracts/listus v0.0.11 // indirect
 	github.com/sneat-co/sneat-ext-contracts/media v0.1.1 // indirect
-	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.1 // indirect
-	github.com/sneat-co/sneat-translations v0.10.6 // indirect
-	github.com/sneat-co/trackus/backend v0.1.7 // indirect
+	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.3 // indirect
+	github.com/sneat-co/sneat-translations v0.10.11 // indirect
+	github.com/sneat-co/trackus/backend v0.1.8 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/strongo/analytics v0.2.9 // indirect
 	github.com/strongo/decimal v0.1.3 // indirect
-	github.com/strongo/delaying v0.2.6 // indirect
-	github.com/strongo/i18n v0.8.20 // indirect
-	github.com/strongo/logus v0.4.4 // indirect
-	github.com/strongo/random v0.0.2 // indirect
-	github.com/strongo/slice v0.3.10 // indirect
-	github.com/strongo/validation v0.0.13 // indirect
+	github.com/strongo/delaying v0.2.8 // indirect
+	github.com/strongo/i18n v0.8.23 // indirect
+	github.com/strongo/logus v0.4.6 // indirect
+	github.com/strongo/random v0.0.3 // indirect
+	github.com/strongo/slice v0.3.12 // indirect
+	github.com/strongo/validation v0.0.15 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
