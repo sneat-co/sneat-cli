@@ -14,13 +14,13 @@ require (
 	github.com/dal-go/dalgo2firestore v0.10.27
 	github.com/dal-go/dalgo2openvaultdb v0.3.2
 	github.com/dal-go/record v0.1.4
-	github.com/sneat-co/calendarius/backend v0.10.1
+	github.com/sneat-co/calendarius/backend v0.11.7
 	github.com/sneat-co/contactus/backend v0.6.0
 	github.com/sneat-co/listus/backend v0.1.14
 	github.com/sneat-co/sneat-ai-backend v0.10.2
 	github.com/sneat-co/sneat-bots v0.30.26
 	github.com/sneat-co/sneat-core-modules v0.75.2
-	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.10
+	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.11
 	github.com/sneat-co/sneat-go-core v0.71.1
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
@@ -94,7 +94,7 @@ require (
 	github.com/sahilm/fuzzy v0.1.3 // indirect
 	github.com/sneat-co/assetus/backend v0.8.2 // indirect
 	github.com/sneat-co/commitius/backend v0.8.0 // indirect
-	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.6 // indirect
+	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.8 // indirect
 	github.com/sneat-co/sneat-ext-contracts/listus v0.0.6 // indirect
 	github.com/sneat-co/sneat-ext-contracts/media v0.1.1 // indirect
 	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.1 // indirect
@@ -103,7 +103,7 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/strongo/analytics v0.2.9 // indirect
-	github.com/strongo/decimal v0.1.2 // indirect
+	github.com/strongo/decimal v0.1.3 // indirect
 	github.com/strongo/delaying v0.2.6 // indirect
 	github.com/strongo/i18n v0.8.20 // indirect
 	github.com/strongo/logus v0.4.4 // indirect
