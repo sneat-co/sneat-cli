@@ -33,6 +33,7 @@ func sneatSelfUpdateConfig(ver string) selfupdate.Config {
 func SelfUpdateCommand(ver string) *cobra.Command {
 	return selfupdatecobracmd.New(sneatSelfUpdateConfig(ver), selfupdatecobracmd.CommandOptions{
 		Short:      "Update the installed sneat binary in place",
+		Aliases:    []string{"update"},
 		JSONFormat: true,
 		Errors:     selfUpdateErrors{},
 	})

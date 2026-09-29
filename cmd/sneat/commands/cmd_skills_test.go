@@ -129,20 +129,6 @@ func (e errFS) Open(name string) (fs.File, error) {
 	return nil, e.err
 }
 
-type badDigestFS struct{}
-
-func (badDigestFS) Open(name string) (fs.File, error) {
-	if name == "." {
-		return badDir{}, nil
-	}
-	return nil, errors.New("open error")
-}
-
-type badDir struct{}
-
-func (badDir) Stat() (fs.FileInfo, error) { return nil, errors.New("stat error") }
-func (badDir) Read([]byte) (int, error)  { return 0, errors.New("read error") }
-func (badDir) Close() error              { return nil }
 
 func TestSkillsCommand_ConfigError(t *testing.T) {
 	prev := sneatSkillsFS

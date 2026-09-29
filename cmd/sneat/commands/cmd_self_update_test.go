@@ -16,6 +16,9 @@ func TestSelfUpdateCommand_Shape(t *testing.T) {
 	if cmd.Name() != "self-update" {
 		t.Errorf("Name() = %q, want %q", cmd.Name(), "self-update")
 	}
+	if len(cmd.Aliases) != 1 || cmd.Aliases[0] != "update" {
+		t.Errorf("Aliases = %v, want [update]", cmd.Aliases)
+	}
 	for _, name := range []string{"check", "yes", "dry-run", "version"} {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("missing --%s flag", name)
