@@ -22,9 +22,10 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/sneat-co/sneat-cli/internal/tokensrc"
 	"github.com/sneat-co/sneat-cli/internal/tui"
+	"charm.land/fang/v2"
 	"github.com/strongo/aichat/ai/clientctx"
 	"github.com/strongo/buildinfo"
-	"github.com/strongo/buildinfo/cobracmd"
+	"github.com/strongo/buildinfo/fangcmd"
 	"github.com/strongo/deviceauth"
 	"golang.org/x/term"
 )
@@ -75,11 +76,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	// WireCobra registers the `version` subcommand and wires cobra's own
-	// --version/-v flag from the same Info, so `sneat --version` and
-	// `sneat version` can never disagree
-	// (github.com/strongo/buildinfo/cobracmd.WireCobra).
-	cobracmd.WireCobra(root, info)
+	fangOpts := fangcmd.Wire(root, info)
 	root.AddCommand(
 		commands.Auth(env),
 		commands.Whoami(env),
@@ -99,8 +96,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		commands.UpgradeCommand(info.Version),
 		commands.SkillsCommand(info.Version),
 	)
-	if err := root.Execute(); err != nil {
-		_, _ = fmt.Fprintln(stderr, "sneat:", err)
+	if err := fang.Execute(context.Background(), root, fangOpts...); err != nil {
 		return exitCodeFor(err)
 	}
 	return 0

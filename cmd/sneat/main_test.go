@@ -39,9 +39,9 @@ func TestRun_Help(t *testing.T) {
 	}
 }
 
-// TestRun_UnknownCommand covers run's error path: root.Execute() returning a
-// plain (non-ExitCodeError) error must print "sneat: <err>" to stderr and
-// return exit code 1.
+// TestRun_UnknownCommand covers run's error path: fang.Execute() returning a
+// plain (non-ExitCodeError) error must print the unknown command error to stderr
+// and return exit code 1.
 func TestRun_UnknownCommand(t *testing.T) {
 	tmp := t.TempDir()
 	restore := setUserConfigDir(func() (string, error) { return tmp, nil })
@@ -52,8 +52,8 @@ func TestRun_UnknownCommand(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("run(bogus) code = %d, want 1", code)
 	}
-	if !strings.Contains(stderr.String(), "sneat:") {
-		t.Fatalf("run(bogus) stderr = %q, want a \"sneat:\" prefixed error", stderr.String())
+	if !strings.Contains(stderr.String(), "definitely-not-a-command") {
+		t.Fatalf("run(bogus) stderr = %q, want an error mentioning the unknown command", stderr.String())
 	}
 }
 
