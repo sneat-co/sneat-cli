@@ -17,5 +17,8 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "tui-design@tui-design-skill": true
   }
 }
