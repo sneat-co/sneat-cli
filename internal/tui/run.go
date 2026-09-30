@@ -1,6 +1,6 @@
 package tui
 
-import "github.com/strongo/strongo-tui/pkg/nav"
+import "github.com/tuigoff/tuigoff/pkg/nav"
 
 // runShell is a seam over nav.Run so tests can drive Run without a terminal.
 var runShell = nav.Run

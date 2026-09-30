@@ -6,7 +6,7 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
-	"github.com/strongo/strongo-tui/pkg/widgets"
+	"github.com/tuigoff/tuigoff/pkg/widgets"
 )
 
 // spaceItem is the data behind a Spaces list row.
