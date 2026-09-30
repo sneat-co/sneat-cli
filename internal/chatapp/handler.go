@@ -24,9 +24,9 @@ import (
 	aidiag "github.com/strongo/aichat/ai/diag"
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
-	"github.com/strongo/aichat/tui/transcript"
 	"github.com/tuigoff/tuigoff/pkg/grid"
 	"github.com/tuigoff/tuigoff/pkg/theme"
+	"github.com/tuigoff/tuigoff/pkg/transcript"
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/controls"
 	"github.com/sneat-co/sneat-cli/internal/aichat/pipeline"
