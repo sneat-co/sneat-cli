@@ -4,22 +4,30 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/strongo/strongo-tui/pkg/nav"
+	"github.com/strongo/strongo-tui/pkg/theme"
+	"github.com/strongo/strongo-tui/pkg/widgets"
 )
 
 // spaceScreen shows a space's details and a menu (Members / Contacts).
 type spaceScreen struct {
-	space  spaceItem
-	menu   list.Model
-	count  int
-	loaded bool
-	err    error
+	app     *app
+	space   spaceItem
+	menu    widgets.List
+	count   int
+	loaded  bool
+	err     error
+	w, h    int
+	focused bool
 }
 
-func newSpaceScreen(space spaceItem) *spaceScreen {
-	s := &spaceScreen{space: space}
-	s.menu = newList(space.name(), s.menuItems())
+func newSpaceScreen(a *app, space spaceItem) *spaceScreen {
+	s := &spaceScreen{app: a, space: space}
+	s.menu = newFilterList("space-menu", s.menuItems()...)
 	return s
 }
 
@@ -30,34 +38,33 @@ func (s *spaceScreen) menuItems() []list.Item {
 		contactsDesc = fmt.Sprintf("%d contacts", s.count)
 	}
 	return []list.Item{
-		menuItem{label: "Members", desc: membersDesc, membersOnly: true},
-		menuItem{label: "Contacts", desc: contactsDesc, membersOnly: false},
+		widgets.MenuItem{ID: "members", Label: "Members", Detail: membersDesc, Ref: true},
+		widgets.MenuItem{ID: "contacts", Label: "Contacts", Detail: contactsDesc, Ref: false},
 	}
 }
 
 func (s *spaceScreen) Title() string { return s.space.name() }
 
-func (s *spaceScreen) headerLines() int { return 5 }
-
-func (s *spaceScreen) Init(m *Model) tea.Cmd {
-	s.menu.SetSize(m.width, m.listHeight(s.headerLines()))
-	if cached, ok := m.cache[s.space.id]; ok {
+func (s *spaceScreen) Init() tea.Cmd {
+	if cached, ok := s.app.cache[s.space.id]; ok {
 		s.count = len(cached)
 		s.loaded = true
-		s.menu.SetItems(s.menuItems())
+		s.menu.SetItems(s.menuItems()...)
 		return nil
 	}
-	return loadContacts(m.contacts, s.space.id)
+	return loadContacts(s.app.contacts, s.space.id)
 }
 
-func (s *spaceScreen) Update(m *Model, msg tea.Msg) (screen, tea.Cmd) {
+func (s *spaceScreen) ShortHelp() []key.Binding { return s.menu.ShortHelp() }
+
+func (s *spaceScreen) Update(msg tea.Msg) (nav.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case contactsLoadedMsg:
 		if msg.spaceID == s.space.id {
-			m.cache[msg.spaceID] = msg.contacts
+			s.app.cache[msg.spaceID] = msg.contacts
 			s.count = len(msg.contacts)
 			s.loaded = true
-			s.menu.SetItems(s.menuItems())
+			s.menu.SetItems(s.menuItems()...)
 		}
 		return s, nil
 	case errMsg:
@@ -65,18 +72,30 @@ func (s *spaceScreen) Update(m *Model, msg tea.Msg) (screen, tea.Cmd) {
 		s.loaded = true
 		return s, nil
 	case tea.WindowSizeMsg:
-		s.menu.SetSize(msg.Width, m.listHeight(s.headerLines()))
+		s.w, s.h = msg.Width, msg.Height
+		s.layout()
 		return s, nil
-	case tea.KeyMsg:
-		if s.menu.FilterState() != list.Filtering {
+	case nav.ScreenFocusMsg:
+		s.focused = msg.Focused
+		if msg.Focused {
+			s.menu.Focus()
+		} else {
+			s.menu.Blur()
+		}
+		return s, nil
+	case widgets.ItemSelectedMsg:
+		if membersOnly, ok := menuItemRef(msg.Item).(bool); ok {
+			return s, nav.Push(nav.Page{
+				Title:   contactsTitle(membersOnly),
+				Content: newContactsScreen(s.app, s.space, membersOnly),
+			})
+		}
+		return s, nil
+	case tea.KeyPressMsg:
+		if !s.menu.Editing() {
 			switch msg.String() {
 			case "esc", "left":
-				return s, pop()
-			case "enter", "right":
-				if it, ok := s.menu.SelectedItem().(menuItem); ok {
-					return s, push(newContactsScreen(s.space, it.membersOnly))
-				}
-				return s, nil
+				return s, nav.Pop()
 			}
 		}
 	}
@@ -85,21 +104,37 @@ func (s *spaceScreen) Update(m *Model, msg tea.Msg) (screen, tea.Cmd) {
 	return s, cmd
 }
 
-func (s *spaceScreen) header() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render(s.space.name()) + "\n")
-	b.WriteString(labelStyle.Render("id:     ") + s.space.id + "\n")
-	b.WriteString(labelStyle.Render("type:   ") + s.space.spaceType + "\n")
-	b.WriteString(labelStyle.Render("status: ") + s.space.status + "\n")
-	b.WriteString(labelStyle.Render("roles:  ") + joinRoles(s.space.roles))
-	return headerStyle.Render(b.String())
+func (s *spaceScreen) layout() {
+	headerH := lipgloss.Height(s.header())
+	if s.err != nil {
+		headerH += 1
+	}
+	s.menu.SetSize(s.w, max(s.h-headerH, 1))
 }
 
-func (s *spaceScreen) View(m *Model) string {
+func (s *spaceScreen) header() string {
+	label := lipgloss.NewStyle().Foreground(theme.MutedColor())
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.AccentColor()).Render(s.space.name()) + "\n")
+	b.WriteString(label.Render("id:     ") + s.space.id + "\n")
+	b.WriteString(label.Render("type:   ") + s.space.spaceType + "\n")
+	b.WriteString(label.Render("status: ") + s.space.status + "\n")
+	b.WriteString(label.Render("roles:  ") + joinRoles(s.space.roles))
+	return b.String()
+}
+
+func (s *spaceScreen) View() string {
 	parts := []string{s.header()}
 	if s.err != nil {
-		parts = append(parts, headerStyle.Render(errStyle.Render("Error: "+s.err.Error())))
+		parts = append(parts, lipgloss.NewStyle().Foreground(theme.ErrorColor()).Render("Error: "+s.err.Error()))
 	}
-	parts = append(parts, s.menu.View(), footerStyle.Render(footerHelp))
+	parts = append(parts, s.menu.View())
 	return strings.Join(parts, "\n")
+}
+
+func contactsTitle(membersOnly bool) string {
+	if membersOnly {
+		return "Members"
+	}
+	return "Contacts"
 }

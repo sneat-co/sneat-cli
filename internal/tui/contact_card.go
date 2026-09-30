@@ -3,54 +3,76 @@ package tui
 import (
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/strongo/strongo-tui/pkg/nav"
+	"github.com/strongo/strongo-tui/pkg/theme"
+	"github.com/strongo/strongo-tui/pkg/widgets"
 )
 
 // contactCardScreen shows a read-only detail card for one contact.
 type contactCardScreen struct {
+	app     *app
 	space   spaceItem
 	contact contactItem
-	flash   string // transient hint, e.g. when delete is refused
+	w, h    int
 }
 
-func newContactCardScreen(space spaceItem, contact contactItem) *contactCardScreen {
-	return &contactCardScreen{space: space, contact: contact}
+func newContactCardScreen(a *app, space spaceItem, contact contactItem) *contactCardScreen {
+	return &contactCardScreen{app: a, space: space, contact: contact}
 }
 
 func (s *contactCardScreen) Title() string { return s.contact.title }
 
-func (s *contactCardScreen) Init(*Model) tea.Cmd { return nil }
+func (s *contactCardScreen) Init() tea.Cmd { return nil }
 
-func (s *contactCardScreen) Update(m *Model, msg tea.Msg) (screen, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
-		s.flash = ""
-		switch key.String() {
+func (s *contactCardScreen) ShortHelp() []key.Binding {
+	help := []key.Binding{
+		key.NewBinding(key.WithKeys("esc", "left"), key.WithHelp("esc", "back")),
+	}
+	if s.app.deleter != nil {
+		help = append(help, key.NewBinding(key.WithKeys("delete", "backspace"), key.WithHelp("del", "delete")))
+	}
+	return help
+}
+
+func (s *contactCardScreen) Update(msg tea.Msg) (nav.Screen, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		s.w, s.h = msg.Width, msg.Height
+		return s, nil
+	case tea.KeyPressMsg:
+		switch msg.String() {
 		case "esc", "left":
-			return s, pop()
+			return s, nav.Pop()
 		case "delete", "backspace":
-			if m.deleter == nil {
+			if s.app.deleter == nil {
 				return s, nil
 			}
 			if s.contact.isSelf {
-				s.flash = "Cannot delete yourself"
-				return s, nil
+				return s, nav.Alert("Cannot delete", "Cannot delete yourself", 0, nav.FocusToContent)
 			}
-			return s, push(newConfirmDeleteScreen(s.space, s.contact))
+			return s, nav.Push(nav.Page{
+				Title:   "Delete contact",
+				Content: newConfirmDeleteScreen(s.app, s.space, s.contact, true),
+			})
 		}
 	}
 	return s, nil
 }
 
-func (s *contactCardScreen) View(m *Model) string {
+func (s *contactCardScreen) View() string {
 	c := s.contact
+	label := lipgloss.NewStyle().Foreground(theme.MutedColor())
+	title := lipgloss.NewStyle().Bold(true).Foreground(theme.AccentColor())
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(c.title) + "\n\n")
-	row := func(label, value string) {
+	b.WriteString(title.Render(c.title) + "\n\n")
+	row := func(name, value string) {
 		if value == "" {
 			value = "—"
 		}
-		b.WriteString(labelStyle.Render(pad(label)) + value + "\n")
+		b.WriteString(label.Render(pad(name)) + value + "\n")
 	}
 	row("id", c.id)
 	row("type", c.ctype)
@@ -60,18 +82,7 @@ func (s *contactCardScreen) View(m *Model) string {
 	row("roles", joinRoles(c.roles))
 	row("emails", strings.Join(c.emails, ", "))
 	row("phones", strings.Join(c.phones, ", "))
-
-	body := headerStyle.Render(b.String())
-	help := "esc/← back · del delete · ^c quit"
-	if s.flash != "" {
-		help = errStyle.Render(s.flash) + " · " + help
-	}
-	footer := footerStyle.Render(help)
-	// Pad the body so the footer sits at the bottom, matching the list screens.
-	if h := m.height - lipgloss.Height(footer); h > lipgloss.Height(body) {
-		body = lipgloss.NewStyle().Height(h).Render(body)
-	}
-	return body + "\n" + footer
+	return widgets.Fit(b.String(), s.w, s.h)
 }
 
 // pad right-pads a label to a fixed width for aligned card rows.

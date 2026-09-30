@@ -24,9 +24,9 @@ import (
 	aidiag "github.com/strongo/aichat/ai/diag"
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
-	"github.com/strongo/aichat/tui/grid"
-	"github.com/strongo/aichat/tui/theme"
 	"github.com/strongo/aichat/tui/transcript"
+	"github.com/strongo/strongo-tui/pkg/grid"
+	"github.com/strongo/strongo-tui/pkg/theme"
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/controls"
 	"github.com/sneat-co/sneat-cli/internal/aichat/pipeline"
@@ -640,8 +640,8 @@ func (h *handler) OnMsg(msg tea.Msg) tea.Cmd {
 		}
 		return h.reportCommand(turn, status, outcome, m.kind, actionStatus)
 	case grid.RowActivatedMsg:
-		if m.Row.Ref != nil {
-			h.state.Focus(m.Row.Ref)
+		if ref := entityRefOf(m.Row.Ref); ref != nil {
+			h.state.Focus(ref)
 		}
 		return nil
 	case controls.ItemActivatedMsg:
@@ -1054,6 +1054,17 @@ func headingFor(presentation string) string {
 	default:
 		return "Results"
 	}
+}
+
+// entityRefOf unwraps a grid Row.Ref (any) into a *session.EntityRef.
+func entityRefOf(ref any) *session.EntityRef {
+	switch r := ref.(type) {
+	case *session.EntityRef:
+		return r
+	case session.EntityRef:
+		return &r
+	}
+	return nil
 }
 
 // focusedScopes maps the session's focused/sidebar entity types to their

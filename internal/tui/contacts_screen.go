@@ -1,58 +1,59 @@
 package tui
 
 import (
-	"strings"
-
-	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"github.com/strongo/strongo-tui/pkg/nav"
+	"github.com/strongo/strongo-tui/pkg/widgets"
 )
 
 // contactsScreen lists a space's contacts, either members-only or all.
 type contactsScreen struct {
+	app         *app
 	space       spaceItem
 	membersOnly bool
-	list        list.Model
+	list        widgets.List
 	loaded      bool
 	err         error
-	flash       string // transient hint, e.g. when delete is refused
+	w, h        int
+	focused     bool
 }
 
-func newContactsScreen(space spaceItem, membersOnly bool) *contactsScreen {
-	title := "Contacts"
-	if membersOnly {
-		title = "Members"
-	}
+func newContactsScreen(a *app, space spaceItem, membersOnly bool) *contactsScreen {
 	return &contactsScreen{
+		app:         a,
 		space:       space,
 		membersOnly: membersOnly,
-		list:        newList(title, nil),
+		list:        newFilterList("contacts"),
 	}
 }
 
-func (s *contactsScreen) Title() string {
-	if s.membersOnly {
-		return "Members"
-	}
-	return "Contacts"
-}
+func (s *contactsScreen) Title() string { return contactsTitle(s.membersOnly) }
 
-func (s *contactsScreen) Init(m *Model) tea.Cmd {
-	s.list.SetSize(m.width, m.listHeight(1))
-	if cached, ok := m.cache[s.space.id]; ok {
+func (s *contactsScreen) Init() tea.Cmd {
+	if cached, ok := s.app.cache[s.space.id]; ok {
 		s.loaded = true
-		s.list.SetItems(contactItemsFrom(cached, s.membersOnly, m.uid))
+		s.list.SetItems(contactItemsFrom(cached, s.membersOnly, s.app.uid)...)
 		return nil
 	}
-	return loadContacts(m.contacts, s.space.id)
+	return loadContacts(s.app.contacts, s.space.id)
 }
 
-func (s *contactsScreen) Update(m *Model, msg tea.Msg) (screen, tea.Cmd) {
+func (s *contactsScreen) ShortHelp() []key.Binding {
+	help := s.list.ShortHelp()
+	if s.app.deleter != nil {
+		help = append(help, key.NewBinding(key.WithKeys("delete", "backspace"), key.WithHelp("del", "delete")))
+	}
+	return help
+}
+
+func (s *contactsScreen) Update(msg tea.Msg) (nav.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case contactsLoadedMsg:
 		if msg.spaceID == s.space.id {
-			m.cache[msg.spaceID] = msg.contacts
+			s.app.cache[msg.spaceID] = msg.contacts
 			s.loaded = true
-			s.list.SetItems(contactItemsFrom(msg.contacts, s.membersOnly, m.uid))
+			s.list.SetItems(contactItemsFrom(msg.contacts, s.membersOnly, s.app.uid)...)
 		}
 		return s, nil
 	case errMsg:
@@ -60,31 +61,32 @@ func (s *contactsScreen) Update(m *Model, msg tea.Msg) (screen, tea.Cmd) {
 		s.loaded = true
 		return s, nil
 	case tea.WindowSizeMsg:
-		s.list.SetSize(msg.Width, m.listHeight(1))
+		s.w, s.h = msg.Width, msg.Height
+		s.list.SetSize(s.w, s.h)
 		return s, nil
-	case tea.KeyMsg:
-		if s.list.FilterState() != list.Filtering {
-			s.flash = ""
+	case nav.ScreenFocusMsg:
+		s.focused = msg.Focused
+		if msg.Focused {
+			s.list.Focus()
+		} else {
+			s.list.Blur()
+		}
+		return s, nil
+	case widgets.ItemSelectedMsg:
+		if ci, ok := menuItemRef(msg.Item).(contactItem); ok {
+			return s, nav.Push(nav.Page{
+				Title:   ci.title,
+				Content: newContactCardScreen(s.app, s.space, ci),
+			})
+		}
+		return s, nil
+	case tea.KeyPressMsg:
+		if !s.list.Editing() {
 			switch msg.String() {
 			case "esc", "left":
-				return s, pop()
-			case "enter", "right":
-				if it, ok := s.list.SelectedItem().(contactItem); ok {
-					return s, push(newContactCardScreen(s.space, it))
-				}
-				return s, nil
+				return s, nav.Pop()
 			case "delete", "backspace":
-				if m.deleter == nil {
-					return s, nil
-				}
-				if it, ok := s.list.SelectedItem().(contactItem); ok {
-					if it.isSelf {
-						s.flash = "Cannot delete yourself"
-						return s, nil
-					}
-					return s, push(newConfirmDeleteScreen(s.space, it))
-				}
-				return s, nil
+				return s, s.requestDelete()
 			}
 		}
 	}
@@ -93,17 +95,29 @@ func (s *contactsScreen) Update(m *Model, msg tea.Msg) (screen, tea.Cmd) {
 	return s, cmd
 }
 
-func (s *contactsScreen) View(m *Model) string {
+func (s *contactsScreen) requestDelete() tea.Cmd {
+	if s.app.deleter == nil {
+		return nil
+	}
+	ci, ok := menuItemRef(s.list.SelectedItem()).(contactItem)
+	if !ok {
+		return nil
+	}
+	if ci.isSelf {
+		return nav.Alert("Cannot delete", "Cannot delete yourself", 0, nav.FocusToContent)
+	}
+	return nav.Push(nav.Page{
+		Title:   "Delete contact",
+		Content: newConfirmDeleteScreen(s.app, s.space, ci, false),
+	})
+}
+
+func (s *contactsScreen) View() string {
 	if s.err != nil {
-		return headerStyle.Render(errStyle.Render("Error: "+s.err.Error())) + "\n" + footerStyle.Render(footerHelpContacts)
+		return widgets.Fit("Error: "+s.err.Error(), s.w, s.h)
 	}
 	if !s.loaded {
-		return headerStyle.Render("Loading contacts…")
+		return widgets.Fit("Loading contacts…", s.w, s.h)
 	}
-	footer := footerHelpContacts
-	if s.flash != "" {
-		footer = errStyle.Render(s.flash) + " · " + footerHelpContacts
-	}
-	parts := []string{s.list.View(), footerStyle.Render(footer)}
-	return strings.Join(parts, "\n")
+	return s.list.View()
 }

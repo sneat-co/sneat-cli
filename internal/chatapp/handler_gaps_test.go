@@ -13,7 +13,7 @@ import (
 	"github.com/strongo/aichat/ai"
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
-	"github.com/strongo/aichat/tui/grid"
+	"github.com/strongo/strongo-tui/pkg/grid"
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/controls"
 	"github.com/sneat-co/sneat-cli/internal/aichat/pipeline"
@@ -358,6 +358,18 @@ func TestOnMsg_GridRowActivated(t *testing.T) {
 	h.OnMsg(grid.RowActivatedMsg{Row: grid.Row{Ref: &ref}})
 	if h.state.Focused == nil || h.state.Focused.Keys["contactID"] != "c1" {
 		t.Fatalf("Focused = %+v, want the activated row's ref", h.state.Focused)
+	}
+	// Row.Ref is any: a value (not pointer) EntityRef must also focus.
+	h.state.Focused = nil
+	h.OnMsg(grid.RowActivatedMsg{Row: grid.Row{Ref: session.EntityRef{Type: sneatdomain.EntityContact, Keys: map[string]string{"contactID": "c2"}}}})
+	if h.state.Focused == nil || h.state.Focused.Keys["contactID"] != "c2" {
+		t.Fatalf("Focused = %+v, want value-ref c2", h.state.Focused)
+	}
+	// An unrecognized Ref type is ignored.
+	h.state.Focused = nil
+	h.OnMsg(grid.RowActivatedMsg{Row: grid.Row{Ref: "not-a-ref"}})
+	if h.state.Focused != nil {
+		t.Fatal("non-EntityRef must not focus")
 	}
 }
 

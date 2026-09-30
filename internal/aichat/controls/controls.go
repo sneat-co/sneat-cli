@@ -2,8 +2,8 @@
 // (brief §3) as strongo/aichat tui/transcript.Block values: HappeningCard,
 // DayCalendar, WeekCalendar, HappeningsList, TodoList, BuyList and
 // ContactCard render as ListBlock/CardBlock (below); ContactsGrid reuses
-// tui/grid directly -- the SAME generic grid DataTug uses -- rather than a
-// competing Sneat-specific grid (brief §3).
+// strongo-tui's pkg/grid -- the SAME generic grid DataTug uses -- wrapped
+// with aichat/tui/gridblock for the transcript (brief §3).
 //
 // Models are semantic (a title, a subtitle, an EntityRef) rather than
 // terminal drawing instructions: the CLI (this package) owns turning a
@@ -22,8 +22,9 @@ import (
 
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui"
-	"github.com/strongo/aichat/tui/grid"
+	"github.com/strongo/aichat/tui/gridblock"
 	"github.com/strongo/aichat/tui/transcript"
+	"github.com/strongo/strongo-tui/pkg/grid"
 )
 
 // Item is one row of a ListBlock: a title, an optional one-line subtitle
@@ -41,7 +42,7 @@ type Item struct {
 }
 
 // ItemActivatedMsg is emitted when Enter is pressed over a ListBlock's
-// cursor item -- the ListBlock counterpart of tui/grid's RowActivatedMsg.
+// cursor item -- the ListBlock counterpart of pkg/grid's RowActivatedMsg.
 // internal/chatapp's handler.OnMsg (a chatshell.MsgHandler) focuses the
 // entity on it, the same way it already focuses a grid.RowActivatedMsg's
 // row: a real, UI-driven way to set session.State.Focused (brief §4/§18
@@ -130,13 +131,13 @@ func (b *ListBlock) Update(msg tea.Msg) (transcript.Block, tea.Cmd) {
 			}
 		}
 	case "+":
-		// Same convention as tui/grid's "+": pin the entity under the cursor
+		// Same convention as pkg/grid's "+": pin the entity under the cursor
 		// to the working-context sidebar (brief §4/§18 scenario 8).
 		if ref := b.Current(); ref != nil {
 			return b, func() tea.Msg { return tui.AddToSidebarMsg{Ref: *ref} }
 		}
 	case "enter":
-		// Same convention as tui/grid's Enter/RowActivatedMsg: focus the
+		// Same convention as pkg/grid's Enter/RowActivatedMsg: focus the
 		// entity under the cursor (brief §4/§18 scenario 5).
 		if ref := b.Current(); ref != nil {
 			return b, func() tea.Msg { return ItemActivatedMsg{Ref: *ref} }
@@ -217,7 +218,7 @@ func (b *CardBlock) Update(msg tea.Msg) (transcript.Block, tea.Cmd) {
 		return b, nil
 	}
 	if key.String() == "+" {
-		// Same convention as tui/grid's "+" and ListBlock's above: pin this
+		// Same convention as pkg/grid's "+" and ListBlock's above: pin this
 		// card's entity to the sidebar (brief §4/§18 scenario 8).
 		ref := b.Ref
 		return b, func() tea.Msg { return tui.AddToSidebarMsg{Ref: ref} }
@@ -237,19 +238,19 @@ func (b *CardBlock) View(width int, _ bool) string {
 	return clampWidth(sb.String(), width)
 }
 
-// NewContactsGrid builds the ContactsGrid presentation over tui/grid --
-// reused verbatim, per brief §3, rather than a Sneat-specific competing
-// grid. Row.Values is positional (name, then nothing else for the MVP's
-// contact list; a real product would add columns as contactus grows
-// queryable fields).
-func NewContactsGrid(title string, contacts []Contact) *grid.Model {
+// NewContactsGrid builds the ContactsGrid presentation over strongo-tui's
+// pkg/grid -- reused verbatim, per brief §3, rather than a Sneat-specific
+// competing grid -- and wraps it as a transcript block. Row.Values is
+// positional (name, then nothing else for the MVP's contact list; a real
+// product would add columns as contactus grows queryable fields).
+func NewContactsGrid(title string, contacts []Contact) *gridblock.Block {
 	columns := []grid.Column{{Name: "Name"}}
 	rows := make([]grid.Row, 0, len(contacts))
 	for _, c := range contacts {
 		ref := c.Ref
 		rows = append(rows, grid.Row{Key: c.Ref.Keys["contactID"], Values: []any{c.Name}, Ref: &ref})
 	}
-	return grid.New(columns, rows, grid.WithTitle(title))
+	return gridblock.Wrap(grid.New(columns, rows, grid.WithTitle(title)))
 }
 
 // Contact is the sliver of a contact ContactsGrid needs -- decoupled from

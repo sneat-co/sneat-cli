@@ -29,6 +29,7 @@ require (
 	github.com/strongo/buildinfo v0.3.2
 	github.com/strongo/cli-helpers v0.25.0
 	github.com/strongo/deviceauth v0.1.2
+	github.com/strongo/strongo-tui v0.0.0
 	github.com/strongo/strongoapp v0.31.64
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.46.0
@@ -46,7 +47,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.1 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.29.0 // indirect
-	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
+	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/alexsergivan/transliterator v1.0.1 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.61.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -70,7 +71,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/crediterra/money v0.4.0 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
-	github.com/dlclark/regexp2 v1.11.0 // indirect
+	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/evertras/bubble-table v0.23.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
@@ -143,3 +144,8 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260921155816-b14227669459 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+// TEMPORARY local replaces for the tview-to-bubbletea cutover; must never land.
+replace github.com/strongo/strongo-tui => /Users/alex/projects/.worktrees/tview-to-bubbletea/github.com/strongo/strongo-tui
+
+replace github.com/strongo/aichat => /Users/alex/projects/.worktrees/tview-to-bubbletea/github.com/strongo/aichat

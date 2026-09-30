@@ -5,10 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"github.com/sneat-co/contactus/backend/dbo4contactus"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
+	"github.com/strongo/strongo-tui/pkg/nav"
+	"github.com/strongo/strongo-tui/pkg/nav/navtest"
 	"github.com/strongo/strongoapp/person"
 )
 
@@ -65,71 +66,66 @@ func (f *fakeDeleter) DeleteContact(_ context.Context, spaceID, contactID string
 	return f.err
 }
 
-// openContacts navigates spaces → space → Contacts (the full list) and returns
-// the model sitting on the loaded contacts screen.
-func openContacts(t *testing.T, m Model) Model {
-	t.Helper()
-	m, cmd := step(t, m, key("enter")) // enter space
-	m, initCmd := step(t, m, runCmd(cmd))
-	m, _ = step(t, m, runCmd(initCmd)) // contacts loaded into cache
-	m, _ = step(t, m, key("down"))     // move to "Contacts" menu item
-	m, cmd = step(t, m, key("enter"))  // open Contacts
-	m, _ = step(t, m, runCmd(cmd))
-	if _, ok := m.top().(*contactsScreen); !ok {
-		t.Fatalf("expected contacts screen, got %T", m.top())
-	}
-	return m
-}
-
-// runCmd executes a command and returns the message it produced (nil-safe).
-func runCmd(cmd tea.Cmd) tea.Msg {
-	if cmd == nil {
-		return nil
-	}
-	return cmd()
-}
-
-// step applies a message and returns the model plus the produced command.
-func step(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
-	t.Helper()
-	tm, cmd := m.Update(msg)
-	return tm.(Model), cmd
-}
-
-func key(s string) tea.KeyMsg {
-	switch s {
-	case "enter":
-		return tea.KeyPressMsg{Code: tea.KeyEnter}
-	case "esc":
-		return tea.KeyPressMsg{Code: tea.KeyEsc}
-	case "left":
-		return tea.KeyPressMsg{Code: tea.KeyLeft}
-	case "right":
-		return tea.KeyPressMsg{Code: tea.KeyRight}
-	case "delete":
-		return tea.KeyPressMsg{Code: tea.KeyDelete}
-	case "backspace":
-		return tea.KeyPressMsg{Code: tea.KeyBackspace}
-	default:
-		return tea.KeyPressMsg{Text: s}
+func twoSpaces() map[string]any {
+	return map[string]any{
+		"fam":  map[string]any{"title": "Family", "type": "family", "status": "active", "roles": []any{"member"}},
+		"priv": map[string]any{"title": "Private", "type": "private", "status": "active"},
 	}
 }
 
-// newLoadedSpaces builds a model already showing a loaded Spaces list.
-func newLoadedSpaces(t *testing.T, spaces map[string]any, contacts *fakeContacts) Model {
-	t.Helper()
-	return newLoadedSpacesWith(t, spaces, contacts, nil, "uid")
+// famContacts builds a Family space fixture with the given contacts.
+func famContacts(cs ...firestoredb.Contact) *fakeContacts {
+	return &fakeContacts{bySpace: map[string][]firestoredb.Contact{"fam": cs}}
 }
 
-// newLoadedSpacesWith is like newLoadedSpaces but lets a test inject a deleter
-// and the signed-in uid.
-func newLoadedSpacesWith(t *testing.T, spaces map[string]any, contacts *fakeContacts, deleter ContactDeleter, uid string) Model {
+// newHarness builds a navtest harness already showing a loaded Spaces list.
+func newHarness(t *testing.T, spaces map[string]any, contacts *fakeContacts) *navtest.Harness {
 	t.Helper()
-	m := New(fakeSpaces{spaces: spaces}, contacts, deleter, uid)
-	loadCmd := m.Init()
-	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = step(t, m, runCmd(loadCmd)) // spacesLoadedMsg
-	return m
+	return newHarnessWith(t, spaces, contacts, nil, "uid")
+}
+
+func newHarnessWith(t *testing.T, spaces map[string]any, contacts *fakeContacts, deleter ContactDeleter, uid string) *navtest.Harness {
+	t.Helper()
+	a := &app{
+		spaces:   fakeSpaces{spaces: spaces},
+		contacts: contacts,
+		deleter:  deleter,
+		uid:      uid,
+		cache:    map[string][]firestoredb.Contact{},
+	}
+	h := navtest.New(t, nav.Page{Title: "Spaces", Content: newSpacesScreen(a)},
+		navtest.WithNav(nav.WithoutLogin()),
+		navtest.WithSize(80, 24),
+	)
+	// Init already ran loadSpaces; deliver its result if still pending.
+	// navtest.New runs Init, so spacesLoadedMsg should already be applied.
+	return h
+}
+
+// openContacts navigates spaces → space → Contacts and returns the harness
+// sitting on the loaded contacts screen.
+func openContacts(t *testing.T, h *navtest.Harness) *navtest.Harness {
+	t.Helper()
+	h.Press("enter") // enter space (fam sorts first)
+	h.Press("down")  // move to "Contacts" menu item
+	h.Press("enter") // open Contacts
+	if _, ok := h.Model().Content().(*contactsScreen); !ok {
+		t.Fatalf("expected contacts screen, got %T", h.Model().Content())
+	}
+	return h
+}
+
+func contains(s, sub string) bool {
+	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
 
 // --- helper tests ---
@@ -158,8 +154,7 @@ func TestContactItemsFrom_MembersOnly(t *testing.T) {
 	if len(members) != 2 {
 		t.Fatalf("members count = %d, want 2", len(members))
 	}
-	// Alice keeps "parent" but not "member"; roles are stripped of member.
-	alice := members[0].(contactItem)
+	alice := menuItemRef(members[0]).(contactItem)
 	if hasMemberRole(alice.roles) {
 		t.Errorf("member role should be stripped, got %v", alice.roles)
 	}
@@ -171,9 +166,8 @@ func TestContactItemsFrom_MembersOnly(t *testing.T) {
 	if len(all) != 3 {
 		t.Fatalf("all count = %d, want 3", len(all))
 	}
-	// In the full list, member role is preserved.
-	if !hasMemberRole(all[0].(contactItem).roles) {
-		t.Errorf("full list should keep member role, got %v", all[0].(contactItem).roles)
+	if !hasMemberRole(menuItemRef(all[0]).(contactItem).roles) {
+		t.Errorf("full list should keep member role, got %v", menuItemRef(all[0]).(contactItem).roles)
 	}
 }
 
@@ -183,222 +177,11 @@ func TestSpaceItemsFrom_SortedAndMapped(t *testing.T) {
 		"a1": map[string]any{"title": "Alpha", "type": "private", "status": "active"},
 	}
 	items := spaceItemsFrom(spaces)
-	if len(items) != 2 || items[0].(spaceItem).id != "a1" {
+	if len(items) != 2 || menuItemRef(items[0]).(spaceItem).id != "a1" {
 		t.Fatalf("expected sorted by id, got %v", items)
 	}
-	if items[0].(spaceItem).title != "Alpha" {
-		t.Errorf("title = %q", items[0].(spaceItem).title)
-	}
-}
-
-// --- navigation tests ---
-
-func twoSpaces() map[string]any {
-	return map[string]any{
-		"fam":  map[string]any{"title": "Family", "type": "family", "status": "active", "roles": []any{"member"}},
-		"priv": map[string]any{"title": "Private", "type": "private", "status": "active"},
-	}
-}
-
-func TestNavigation_SpacesToSpaceToMembersToCard(t *testing.T) {
-	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{
-		"fam": {contact("c1", "Alice", "member", "parent"), contact("c2", "Bob", "child")},
-	}}
-	m := newLoadedSpaces(t, twoSpaces(), fc)
-
-	sp, ok := m.top().(*spacesScreen)
-	if !ok {
-		t.Fatalf("top is %T, want *spacesScreen", m.top())
-	}
-	if len(sp.list.Items()) != 2 {
-		t.Fatalf("spaces list has %d items", len(sp.list.Items()))
-	}
-
-	// Enter the first space ("fam" sorts before "priv").
-	m, cmd := step(t, m, key("enter"))
-	m, _ = step(t, m, runCmd(cmd)) // pushMsg -> pushes spaceScreen, returns loadContacts cmd
-	spaceScr, ok := m.top().(*spaceScreen)
-	if !ok {
-		t.Fatalf("top is %T, want *spaceScreen", m.top())
-	}
-	if spaceScr.space.id != "fam" {
-		t.Fatalf("entered space %q, want fam", spaceScr.space.id)
-	}
-
-	// Deliver the contacts load for the space.
-	m, _ = step(t, m, contactsLoadedMsg{spaceID: "fam", contacts: fc.bySpace["fam"]})
-	if got := m.top().(*spaceScreen).count; got != 2 {
-		t.Fatalf("space contact count = %d, want 2", got)
-	}
-
-	// Select "Members" (first menu item) and open it.
-	m, cmd = step(t, m, key("enter"))
-	m, _ = step(t, m, runCmd(cmd)) // push contactsScreen(membersOnly); Init uses cache
-	cs, ok := m.top().(*contactsScreen)
-	if !ok {
-		t.Fatalf("top is %T, want *contactsScreen", m.top())
-	}
-	if !cs.membersOnly {
-		t.Error("expected membersOnly screen")
-	}
-	if len(cs.list.Items()) != 1 {
-		t.Fatalf("members list has %d items, want 1", len(cs.list.Items()))
-	}
-
-	// Open the contact card.
-	m, cmd = step(t, m, key("enter"))
-	m, _ = step(t, m, runCmd(cmd))
-	card, ok := m.top().(*contactCardScreen)
-	if !ok {
-		t.Fatalf("top is %T, want *contactCardScreen", m.top())
-	}
-	if card.contact.title != "Alice" {
-		t.Errorf("card contact = %q, want Alice", card.contact.title)
-	}
-}
-
-func TestNavigation_BackPopsAndRootQuits(t *testing.T) {
-	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{"fam": {contact("c1", "Alice", "member")}}}
-	m := newLoadedSpaces(t, twoSpaces(), fc)
-
-	// Descend into a space.
-	m, cmd := step(t, m, key("enter"))
-	m, _ = step(t, m, runCmd(cmd))
-	if len(m.stack) != 2 {
-		t.Fatalf("stack depth = %d, want 2", len(m.stack))
-	}
-
-	// esc pops back to spaces.
-	m, cmd = step(t, m, key("esc"))
-	m, _ = step(t, m, runCmd(cmd)) // popMsg
-	if len(m.stack) != 1 {
-		t.Fatalf("stack depth after esc = %d, want 1", len(m.stack))
-	}
-	if _, ok := m.top().(*spacesScreen); !ok {
-		t.Fatalf("top is %T, want *spacesScreen", m.top())
-	}
-
-	// esc at the root quits.
-	_, cmd = step(t, m, key("esc"))
-	if _, ok := runCmd(cmd).(tea.QuitMsg); !ok {
-		t.Fatal("esc at spaces screen should quit")
-	}
-}
-
-func TestNavigation_ContactsCachePreventsRefetch(t *testing.T) {
-	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{
-		"fam": {contact("c1", "Alice", "member"), contact("c2", "Bob", "child")},
-	}}
-	m := newLoadedSpaces(t, twoSpaces(), fc)
-
-	// Enter space; its Init issues the one and only ListContacts call.
-	m, cmd := step(t, m, key("enter"))
-	loadCmd := runCmd(cmd).(pushMsg)
-	m, initCmd := step(t, m, loadCmd)
-	m, _ = step(t, m, runCmd(initCmd)) // contactsLoadedMsg populates the cache
-
-	// Open Members, back, open Contacts — all served from cache.
-	m, cmd = step(t, m, key("enter")) // Members
-	m, _ = step(t, m, runCmd(cmd))
-	m, cmd = step(t, m, key("esc")) // back to space
-	m, _ = step(t, m, runCmd(cmd))
-	// move selection to Contacts (second item) then open
-	m, _ = step(t, m, key("down"))
-	m, cmd = step(t, m, key("enter"))
-	m, _ = step(t, m, runCmd(cmd))
-
-	full, ok := m.top().(*contactsScreen)
-	if !ok {
-		t.Fatalf("top is %T, want *contactsScreen", m.top())
-	}
-	if full.membersOnly {
-		t.Error("expected full Contacts screen")
-	}
-	if len(full.list.Items()) != 2 {
-		t.Errorf("contacts list has %d items, want 2", len(full.list.Items()))
-	}
-	if fc.calls["fam"] != 1 {
-		t.Errorf("ListContacts called %d times for fam, want 1 (cache)", fc.calls["fam"])
-	}
-}
-
-func TestSpacesScreen_LoadError(t *testing.T) {
-	m := New(fakeSpaces{err: errors.New("boom")}, &fakeContacts{}, nil, "uid")
-	loadCmd := m.Init()
-	m, _ = step(t, m, runCmd(loadCmd)) // errMsg
-	view := m.View().Content
-	if view == "" || !contains(view, "boom") {
-		t.Errorf("error view should mention the error, got %q", view)
-	}
-}
-
-func TestViews_RenderAcrossScreens(t *testing.T) {
-	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{
-		"fam": {contact("c1", "Alice", "member", "parent")},
-	}}
-	m := newLoadedSpaces(t, twoSpaces(), fc)
-
-	// Spaces view lists a space and shows the footer help.
-	if v := m.View().Content; !contains(v, "Family") || !contains(v, "quit") {
-		t.Errorf("spaces view = %q", v)
-	}
-
-	// Space screen: header shows details.
-	m, cmd := step(t, m, key("enter"))
-	m, initCmd := step(t, m, runCmd(cmd))
-	m, _ = step(t, m, runCmd(initCmd))
-	if v := m.View().Content; !contains(v, "id:") || !contains(v, "Members") || !contains(v, "fam") {
-		t.Errorf("space view = %q", v)
-	}
-
-	// Members list.
-	m, cmd = step(t, m, key("enter"))
-	m, _ = step(t, m, runCmd(cmd))
-	if v := m.View().Content; !contains(v, "Alice") {
-		t.Errorf("members view = %q", v)
-	}
-
-	// Contact card shows fields.
-	m, cmd = step(t, m, key("enter"))
-	m, _ = step(t, m, runCmd(cmd))
-	v := m.View().Content
-	if !contains(v, "Alice") || !contains(v, "roles") || !contains(v, "parent") {
-		t.Errorf("card view = %q", v)
-	}
-
-	// Left arrow pops the card back to the members list.
-	m, cmd = step(t, m, key("left"))
-	m, _ = step(t, m, runCmd(cmd))
-	if _, ok := m.top().(*contactsScreen); !ok {
-		t.Fatalf("left should return to contacts, got %T", m.top())
-	}
-}
-
-func TestItemAndScreenMetadata(t *testing.T) {
-	if (spaceItem{id: "x", title: "X"}).FilterValue() != "X x" {
-		t.Error("space FilterValue")
-	}
-	if (spaceItem{id: "y"}).name() != "y" {
-		t.Error("space name falls back to id")
-	}
-	if (menuItem{label: "Members"}).FilterValue() != "Members" {
-		t.Error("menu FilterValue")
-	}
-	if (contactItem{title: "Alice"}).FilterValue() != "Alice" {
-		t.Error("contact FilterValue")
-	}
-	sp := spaceItem{id: "fam", title: "Family"}
-	cases := map[string]string{
-		newSpacesScreen().Title():                                  "Spaces",
-		newSpaceScreen(sp).Title():                                 "Family",
-		newContactsScreen(sp, true).Title():                        "Members",
-		newContactsScreen(sp, false).Title():                       "Contacts",
-		newContactCardScreen(sp, contactItem{title: "Al"}).Title(): "Al",
-	}
-	for got, want := range cases {
-		if got != want {
-			t.Errorf("Title = %q, want %q", got, want)
-		}
+	if menuItemRef(items[0]).(spaceItem).title != "Alpha" {
+		t.Errorf("title = %q", menuItemRef(items[0]).(spaceItem).title)
 	}
 }
 
@@ -420,19 +203,185 @@ func TestContactItemsFrom_SkipsNil(t *testing.T) {
 	}
 }
 
+func TestContactItemsFrom_MarksSelf(t *testing.T) {
+	cs := []firestoredb.Contact{
+		contactAs("me", "Me", "u1", "member"),
+		contact("c2", "Bob", "child"),
+	}
+	items := contactItemsFrom(cs, false, "u1")
+	if !menuItemRef(items[0]).(contactItem).isSelf {
+		t.Error("contact with matching UserID should be isSelf")
+	}
+	if menuItemRef(items[1]).(contactItem).isSelf {
+		t.Error("other contact should not be isSelf")
+	}
+	if menuItemRef(contactItemsFrom(cs, false, "")[1]).(contactItem).isSelf {
+		t.Error("empty uid must not mark an empty-UserID contact as self")
+	}
+}
+
+func TestItemAndScreenMetadata(t *testing.T) {
+	a := &app{cache: map[string][]firestoredb.Contact{}}
+	sp := spaceItem{id: "fam", title: "Family"}
+	cases := map[string]string{
+		newSpacesScreen(a).Title():                                    "Spaces",
+		newSpaceScreen(a, sp).Title():                                 "Family",
+		newContactsScreen(a, sp, true).Title():                        "Members",
+		newContactsScreen(a, sp, false).Title():                       "Contacts",
+		newContactCardScreen(a, sp, contactItem{title: "Al"}).Title(): "Al",
+		newConfirmDeleteScreen(a, sp, contactItem{}, false).Title():   "Delete contact",
+	}
+	for got, want := range cases {
+		if got != want {
+			t.Errorf("Title = %q, want %q", got, want)
+		}
+	}
+	if (spaceItem{id: "y"}).name() != "y" {
+		t.Error("space name falls back to id")
+	}
+	if (spaceItem{id: "x", title: "X", spaceType: "family", status: "active"}).detail() != "family · active" {
+		t.Error("space detail")
+	}
+	if (contactItem{ctype: "person", gender: "female"}).detail() != "person · female" {
+		t.Error("contact detail")
+	}
+}
+
+// --- navigation tests ---
+
+func TestNavigation_SpacesToSpaceToMembersToCard(t *testing.T) {
+	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{
+		"fam": {contact("c1", "Alice", "member", "parent"), contact("c2", "Bob", "child")},
+	}}
+	h := newHarness(t, twoSpaces(), fc)
+	h.RequireContains("Family")
+
+	h.Press("enter") // enter fam
+	spaceScr, ok := h.Model().Content().(*spaceScreen)
+	if !ok {
+		t.Fatalf("top is %T, want *spaceScreen", h.Model().Content())
+	}
+	if spaceScr.space.id != "fam" {
+		t.Fatalf("entered space %q, want fam", spaceScr.space.id)
+	}
+	if spaceScr.count != 2 {
+		t.Fatalf("space contact count = %d, want 2", spaceScr.count)
+	}
+
+	h.Press("enter") // Members
+	cs, ok := h.Model().Content().(*contactsScreen)
+	if !ok {
+		t.Fatalf("top is %T, want *contactsScreen", h.Model().Content())
+	}
+	if !cs.membersOnly {
+		t.Error("expected membersOnly screen")
+	}
+	if len(cs.list.Items()) != 1 {
+		t.Fatalf("members list has %d items, want 1", len(cs.list.Items()))
+	}
+
+	h.Press("enter") // card
+	card, ok := h.Model().Content().(*contactCardScreen)
+	if !ok {
+		t.Fatalf("top is %T, want *contactCardScreen", h.Model().Content())
+	}
+	if card.contact.title != "Alice" {
+		t.Errorf("card contact = %q, want Alice", card.contact.title)
+	}
+}
+
+func TestNavigation_BackPopsAndRootQuits(t *testing.T) {
+	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{"fam": {contact("c1", "Alice", "member")}}}
+	h := newHarness(t, twoSpaces(), fc)
+
+	h.Press("enter")
+	if h.Model().Depth() != 2 {
+		t.Fatalf("stack depth = %d, want 2", h.Model().Depth())
+	}
+
+	h.Press("esc")
+	if h.Model().Depth() != 1 {
+		t.Fatalf("stack depth after esc = %d, want 1", h.Model().Depth())
+	}
+	if _, ok := h.Model().Content().(*spacesScreen); !ok {
+		t.Fatalf("top is %T, want *spacesScreen", h.Model().Content())
+	}
+
+	h.Press("esc")
+	if !h.Quit() {
+		t.Fatal("esc at spaces screen should quit")
+	}
+}
+
+func TestNavigation_ContactsCachePreventsRefetch(t *testing.T) {
+	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{
+		"fam": {contact("c1", "Alice", "member"), contact("c2", "Bob", "child")},
+	}}
+	h := newHarness(t, twoSpaces(), fc)
+
+	h.Press("enter") // space; Init loads contacts once
+	h.Press("enter") // Members
+	h.Press("esc")   // back to space
+	h.Press("down")  // Contacts
+	h.Press("enter")
+
+	full, ok := h.Model().Content().(*contactsScreen)
+	if !ok {
+		t.Fatalf("top is %T, want *contactsScreen", h.Model().Content())
+	}
+	if full.membersOnly {
+		t.Error("expected full Contacts screen")
+	}
+	if len(full.list.Items()) != 2 {
+		t.Errorf("contacts list has %d items, want 2", len(full.list.Items()))
+	}
+	if fc.calls["fam"] != 1 {
+		t.Errorf("ListContacts called %d times for fam, want 1 (cache)", fc.calls["fam"])
+	}
+}
+
+func TestSpacesScreen_LoadError(t *testing.T) {
+	a := &app{spaces: fakeSpaces{err: errors.New("boom")}, cache: map[string][]firestoredb.Contact{}}
+	h := navtest.New(t, nav.Page{Title: "Spaces", Content: newSpacesScreen(a)},
+		navtest.WithNav(nav.WithoutLogin()),
+		navtest.WithSize(80, 24),
+	)
+	h.RequireContains("boom")
+}
+
+func TestViews_RenderAcrossScreens(t *testing.T) {
+	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{
+		"fam": {contact("c1", "Alice", "member", "parent")},
+	}}
+	h := newHarness(t, twoSpaces(), fc)
+	h.RequireContains("Family")
+
+	h.Press("enter")
+	h.RequireContains("id:")
+	h.RequireContains("Members")
+	h.RequireContains("fam")
+
+	h.Press("enter")
+	h.RequireContains("Alice")
+
+	h.Press("enter")
+	h.RequireContains("Alice")
+	h.RequireContains("roles")
+	h.RequireContains("parent")
+
+	h.Press("left")
+	if _, ok := h.Model().Content().(*contactsScreen); !ok {
+		t.Fatalf("left should return to contacts, got %T", h.Model().Content())
+	}
+}
+
 func TestSpaceScreen_ReentryUsesCache(t *testing.T) {
 	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{"fam": {contact("c1", "Al", "member")}}}
-	m := newLoadedSpaces(t, twoSpaces(), fc)
-	// First entry loads contacts.
-	m, cmd := step(t, m, key("enter"))
-	m, initCmd := step(t, m, runCmd(cmd))
-	m, _ = step(t, m, runCmd(initCmd)) // contactsLoadedMsg -> cache
-	// Back to spaces, then re-enter: Init hits the cache branch (count set, no reload).
-	m, cmd = step(t, m, key("esc"))
-	m, _ = step(t, m, runCmd(cmd))
-	m, cmd = step(t, m, key("enter"))
-	m, _ = step(t, m, runCmd(cmd))
-	if got := m.top().(*spaceScreen).count; got != 1 {
+	h := newHarness(t, twoSpaces(), fc)
+	h.Press("enter")
+	h.Press("esc")
+	h.Press("enter")
+	if got := h.Model().Content().(*spaceScreen).count; got != 1 {
 		t.Errorf("re-entry count = %d, want 1", got)
 	}
 	if fc.calls["fam"] != 1 {
@@ -440,166 +389,77 @@ func TestSpaceScreen_ReentryUsesCache(t *testing.T) {
 	}
 }
 
-func TestContactCard_FooterAtBottom(t *testing.T) {
+func TestContactCard_ShowsFields(t *testing.T) {
 	fc := &fakeContacts{bySpace: map[string][]firestoredb.Contact{"fam": {contact("c1", "Alice", "member")}}}
-	m := newLoadedSpaces(t, twoSpaces(), fc)
-	m, cmd := step(t, m, key("enter")) // space
-	m, initCmd := step(t, m, runCmd(cmd))
-	m, _ = step(t, m, runCmd(initCmd))
-	m, cmd = step(t, m, key("enter")) // members
-	m, _ = step(t, m, runCmd(cmd))
-	m, cmd = step(t, m, key("enter")) // card
-	m, _ = step(t, m, runCmd(cmd))
-
-	view := m.View().Content
-	lines := len(splitLines(view))
-	if lines < 22 { // height is 24; footer should be pushed near the bottom
-		t.Errorf("card view has %d lines, expected it to fill the height (~24)", lines)
-	}
-	last := splitLines(view)[lines-1]
-	if !contains(last, "back") {
-		t.Errorf("footer should be the last line, got %q", last)
-	}
-}
-
-func splitLines(s string) []string {
-	var out []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			out = append(out, s[start:i])
-			start = i + 1
-		}
-	}
-	out = append(out, s[start:])
-	return out
+	h := newHarness(t, twoSpaces(), fc)
+	h.Press("enter", "enter", "enter")
+	h.RequireContains("Alice")
+	h.RequireContains("id")
 }
 
 func TestQuitKeyAndResize(t *testing.T) {
-	m := newLoadedSpaces(t, twoSpaces(), &fakeContacts{})
-	// 'q' no longer quits — it is reserved for the list filter.
-	if _, cmd := step(t, m, key("q")); func() bool { _, ok := runCmd(cmd).(tea.QuitMsg); return ok }() {
+	h := newHarness(t, twoSpaces(), &fakeContacts{})
+	h.Press("q")
+	if h.Quit() {
 		t.Error("q must not quit (reserved for filtering)")
 	}
-	// ctrl+c quits globally.
-	if _, cmd := step(t, m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}); func() bool { _, ok := runCmd(cmd).(tea.QuitMsg); return !ok }() {
+	h.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if !h.Quit() {
 		t.Error("ctrl+c should quit")
 	}
-	// Resize does not crash and keeps us on the spaces screen.
-	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	if _, ok := m.top().(*spacesScreen); !ok {
-		t.Fatalf("after resize top is %T", m.top())
+	h2 := newHarness(t, twoSpaces(), &fakeContacts{})
+	h2.Resize(120, 40)
+	if _, ok := h2.Model().Content().(*spacesScreen); !ok {
+		t.Fatalf("after resize top is %T", h2.Model().Content())
 	}
 }
 
 func TestContactsScreen_LoadErrorView(t *testing.T) {
 	fc := &fakeContacts{err: errors.New("net down")}
-	m := newLoadedSpaces(t, twoSpaces(), fc)
-	m, cmd := step(t, m, key("enter"))    // open space
-	m, initCmd := step(t, m, runCmd(cmd)) // push space screen
-	m, _ = step(t, m, runCmd(initCmd))    // errMsg from loadContacts
-	if v := m.View().Content; !contains(v, "net down") {
-		t.Errorf("space error view = %q", v)
-	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
-func TestContactItemsFrom_MarksSelf(t *testing.T) {
-	cs := []firestoredb.Contact{
-		contactAs("me", "Me", "u1", "member"),
-		contact("c2", "Bob", "child"),
-	}
-	items := contactItemsFrom(cs, false, "u1")
-	if !items[0].(contactItem).isSelf {
-		t.Error("contact with matching UserID should be isSelf")
-	}
-	if items[1].(contactItem).isSelf {
-		t.Error("other contact should not be isSelf")
-	}
-	// A blank uid never matches, even against a contact with an empty UserID.
-	if contactItemsFrom(cs, false, "")[1].(contactItem).isSelf {
-		t.Error("empty uid must not mark an empty-UserID contact as self")
-	}
-}
-
-// famContacts builds a Family space fixture with the given contacts.
-func famContacts(cs ...firestoredb.Contact) *fakeContacts {
-	return &fakeContacts{bySpace: map[string][]firestoredb.Contact{"fam": cs}}
+	h := newHarness(t, twoSpaces(), fc)
+	h.Press("enter")
+	h.RequireContains("net down")
 }
 
 func TestDelete_SelfIsRefused(t *testing.T) {
 	fc := famContacts(contactAs("me", "Me", "u1", "member"), contact("c2", "Bob", "child"))
 	del := &fakeDeleter{}
-	m := newLoadedSpacesWith(t, twoSpaces(), fc, del, "u1")
-	m = openContacts(t, m) // selection starts on the first (self) contact
+	h := newHarnessWith(t, twoSpaces(), fc, del, "u1")
+	openContacts(t, h)
 
-	m, cmd := step(t, m, key("delete"))
-	if _, ok := m.top().(*confirmDeleteScreen); ok {
+	h.Press("delete")
+	if _, ok := h.Model().Content().(*confirmDeleteScreen); ok {
 		t.Fatal("deleting self must not open the confirm screen")
 	}
-	if cmd != nil {
-		if _, ok := runCmd(cmd).(contactDeletedMsg); ok {
-			t.Fatal("self delete must not issue a delete")
-		}
-	}
-	cs := m.top().(*contactsScreen)
-	if cs.flash == "" {
-		t.Error("expected a 'cannot delete yourself' flash")
-	}
+	h.RequireContains("Cannot delete yourself")
 	if len(del.calls) != 0 {
 		t.Errorf("deleter must not be called for self, got %v", del.calls)
-	}
-	if v := m.View().Content; !contains(v, "Cannot delete yourself") {
-		t.Errorf("flash should render, view = %q", v)
 	}
 }
 
 func TestDelete_ConfirmAndSucceed(t *testing.T) {
 	fc := famContacts(contact("c1", "Alice", "parent"), contact("c2", "Bob", "child"))
 	del := &fakeDeleter{}
-	m := newLoadedSpacesWith(t, twoSpaces(), fc, del, "u1")
-	m = openContacts(t, m)
+	h := newHarnessWith(t, twoSpaces(), fc, del, "u1")
+	openContacts(t, h)
 
-	// Delete opens the confirm screen.
-	m, cmd := step(t, m, key("delete"))
-	m, _ = step(t, m, runCmd(cmd)) // deliver pushMsg
-	confirm, ok := m.top().(*confirmDeleteScreen)
+	h.Press("delete")
+	confirm, ok := h.Model().Content().(*confirmDeleteScreen)
 	if !ok {
-		t.Fatalf("top is %T, want *confirmDeleteScreen", m.top())
+		t.Fatalf("top is %T, want *confirmDeleteScreen", h.Model().Content())
 	}
 	if confirm.contact.id != "c1" {
 		t.Fatalf("confirming delete of %q, want c1", confirm.contact.id)
 	}
 
-	// Enter confirms → issues the delete → success unwinds and reloads.
-	m, cmd = step(t, m, key("enter"))
-	msg := runCmd(cmd)
-	if _, ok := msg.(contactDeletedMsg); !ok {
-		t.Fatalf("confirm should issue a delete, got %T", msg)
+	before := fc.calls["fam"]
+	h.Press("enter") // confirm → delete → unwind + reload
+	if _, ok := h.Model().Content().(*contactsScreen); !ok {
+		t.Fatalf("after delete top is %T, want *contactsScreen", h.Model().Content())
 	}
 	if len(del.calls) != 1 || del.calls[0] != "fam/c1" {
 		t.Fatalf("deleter calls = %v, want [fam/c1]", del.calls)
 	}
-
-	// The list had one ListContacts call; delivering the success message must
-	// invalidate the cache and trigger exactly one reload.
-	before := fc.calls["fam"]
-	m, reload := step(t, m, msg)
-	if _, ok := m.top().(*contactsScreen); !ok {
-		t.Fatalf("after delete top is %T, want *contactsScreen", m.top())
-	}
-	if _, ok := m.cache["fam"]; ok {
-		t.Error("cache for the space should be invalidated after delete")
-	}
-	step(t, m, runCmd(reload)) // run the reload command
 	if fc.calls["fam"] != before+1 {
 		t.Errorf("expected one reload, calls went %d -> %d", before, fc.calls["fam"])
 	}
@@ -608,67 +468,80 @@ func TestDelete_ConfirmAndSucceed(t *testing.T) {
 func TestDelete_ErrorShownInline(t *testing.T) {
 	fc := famContacts(contact("c1", "Alice", "parent"))
 	del := &fakeDeleter{err: errors.New("api down")}
-	m := newLoadedSpacesWith(t, twoSpaces(), fc, del, "u1")
-	m = openContacts(t, m)
+	h := newHarnessWith(t, twoSpaces(), fc, del, "u1")
+	openContacts(t, h)
 
-	m, cmd := step(t, m, key("delete")) // open confirm
-	m, _ = step(t, m, runCmd(cmd))      // deliver pushMsg
-	m, cmd = step(t, m, key("enter"))   // confirm → delete cmd (returns deleteErrMsg)
-	m, _ = step(t, m, runCmd(cmd))      // deliver the error
-	confirm, ok := m.top().(*confirmDeleteScreen)
+	h.Press("delete")
+	h.Press("enter")
+	confirm, ok := h.Model().Content().(*confirmDeleteScreen)
 	if !ok {
-		t.Fatalf("on error we must stay on confirm, got %T", m.top())
+		t.Fatalf("on error we must stay on confirm, got %T", h.Model().Content())
 	}
 	if confirm.err == nil {
 		t.Error("confirm screen should record the delete error")
 	}
-	if v := m.View().Content; !contains(v, "api down") {
-		t.Errorf("error should render, view = %q", v)
-	}
+	h.RequireContains("api down")
 }
 
 func TestDelete_CancelPops(t *testing.T) {
 	fc := famContacts(contact("c1", "Alice", "parent"))
-	m := newLoadedSpacesWith(t, twoSpaces(), fc, &fakeDeleter{}, "u1")
-	m = openContacts(t, m)
+	h := newHarnessWith(t, twoSpaces(), fc, &fakeDeleter{}, "u1")
+	openContacts(t, h)
 
-	m, cmd := step(t, m, key("delete")) // open confirm
-	m, _ = step(t, m, runCmd(cmd))      // deliver pushMsg
-	m, cmd = step(t, m, key("esc"))     // cancel
-	m, _ = step(t, m, runCmd(cmd))      // deliver popMsg
-	if _, ok := m.top().(*contactsScreen); !ok {
-		t.Fatalf("esc on confirm should pop to contacts, got %T", m.top())
+	h.Press("delete")
+	h.Press("esc")
+	if _, ok := h.Model().Content().(*contactsScreen); !ok {
+		t.Fatalf("esc on confirm should pop to contacts, got %T", h.Model().Content())
 	}
 }
 
 func TestDelete_FromCard(t *testing.T) {
 	fc := famContacts(contact("c1", "Alice", "parent"))
 	del := &fakeDeleter{}
-	m := newLoadedSpacesWith(t, twoSpaces(), fc, del, "u1")
-	m = openContacts(t, m)
-	m, cmd := step(t, m, key("enter")) // open the contact card
-	m, _ = step(t, m, runCmd(cmd))
-	if _, ok := m.top().(*contactCardScreen); !ok {
-		t.Fatalf("top is %T, want *contactCardScreen", m.top())
+	h := newHarnessWith(t, twoSpaces(), fc, del, "u1")
+	openContacts(t, h)
+	h.Press("enter")
+	if _, ok := h.Model().Content().(*contactCardScreen); !ok {
+		t.Fatalf("top is %T, want *contactCardScreen", h.Model().Content())
 	}
-	m, cmd = step(t, m, key("backspace")) // delete from the card
-	m, _ = step(t, m, runCmd(cmd))        // deliver pushMsg
-	if _, ok := m.top().(*confirmDeleteScreen); !ok {
-		t.Fatalf("backspace on card should open confirm, got %T", m.top())
+	h.Press("backspace")
+	if _, ok := h.Model().Content().(*confirmDeleteScreen); !ok {
+		t.Fatalf("backspace on card should open confirm, got %T", h.Model().Content())
 	}
 }
 
 func TestDelete_NilDeleterIsNoop(t *testing.T) {
 	fc := famContacts(contact("c1", "Alice", "parent"))
-	m := newLoadedSpacesWith(t, twoSpaces(), fc, nil, "u1")
-	m = openContacts(t, m)
-	m, cmd := step(t, m, key("delete"))
-	if _, ok := m.top().(*confirmDeleteScreen); ok {
+	h := newHarnessWith(t, twoSpaces(), fc, nil, "u1")
+	openContacts(t, h)
+	h.Press("delete")
+	if _, ok := h.Model().Content().(*confirmDeleteScreen); ok {
 		t.Fatal("with no deleter, delete must be a no-op")
-	}
-	if cmd != nil {
-		t.Errorf("no-op delete should produce no command, got %T", runCmd(cmd))
 	}
 }
 
-var _ list.Item = spaceItem{}
+func TestDelete_FromCard_SucceedsAndUnwindsPastCard(t *testing.T) {
+	fc := famContacts(contact("c1", "Alice", "parent"))
+	del := &fakeDeleter{}
+	h := newHarnessWith(t, twoSpaces(), fc, del, "u1")
+	openContacts(t, h)
+	h.Press("enter") // card
+	h.Press("delete")
+	h.Press("enter") // confirm
+	if _, ok := h.Model().Content().(*contactsScreen); !ok {
+		t.Fatalf("after delete from card top is %T, want *contactsScreen", h.Model().Content())
+	}
+	if len(del.calls) != 1 || del.calls[0] != "fam/c1" {
+		t.Fatalf("deleter calls = %v, want [fam/c1]", del.calls)
+	}
+}
+
+func TestNew_PublicConstructor(t *testing.T) {
+	m := New(fakeSpaces{spaces: twoSpaces()}, &fakeContacts{}, nil, "uid")
+	if m.Depth() != 1 {
+		t.Fatalf("Depth = %d, want 1", m.Depth())
+	}
+	if _, ok := m.Content().(*spacesScreen); !ok {
+		t.Fatalf("Content = %T, want *spacesScreen", m.Content())
+	}
+}
