@@ -30,7 +30,7 @@ require (
 	github.com/strongo/cli-helpers v0.25.0
 	github.com/strongo/deviceauth v0.1.2
 	github.com/strongo/strongoapp v0.31.64
-	github.com/tuigoff/tuigoff v0.2.1
+	github.com/tuigoff/tuigoff v0.3.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.46.0
 	google.golang.org/api v0.299.0

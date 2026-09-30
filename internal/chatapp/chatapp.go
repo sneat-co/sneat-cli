@@ -28,7 +28,7 @@ import (
 	"github.com/strongo/aichat/ai/decision"
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
-	"github.com/strongo/aichat/tui/mdrender"
+	"github.com/tuigoff/tuigoff/pkg/mdrender"
 	"golang.org/x/oauth2"
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/data"
