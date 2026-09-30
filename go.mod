@@ -25,11 +25,11 @@ require (
 	github.com/sneat-co/sneat-go-core v0.71.2
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/aichat v0.4.0
+	github.com/strongo/aichat v0.5.0
 	github.com/strongo/buildinfo v0.3.2
 	github.com/strongo/cli-helpers v0.25.0
 	github.com/strongo/deviceauth v0.1.2
-	github.com/strongo/strongo-tui v0.0.0
+	github.com/strongo/strongo-tui v0.2.0
 	github.com/strongo/strongoapp v0.31.64
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.46.0
@@ -144,8 +144,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260921155816-b14227669459 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
-
-// TEMPORARY local replaces for the tview-to-bubbletea cutover; must never land.
-replace github.com/strongo/strongo-tui => /Users/alex/projects/.worktrees/tview-to-bubbletea/github.com/strongo/strongo-tui
-
-replace github.com/strongo/aichat => /Users/alex/projects/.worktrees/tview-to-bubbletea/github.com/strongo/aichat
