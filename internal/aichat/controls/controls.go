@@ -3,7 +3,7 @@
 // DayCalendar, WeekCalendar, HappeningsList, TodoList, BuyList and
 // ContactCard render as ListBlock/CardBlock (below); ContactsGrid reuses
 // strongo-tui's pkg/grid -- the SAME generic grid DataTug uses -- wrapped
-// with aichat/tui/gridblock for the transcript (brief §3).
+// with tuigoff/pkg/gridblock for the transcript (brief §3).
 //
 // Models are semantic (a title, a subtitle, an EntityRef) rather than
 // terminal drawing instructions: the CLI (this package) owns turning a
@@ -22,9 +22,9 @@ import (
 
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui"
-	"github.com/strongo/aichat/tui/gridblock"
-	"github.com/strongo/aichat/tui/transcript"
 	"github.com/tuigoff/tuigoff/pkg/grid"
+	"github.com/tuigoff/tuigoff/pkg/gridblock"
+	"github.com/tuigoff/tuigoff/pkg/transcript"
 )
 
 // Item is one row of a ListBlock: a title, an optional one-line subtitle

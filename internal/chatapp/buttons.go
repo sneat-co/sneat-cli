@@ -17,7 +17,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/bots-go-framework/bots-go-core/botkb"
-	"github.com/strongo/aichat/tui/transcript"
+	"github.com/tuigoff/tuigoff/pkg/transcript"
 )
 
 // buttonActivatedMsg is emitted when Enter is pressed over a buttonsBlock's

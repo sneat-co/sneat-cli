@@ -10,7 +10,7 @@ import (
 
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui"
-	"github.com/strongo/aichat/tui/transcript"
+	"github.com/tuigoff/tuigoff/pkg/transcript"
 )
 
 func plain(s string) string { return ansi.Strip(s) }
