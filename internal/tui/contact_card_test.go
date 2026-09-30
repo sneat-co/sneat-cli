@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/strongo/strongo-tui/pkg/nav"
+	"github.com/tuigoff/tuigoff/pkg/nav"
 )
 
 func TestContactCard_DeleteWithNilDeleterIsNoop(t *testing.T) {

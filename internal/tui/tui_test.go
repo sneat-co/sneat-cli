@@ -8,9 +8,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/sneat-co/contactus/backend/dbo4contactus"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
-	"github.com/strongo/strongo-tui/pkg/nav"
-	"github.com/strongo/strongo-tui/pkg/nav/navtest"
 	"github.com/strongo/strongoapp/person"
+	"github.com/tuigoff/tuigoff/pkg/nav"
+	"github.com/tuigoff/tuigoff/pkg/nav/navtest"
 )
 
 // --- fakes ---

@@ -13,7 +13,7 @@ import (
 	"github.com/strongo/aichat/ai"
 	"github.com/strongo/aichat/ai/session"
 	"github.com/strongo/aichat/tui/chatshell"
-	"github.com/strongo/strongo-tui/pkg/grid"
+	"github.com/tuigoff/tuigoff/pkg/grid"
 
 	"github.com/sneat-co/sneat-cli/internal/aichat/controls"
 	"github.com/sneat-co/sneat-cli/internal/aichat/pipeline"
