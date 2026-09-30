@@ -1,6 +1,8 @@
 // Package tui implements the interactive terminal UI for browsing spaces,
 // their members and contacts, and a contact card. It is launched by
-// `sneat ui` or `sneat spaces --ui`.
+// `sneat ui` or `sneat spaces --ui`. Screens run inside the shared
+// strongo-tui navigation shell (pkg/nav): push/pop, alerts and the actions
+// bar come from the shell; list widgets come from pkg/widgets.
 package tui
 
 import (
@@ -9,9 +11,9 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/sneat-co/contactus/backend/dbo4contactus"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
+	"github.com/strongo/strongo-tui/pkg/nav"
 )
 
 // SpacesReader lists the signed-in user's spaces.
@@ -29,54 +31,33 @@ type ContactDeleter interface {
 	DeleteContact(ctx context.Context, spaceID, contactID string) error
 }
 
-// screen is one view in the navigation stack.
-type screen interface {
-	Init(m *Model) tea.Cmd
-	Update(m *Model, msg tea.Msg) (screen, tea.Cmd)
-	View(m *Model) string
-	Title() string
-}
+// Model is the root bubbletea model: the shared navigation shell.
+type Model = nav.Model
 
-// Model is the root bubbletea model. It owns a navigation stack of screens and
-// the shared data readers, and caches each space's contacts so switching
-// between the Members and Contacts views does not refetch.
-type Model struct {
+// app holds the shared readers, signed-in uid and the contacts cache that
+// screens share. Screens keep a pointer to it; the shell owns navigation.
+type app struct {
 	spaces   SpacesReader
 	contacts ContactsReader
 	deleter  ContactDeleter
 	uid      string
-	width    int
-	height   int
-	stack    []screen
 	cache    map[string][]firestoredb.Contact
 }
 
 // New builds the root model starting on the Spaces screen.
 func New(spaces SpacesReader, contacts ContactsReader, deleter ContactDeleter, uid string) Model {
-	return Model{
+	a := &app{
 		spaces:   spaces,
 		contacts: contacts,
 		deleter:  deleter,
 		uid:      uid,
-		stack:    []screen{newSpacesScreen()},
 		cache:    map[string][]firestoredb.Contact{},
 	}
+	return nav.New(
+		nav.Page{Title: "Spaces", Content: newSpacesScreen(a)},
+		nav.WithoutLogin(),
+	)
 }
-
-// Init kicks off the first screen's data load.
-func (m Model) Init() tea.Cmd {
-	if len(m.stack) == 0 {
-		return nil
-	}
-	return m.stack[0].Init(&m)
-}
-
-// navigation messages let a screen push a child or pop itself without owning the stack.
-type pushMsg struct{ s screen }
-type popMsg struct{}
-
-func push(s screen) tea.Cmd { return func() tea.Msg { return pushMsg{s} } }
-func pop() tea.Cmd          { return func() tea.Msg { return popMsg{} } }
 
 // data-load messages.
 type spacesLoadedMsg struct{ spaces map[string]any }
@@ -118,93 +99,6 @@ func loadContacts(r ContactsReader, spaceID string) tea.Cmd {
 		}
 		return contactsLoadedMsg{spaceID: spaceID, contacts: cs}
 	}
-}
-
-// Update handles global concerns (resize, hard quit, push/pop) and delegates
-// everything else to the top screen.
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case pushMsg:
-		m.stack = append(m.stack, msg.s)
-		return m, m.stack[len(m.stack)-1].Init(&m)
-	case popMsg:
-		if len(m.stack) > 1 {
-			m.stack = m.stack[:len(m.stack)-1]
-		}
-		return m, nil
-	case contactDeletedMsg:
-		// A delete succeeded: drop the stale cache and unwind past the confirm
-		// screen (and the contact card, if we came from it) back to the
-		// contacts list, then re-init it to reload the now-shorter list.
-		delete(m.cache, msg.spaceID)
-		for len(m.stack) > 1 {
-			if _, ok := m.stack[len(m.stack)-1].(*contactsScreen); ok {
-				break
-			}
-			m.stack = m.stack[:len(m.stack)-1]
-		}
-		return m, m.stack[len(m.stack)-1].Init(&m)
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+c" {
-			return m, tea.Quit
-		}
-	}
-	if len(m.stack) == 0 {
-		return m, nil
-	}
-	top := m.stack[len(m.stack)-1]
-	ns, cmd := top.Update(&m, msg)
-	m.stack[len(m.stack)-1] = ns
-	return m, cmd
-}
-
-// View renders the top screen. The interactive UI always takes over the
-// alternate screen (moved here from tea.WithAltScreen(), which bubbletea v2
-// replaced with this declarative field), leaving the terminal's normal
-// scrollback untouched while it runs.
-func (m Model) View() tea.View {
-	body := ""
-	if len(m.stack) > 0 {
-		body = m.stack[len(m.stack)-1].View(&m)
-	}
-	v := tea.NewView(body)
-	v.AltScreen = true
-	return v
-}
-
-// top returns the current screen (nil when the stack is empty). Test helper.
-func (m Model) top() screen {
-	if len(m.stack) == 0 {
-		return nil
-	}
-	return m.stack[len(m.stack)-1]
-}
-
-// --- styles ---
-
-var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	labelStyle  = lipgloss.NewStyle().Faint(true)
-	headerStyle = lipgloss.NewStyle().Padding(0, 1)
-	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	footerStyle = lipgloss.NewStyle().Faint(true).Padding(0, 1)
-)
-
-// footerHelp is the hint line for list screens without a delete action.
-const footerHelp = "↑/↓ move · enter open · / filter · esc/← back · ^c quit"
-
-// footerHelpContacts adds the delete hint for the contacts/members list.
-const footerHelpContacts = "↑/↓ move · enter open · del delete · / filter · esc/← back · ^c quit"
-
-// listHeight returns the height available for a list below a header.
-func (m Model) listHeight(headerLines int) int {
-	h := m.height - headerLines - 2 // header + footer
-	if h < 3 {
-		h = 3
-	}
-	return h
 }
 
 // --- roles helpers ---

@@ -246,7 +246,11 @@ func TestNewContactsGrid_BuildsPositionalRows(t *testing.T) {
 	if g.Rows()[0].Values[0] != "Alice" || g.Rows()[1].Values[0] != "Bob" {
 		t.Fatalf("rows = %+v", g.Rows())
 	}
-	if g.Rows()[0].Ref == nil || g.Rows()[0].Ref.Keys["contactID"] != "c1" {
+	if g.Rows()[0].Ref == nil {
+		t.Fatalf("row Ref = %+v", g.Rows()[0].Ref)
+	}
+	ref, ok := g.Rows()[0].Ref.(*session.EntityRef)
+	if !ok || ref.Keys["contactID"] != "c1" {
 		t.Fatalf("row Ref = %+v", g.Rows()[0].Ref)
 	}
 }

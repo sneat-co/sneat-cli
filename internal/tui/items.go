@@ -6,9 +6,10 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	"github.com/sneat-co/sneat-cli/internal/firestoredb"
+	"github.com/strongo/strongo-tui/pkg/widgets"
 )
 
-// spaceItem is a row in the Spaces list.
+// spaceItem is the data behind a Spaces list row.
 type spaceItem struct {
 	id, title, spaceType, status string
 	roles                        []string
@@ -20,8 +21,8 @@ func (i spaceItem) name() string {
 	}
 	return i.id
 }
-func (i spaceItem) Title() string { return i.name() }
-func (i spaceItem) Description() string {
+
+func (i spaceItem) detail() string {
 	parts := make([]string, 0, 2)
 	if i.spaceType != "" {
 		parts = append(parts, i.spaceType)
@@ -31,19 +32,8 @@ func (i spaceItem) Description() string {
 	}
 	return strings.Join(parts, " · ")
 }
-func (i spaceItem) FilterValue() string { return i.title + " " + i.id }
 
-// menuItem is a row in a Space's menu (Members / Contacts).
-type menuItem struct {
-	label, desc string
-	membersOnly bool
-}
-
-func (i menuItem) Title() string       { return i.label }
-func (i menuItem) Description() string { return i.desc }
-func (i menuItem) FilterValue() string { return i.label }
-
-// contactItem is a row in a Contacts list and the source for a contact card.
+// contactItem is the data behind a Contacts list row and a contact card.
 type contactItem struct {
 	id, title, ctype, gender, status, ageGroup string
 	roles                                      []string
@@ -51,8 +41,7 @@ type contactItem struct {
 	isSelf                                     bool // true when this contact is the signed-in user
 }
 
-func (i contactItem) Title() string { return i.title }
-func (i contactItem) Description() string {
+func (i contactItem) detail() string {
 	parts := []string{i.ctype}
 	if i.gender != "" {
 		parts = append(parts, i.gender)
@@ -62,25 +51,30 @@ func (i contactItem) Description() string {
 	}
 	return strings.Join(parts, " · ")
 }
-func (i contactItem) FilterValue() string { return i.title }
 
-// spaceItemsFrom builds sorted Spaces list items from a user's spaces map.
+// spaceItemsFrom builds sorted Spaces menu items from a user's spaces map.
 func spaceItemsFrom(spaces map[string]any) []list.Item {
 	items := make([]list.Item, 0, len(spaces))
 	for _, id := range sortedKeys(spaces) {
 		b, _ := spaces[id].(map[string]any)
-		items = append(items, spaceItem{
+		sp := spaceItem{
 			id:        id,
 			title:     str(b["title"]),
 			spaceType: str(b["type"]),
 			status:    str(b["status"]),
 			roles:     strList(b["roles"]),
+		}
+		items = append(items, widgets.MenuItem{
+			ID:     sp.id,
+			Label:  sp.name(),
+			Detail: sp.detail(),
+			Ref:    sp,
 		})
 	}
 	return items
 }
 
-// contactItemsFrom builds Contacts list items. When membersOnly is set it keeps
+// contactItemsFrom builds Contacts menu items. When membersOnly is set it keeps
 // only contacts holding the member role and strips the member role from each
 // row's displayed roles; otherwise every contact and role is shown. A contact
 // is marked isSelf when its UserID matches uid (the signed-in user).
@@ -98,7 +92,7 @@ func contactItemsFrom(contacts []firestoredb.Contact, membersOnly bool, uid stri
 			}
 			roles = withoutMemberRole(roles)
 		}
-		items = append(items, contactItem{
+		ci := contactItem{
 			id:       c.ID,
 			title:    contactTitle(d),
 			ctype:    string(d.Type),
@@ -109,6 +103,12 @@ func contactItemsFrom(contacts []firestoredb.Contact, membersOnly bool, uid stri
 			emails:   commChannelKeys(d.Emails),
 			phones:   commChannelKeys(d.Phones),
 			isSelf:   uid != "" && d.GetUserID() == uid,
+		}
+		items = append(items, widgets.MenuItem{
+			ID:     ci.id,
+			Label:  ci.title,
+			Detail: ci.detail(),
+			Ref:    ci,
 		})
 	}
 	return items
@@ -124,12 +124,17 @@ func commChannelKeys[V any](m map[string]V) []string {
 	return out
 }
 
-// newList builds a bubbles list with our default delegate and title.
-func newList(title string, items []list.Item) list.Model {
-	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
-	l.Title = title
-	l.SetShowHelp(false)
-	l.SetShowStatusBar(false)
-	l.DisableQuitKeybindings() // quitting is handled by the app (ctrl+c / esc at root)
+// newFilterList builds a widgets.List with filtering enabled.
+func newFilterList(id string, items ...list.Item) widgets.List {
+	l := widgets.NewList(id, items...)
+	l.SetFilteringEnabled(true)
 	return l
+}
+
+// menuItemRef returns the Ref of a MenuItem, or nil.
+func menuItemRef(item list.Item) any {
+	if mi, ok := item.(widgets.MenuItem); ok {
+		return mi.Ref
+	}
+	return nil
 }
