@@ -11,7 +11,7 @@ require (
 	cloud.google.com/go/firestore v1.26.0
 	github.com/bots-go-framework/bots-go-core v0.3.5
 	github.com/charmbracelet/x/ansi v0.11.8
-	github.com/dal-go/dalgo v0.88.0
+	github.com/dal-go/dalgo v0.88.1
 	github.com/dal-go/dalgo2firestore v0.10.28
 	github.com/dal-go/dalgo2openvaultdb v0.3.2
 	github.com/dal-go/record v0.1.4
@@ -21,15 +21,15 @@ require (
 	github.com/sneat-co/sneat-ai-backend v0.10.2
 	github.com/sneat-co/sneat-bots v0.30.31
 	github.com/sneat-co/sneat-core-modules v0.80.4
-	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.11
-	github.com/sneat-co/sneat-go-core v0.71.2
-	github.com/sneat-co/sneat-go-core/convospec v0.1.2
+	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.12
+	github.com/sneat-co/sneat-go-core v0.71.3
+	github.com/sneat-co/sneat-go-core/convospec v0.1.3
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/aichat v0.5.3
 	github.com/strongo/buildinfo v0.3.2
 	github.com/strongo/cli-helpers v0.25.0
 	github.com/strongo/deviceauth v0.1.2
-	github.com/strongo/strongoapp v0.31.64
+	github.com/strongo/strongoapp v0.31.65
 	github.com/tuigoff/tuigoff v0.4.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.46.0
@@ -69,7 +69,7 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/crediterra/money v0.4.0 // indirect
+	github.com/crediterra/money v0.4.2 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -109,7 +109,7 @@ require (
 	github.com/sneat-co/trackus/backend v0.1.8 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
-	github.com/strongo/analytics v0.2.9 // indirect
+	github.com/strongo/analytics v0.2.10 // indirect
 	github.com/strongo/decimal v0.1.3 // indirect
 	github.com/strongo/delaying v0.2.8 // indirect
 	github.com/strongo/i18n v0.8.23 // indirect
