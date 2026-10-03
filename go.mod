@@ -4,15 +4,15 @@ go 1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.0.9
+	charm.land/bubbletea/v2 v2.0.10
 	charm.land/fang/v2 v2.0.1
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.6
 	cloud.google.com/go/firestore v1.26.0
 	github.com/bots-go-framework/bots-go-core v0.3.5
 	github.com/charmbracelet/x/ansi v0.11.8
-	github.com/dal-go/dalgo v0.88.0
-	github.com/dal-go/dalgo2firestore v0.10.28
+	github.com/dal-go/dalgo v0.89.1
+	github.com/dal-go/dalgo2firestore v0.10.32
 	github.com/dal-go/dalgo2openvaultdb v0.3.2
 	github.com/dal-go/record v0.1.4
 	github.com/sneat-co/calendarius/backend v0.11.7
@@ -25,15 +25,15 @@ require (
 	github.com/sneat-co/sneat-go-core v0.71.2
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/aichat v0.5.3
+	github.com/strongo/aichat v0.8.0
 	github.com/strongo/buildinfo v0.3.2
-	github.com/strongo/cli-helpers v0.25.0
+	github.com/strongo/cli-helpers v0.26.0
 	github.com/strongo/deviceauth v0.1.2
-	github.com/strongo/strongoapp v0.31.64
-	github.com/tuigoff/tuigoff v0.4.0
+	github.com/strongo/strongoapp v0.31.66
+	github.com/tuigoff/tuigoff v0.5.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.46.0
-	google.golang.org/api v0.299.0
+	google.golang.org/api v0.300.0
 	google.golang.org/grpc v1.84.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -42,9 +42,9 @@ require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	charm.land/glamour/v2 v2.0.1 // indirect
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/auth v0.23.3 // indirect
-	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
-	cloud.google.com/go/compute/metadata v0.9.1 // indirect
+	cloud.google.com/go/auth v0.24.0 // indirect
+	cloud.google.com/go/auth/oauth2adapt v0.3.0 // indirect
+	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.29.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
@@ -81,7 +81,7 @@ require (
 	github.com/gofrs/flock v0.13.1 // indirect
 	github.com/google/s2a-go v0.1.10 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.22 // indirect
-	github.com/googleapis/gax-go/v2 v2.24.1 // indirect
+	github.com/googleapis/gax-go/v2 v2.26.2 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
