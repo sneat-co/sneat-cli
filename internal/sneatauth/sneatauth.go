@@ -82,7 +82,7 @@ func (c *Client) SignInWithPassword(ctx context.Context, email, password string)
 
 // SignInWithCustomToken exchanges a short-lived Firebase custom token for the
 // normal ID and refresh tokens used by the CLI. The custom token is supplied by
-// auth.sneat.co after a browser-approved device authorization and is never
+// oauth.sneat.co after a browser-approved device authorization and is never
 // persisted locally.
 func (c *Client) SignInWithCustomToken(ctx context.Context, token string) (Result, error) {
 	body, _ := json.Marshal(map[string]any{"token": token, "returnSecureToken": true})

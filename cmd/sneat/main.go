@@ -47,6 +47,10 @@ var osExit = os.Exit
 // name validation), it never touches the real OS keychain until Save/Load
 // is called on the result, so calling it here is safe and hermetic.
 // Production default/behaviour is unchanged.
+//
+// The account name is a fixed keyring label, not an endpoint: it predates the
+// OAuth server's move to oauth.sneat.co and stays unchanged so existing
+// sessions (including password logins) remain readable.
 var newKeyringStore = func() (deviceauth.Store, error) {
 	return deviceauth.NewKeyringStore("sneat-cli", "https://auth.sneat.co|sneat-cli")
 }
