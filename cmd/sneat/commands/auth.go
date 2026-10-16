@@ -34,7 +34,7 @@ func authLogin(env Env, insecureStorage *bool) *cobra.Command {
 	var email, password string
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Sign in through auth.sneat.co (or use email+password)",
+		Short: "Sign in through oauth.sneat.co (or use email+password)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg := configFromCmd(cmd, env.Getenv)
 			store, err := authStore(env, *insecureStorage)
@@ -53,14 +53,11 @@ func authLogin(env Env, insecureStorage *bool) *cobra.Command {
 				if env.NewDeviceFlow == nil {
 					return fmt.Errorf("device login is not configured")
 				}
-				issuer, err := cmd.Flags().GetString("auth-host")
+				flag, err := cmd.Flags().GetString("auth-host")
 				if err != nil {
 					return err
 				}
-				if issuer == "" {
-					issuer = deviceflow.DefaultIssuer
-				}
-				flow, err := env.NewDeviceFlow(cfg, issuer, store)
+				flow, err := env.NewDeviceFlow(cfg, deviceflow.ResolveIssuer(flag, env.Getenv), store)
 				if err != nil {
 					return err
 				}
@@ -150,7 +147,12 @@ func authLogout(env Env, insecureStorage *bool) *cobra.Command {
 			if sess.Issuer == "" || sess.ClientID == "" {
 				return store.Clear()
 			}
-			flow, err := env.NewDeviceFlow(configFromCmd(cmd, env.Getenv), sess.Issuer, store)
+			issuer := sess.Issuer
+			if issuer == deviceflow.PreviousIssuer {
+				// The OAuth server moved; its grant is revoked at the new host.
+				issuer = deviceflow.DefaultIssuer
+			}
+			flow, err := env.NewDeviceFlow(configFromCmd(cmd, env.Getenv), issuer, store)
 			if err != nil {
 				return err
 			}
