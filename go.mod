@@ -4,17 +4,17 @@ go 1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.0.9
+	charm.land/bubbletea/v2 v2.1.0
 	charm.land/fang/v2 v2.0.1
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.6
 	cloud.google.com/go/firestore v1.26.0
-	github.com/bots-go-framework/bots-go-core v0.3.5
-	github.com/charmbracelet/x/ansi v0.11.8
-	github.com/dal-go/dalgo v0.88.0
-	github.com/dal-go/dalgo2firestore v0.10.28
-	github.com/dal-go/dalgo2openvaultdb v0.3.2
-	github.com/dal-go/record v0.1.4
+	github.com/bots-go-framework/bots-go-core v0.3.6
+	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/dal-go/dalgo v0.95.1
+	github.com/dal-go/dalgo2firestore v0.10.37
+	github.com/dal-go/dalgo2openvaultdb v0.3.3
+	github.com/dal-go/record v0.1.5
 	github.com/sneat-co/calendarius/backend v0.11.7
 	github.com/sneat-co/contactus/backend v0.6.0
 	github.com/sneat-co/listus/backend v0.1.18
@@ -25,15 +25,15 @@ require (
 	github.com/sneat-co/sneat-go-core v0.71.2
 	github.com/sneat-co/sneat-go-core/convospec v0.1.2
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/aichat v0.5.3
+	github.com/strongo/aichat v0.15.0
 	github.com/strongo/buildinfo v0.3.2
-	github.com/strongo/cli-helpers v0.25.0
-	github.com/strongo/deviceauth v0.1.2
-	github.com/strongo/strongoapp v0.31.64
-	github.com/tuigoff/tuigoff v0.4.0
+	github.com/strongo/cli-helpers v0.27.1
+	github.com/strongo/deviceauth v0.1.3
+	github.com/strongo/strongoapp v0.31.70
+	github.com/tuigoff/tuigoff v0.8.0
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/term v0.46.0
-	google.golang.org/api v0.299.0
+	golang.org/x/term v0.47.0
+	google.golang.org/api v0.304.0
 	google.golang.org/grpc v1.84.0
 	gopkg.in/yaml.v3 v3.0.1
 )
