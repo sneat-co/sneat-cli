@@ -436,5 +436,3 @@ func TestRun_UninstallHelp(t *testing.T) {
 		t.Fatalf("run(uninstall --help) stdout = %q, want usage text containing uninstall", stdout.String())
 	}
 }
-
-

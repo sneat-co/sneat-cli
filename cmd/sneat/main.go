@@ -10,6 +10,7 @@ import (
 
 	"context"
 
+	"charm.land/fang/v2"
 	"github.com/sneat-co/sneat-cli/cmd/sneat/commands"
 	"github.com/sneat-co/sneat-cli/internal/browserauth"
 	"github.com/sneat-co/sneat-cli/internal/chat"
@@ -22,7 +23,6 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/sneat-co/sneat-cli/internal/tokensrc"
 	"github.com/sneat-co/sneat-cli/internal/tui"
-	"charm.land/fang/v2"
 	"github.com/strongo/aichat/ai/clientctx"
 	"github.com/strongo/buildinfo"
 	"github.com/strongo/buildinfo/fangcmd"
