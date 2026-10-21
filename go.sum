@@ -218,6 +218,8 @@ github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.8 h1:5OCEV+UjzOY/AqUBV
 github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.8/go.mod h1:YdSXtRm3Wn3KKiIxhdTTHoSlaU4JtFm+jTFubBDx2MU=
 github.com/sneat-co/sneat-ext-contracts/contactus v0.12.11 h1:UAo4hh5YB9qhsqd9FR7YyVDvMUIR/3/vVvzBs1zgxOM=
 github.com/sneat-co/sneat-ext-contracts/contactus v0.12.11/go.mod h1:Wz8hTMTrB06/TseQvlplzSS95rIH7Q44uOyQ+VCY6wA=
+github.com/sneat-co/sneat-ext-contracts/contactus v0.12.12 h1:NdMmVsNo3HZ8aYTHgFZhZlD1aYE7LgglrzzFTa8942M=
+github.com/sneat-co/sneat-ext-contracts/contactus v0.12.12/go.mod h1:Wz8hTMTrB06/TseQvlplzSS95rIH7Q44uOyQ+VCY6wA=
 github.com/sneat-co/sneat-ext-contracts/listus v0.0.11 h1:hegk8l/pbsYnS4MVoI7g+OtQWs73Ps7fVQAItomlMdc=
 github.com/sneat-co/sneat-ext-contracts/listus v0.0.11/go.mod h1:9mE/Rby9oa6CJRymFzfjPoyjelup+4bV9vfo0u8ePN4=
 github.com/sneat-co/sneat-ext-contracts/media v0.1.1 h1:3IAIiloQ7NRNgPTkpaVIIh4FnskrJVvz1gfszpKbkfc=
@@ -228,6 +230,8 @@ github.com/sneat-co/sneat-go-core v0.71.8 h1:k7rPqFXgp/qAwc7RAT6UnrWfJpFaTTHoKX0
 github.com/sneat-co/sneat-go-core v0.71.8/go.mod h1:6p/rnxYGLf+u31klrrty5uhA80+t/1tipBxUC9dq+hY=
 github.com/sneat-co/sneat-go-core/convospec v0.1.2 h1:Mf+dFH0c9c2GlpFWP+sc3KRuOmcK0fw4yPbMPXBMkL4=
 github.com/sneat-co/sneat-go-core/convospec v0.1.2/go.mod h1:Ju/+fggN9yJ1C7/q+o81qulm8xUBVUvAQ75yaohPTgE=
+github.com/sneat-co/sneat-go-core/convospec v0.1.3 h1:ZES65OiPETldWdnpaEllJ0cXBRfVkl/tmvNazVX6mvY=
+github.com/sneat-co/sneat-go-core/convospec v0.1.3/go.mod h1:mGoi3H0Uc5d4ZRGvInUV6+/3KmGgNFC9a7r04nYYuA0=
 github.com/sneat-co/sneat-translations v0.10.11 h1:oAy74OUcP/4EPeb/amMt1lJZxwDITb/TJn/TW9LGOMk=
 github.com/sneat-co/sneat-translations v0.10.11/go.mod h1:UMjy/jPUHdyJGH1lfGaiSZBYeuwRPfMMUKP9oGOZLZg=
 github.com/sneat-co/trackus/backend v0.1.8 h1:eJFS/kfuS9GObqkSUtsyTjhvkvyedGx3DBF5etLkYDk=
