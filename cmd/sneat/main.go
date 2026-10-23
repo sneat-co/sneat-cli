@@ -10,6 +10,7 @@ import (
 
 	"context"
 
+	"charm.land/fang/v2"
 	"github.com/sneat-co/sneat-cli/cmd/sneat/commands"
 	"github.com/sneat-co/sneat-cli/internal/browserauth"
 	"github.com/sneat-co/sneat-cli/internal/chat"
@@ -22,7 +23,6 @@ import (
 	"github.com/sneat-co/sneat-cli/internal/sneatauth"
 	"github.com/sneat-co/sneat-cli/internal/tokensrc"
 	"github.com/sneat-co/sneat-cli/internal/tui"
-	"charm.land/fang/v2"
 	"github.com/strongo/aichat/ai/clientctx"
 	"github.com/strongo/buildinfo"
 	"github.com/strongo/buildinfo/fangcmd"
@@ -47,6 +47,10 @@ var osExit = os.Exit
 // name validation), it never touches the real OS keychain until Save/Load
 // is called on the result, so calling it here is safe and hermetic.
 // Production default/behaviour is unchanged.
+//
+// The account name is a fixed keyring label, not an endpoint: it predates the
+// OAuth server's move to oauth.sneat.co and stays unchanged so existing
+// sessions (including password logins) remain readable.
 var newKeyringStore = func() (deviceauth.Store, error) {
 	return deviceauth.NewKeyringStore("sneat-cli", "https://auth.sneat.co|sneat-cli")
 }

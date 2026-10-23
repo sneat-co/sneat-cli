@@ -129,7 +129,6 @@ func (e errFS) Open(name string) (fs.File, error) {
 	return nil, e.err
 }
 
-
 func TestSkillsCommand_ConfigError(t *testing.T) {
 	prev := sneatSkillsFS
 	sneatSkillsFS = errFS{err: errors.New("injected fs error")}
@@ -171,7 +170,7 @@ func TestSneatSkillsSyncConfig_SubError(t *testing.T) {
 func TestSneatSkillsSyncConfig_DigestError(t *testing.T) {
 	prev := sneatSkillsFS
 	sneatSkillsFS = fstest.MapFS{
-		"skills": &fstest.MapFile{Mode: fs.ModeDir},
+		"skills":      &fstest.MapFile{Mode: fs.ModeDir},
 		"skills/test": &fstest.MapFile{Data: []byte("invalid"), Mode: 0},
 	}
 	t.Cleanup(func() { sneatSkillsFS = prev })
@@ -187,4 +186,3 @@ func TestSneatSkillsSyncConfig_DigestError(t *testing.T) {
 		t.Fatal("expected error from sneatSkillsSyncConfig when skills directory has no valid bundle digest, got nil")
 	}
 }
-
