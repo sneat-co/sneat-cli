@@ -22,14 +22,14 @@ require (
 	github.com/sneat-co/sneat-bots v0.30.31
 	github.com/sneat-co/sneat-core-modules v0.80.4
 	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.12
-	github.com/sneat-co/sneat-go-core v0.71.8
+	github.com/sneat-co/sneat-go-core v0.71.11
 	github.com/sneat-co/sneat-go-core/convospec v0.1.3
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/aichat v0.5.3
 	github.com/strongo/buildinfo v0.3.2
 	github.com/strongo/cli-helpers v0.25.0
 	github.com/strongo/deviceauth v0.1.2
-	github.com/strongo/strongoapp v0.31.70
+	github.com/strongo/strongoapp v0.31.71
 	github.com/tuigoff/tuigoff v0.4.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.46.0
@@ -111,11 +111,11 @@ require (
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/strongo/analytics v0.2.10 // indirect
 	github.com/strongo/decimal v0.1.3 // indirect
-	github.com/strongo/delaying v0.2.9 // indirect
+	github.com/strongo/delaying v0.2.10 // indirect
 	github.com/strongo/i18n v0.8.23 // indirect
-	github.com/strongo/logus v0.4.7 // indirect
+	github.com/strongo/logus v0.4.8 // indirect
 	github.com/strongo/random v0.0.3 // indirect
-	github.com/strongo/slice v0.3.13 // indirect
+	github.com/strongo/slice v0.3.14 // indirect
 	github.com/strongo/validation v0.0.16 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
