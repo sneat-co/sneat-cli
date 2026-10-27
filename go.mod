@@ -28,7 +28,7 @@ require (
 	github.com/strongo/aichat v0.5.3
 	github.com/strongo/buildinfo v0.3.2
 	github.com/strongo/cli-helpers v0.25.0
-	github.com/strongo/deviceauth v0.1.2
+	github.com/strongo/deviceauth v0.1.4-0.20261016205155-a31a74edf302
 	github.com/strongo/strongoapp v0.31.70
 	github.com/tuigoff/tuigoff v0.4.0
 	golang.org/x/oauth2 v0.37.0

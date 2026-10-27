@@ -20,10 +20,34 @@ import (
 )
 
 const (
-	DefaultIssuer   = "https://auth.sneat.co"
-	ClientID        = "sneat-cli"
-	customTokenType = "urn:ietf:params:oauth:token-type:firebase-custom-token"
+	// DefaultIssuer is the Sneat OAuth server. It moved here from
+	// PreviousIssuer, which now serves Firebase sign-in only.
+	DefaultIssuer = "https://oauth.sneat.co"
+	// PreviousIssuer is where the Sneat OAuth server answered before the move.
+	// With the default issuer, a stored device session bound to it is replaced
+	// by a fresh login, and requests fall back to it only while DefaultIssuer
+	// is not serving yet (DNS/connection failure or HTTP 404).
+	PreviousIssuer = "https://auth.sneat.co"
+	// IssuerEnv overrides the issuer for testing, below the --auth-host flag.
+	IssuerEnv = "SNEAT_AUTH_HOST"
+	// IssuerMovedNotice is printed once when login replaces a session saved
+	// for PreviousIssuer.
+	IssuerMovedNotice = "Sneat sign-in moved to oauth.sneat.co — starting a fresh sign-in."
+	ClientID          = "sneat-cli"
+	customTokenType   = "urn:ietf:params:oauth:token-type:firebase-custom-token"
 )
+
+// ResolveIssuer returns the authorization server for a command: the
+// --auth-host flag value, else $SNEAT_AUTH_HOST, else DefaultIssuer.
+func ResolveIssuer(flag string, getenv func(string) string) string {
+	if issuer := strings.TrimSpace(flag); issuer != "" {
+		return issuer
+	}
+	if issuer := strings.TrimSpace(getenv(IssuerEnv)); issuer != "" {
+		return issuer
+	}
+	return DefaultIssuer
+}
 
 var Scopes = []string{"openid", "profile", "sneat:spaces:read", "sneat:spaces:write"}
 
@@ -52,15 +76,20 @@ type SessionRefresher interface {
 }
 
 // Options supplies the process dependencies needed by the flow.
+// PreviousIssuers and FallbackIssuers are set to PreviousIssuer when Issuer
+// is DefaultIssuer; an override (flag or env) gets neither, so test traffic
+// never reaches production.
 type Options struct {
-	Issuer      string
-	HTTPClient  *http.Client
-	OpenBrowser func(string) error
-	Exchange    CustomTokenExchanger
-	Refresh     SessionRefresher
-	DeviceInfo  deviceauth.DeviceInfo
-	Store       session.SessionStore
-	Project     string
+	Issuer          string
+	PreviousIssuers []string
+	FallbackIssuers []string
+	HTTPClient      *http.Client
+	OpenBrowser     func(string) error
+	Exchange        CustomTokenExchanger
+	Refresh         SessionRefresher
+	DeviceInfo      deviceauth.DeviceInfo
+	Store           session.SessionStore
+	Project         string
 }
 
 // Flow runs browser-approved login for Sneat CLI.
@@ -75,6 +104,10 @@ func New(options Options) (*Flow, error) {
 	if options.Issuer == "" {
 		options.Issuer = DefaultIssuer
 	}
+	if options.Issuer == DefaultIssuer {
+		options.PreviousIssuers = []string{PreviousIssuer}
+		options.FallbackIssuers = []string{PreviousIssuer}
+	}
 	if options.HTTPClient == nil {
 		options.HTTPClient = http.DefaultClient
 	}
@@ -85,12 +118,14 @@ func New(options Options) (*Flow, error) {
 		return nil, errors.New("device flow: credential store is required")
 	}
 	client, err := deviceauth.NewClient(deviceauth.ClientConfig{
-		Issuer:         options.Issuer,
-		ClientID:       ClientID,
-		Scopes:         Scopes,
-		RequiredScopes: Scopes,
-		KeyringService: "sneat-cli",
-		KeyringAccount: "firebase-session",
+		Issuer:          options.Issuer,
+		ClientID:        ClientID,
+		Scopes:          Scopes,
+		RequiredScopes:  Scopes,
+		KeyringService:  "sneat-cli",
+		KeyringAccount:  "firebase-session",
+		PreviousIssuers: options.PreviousIssuers,
+		FallbackIssuers: options.FallbackIssuers,
 	})
 	if err != nil {
 		return nil, err
@@ -109,12 +144,13 @@ func New(options Options) (*Flow, error) {
 }
 
 // Run performs RFC 8628 authorization, exchanges its one-use custom token,
-// and verifies that auth.sneat.co bound the resulting Firebase identity to
+// and verifies that the authorization server bound the resulting Firebase identity to
 // Sneat CLI's audience.
 func (f *Flow) Run(ctx context.Context, output, errorOutput io.Writer) (sneatauth.Result, error) {
 	loginContext := context.WithValue(ctx, oauth2.HTTPClient, f.options.HTTPClient)
 	auth, err := f.client.DeviceLoginAndStore(loginContext, deviceauth.DeviceLoginOptions{
 		DeviceInfo: f.options.DeviceInfo, OpenBrowser: f.options.OpenBrowser, Output: output, ErrorOutput: errorOutput,
+		IssuerMovedNotice: IssuerMovedNotice,
 		TokenTransformer: func(ctx context.Context, token *oauth2.Token) (*oauth2.Token, error) {
 			if !strings.EqualFold(token.TokenType, customTokenType) {
 				return nil, errors.New("authorization server returned an unexpected token type")
@@ -143,6 +179,13 @@ func (f *Flow) Logout(ctx context.Context) error {
 		return errors.New("device flow is not configured")
 	}
 	credential, err := f.client.ScopedStore(f.store).Load()
+	var moved *deviceauth.IssuerMovedError
+	if errors.As(err, &moved) {
+		// A session saved before the server moved is revoked at the current
+		// issuer, which is the same service; a refreshed copy is saved there.
+		credential, err = moved.Credential, nil
+		credential.Issuer = f.client.Issuer()
+	}
 	if err != nil {
 		return err
 	}
