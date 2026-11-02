@@ -4,16 +4,16 @@ go 1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.1.0
+	charm.land/bubbletea/v2 v2.1.1
 	charm.land/fang/v2 v2.0.1
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.6
-	cloud.google.com/go/firestore v1.27.0
+	cloud.google.com/go/firestore v1.29.2
 	github.com/bots-go-framework/bots-go-core v0.3.7
 	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/dal-go/dalgo v0.95.1
-	github.com/dal-go/dalgo2firestore v0.10.40
-	github.com/dal-go/dalgo2openvaultdb v0.3.3
+	github.com/dal-go/dalgo v0.98.0
+	github.com/dal-go/dalgo2firestore v0.10.42
+	github.com/dal-go/dalgo2openvaultdb v0.4.7
 	github.com/dal-go/record v0.1.5
 	github.com/sneat-co/calendarius/backend v0.11.7
 	github.com/sneat-co/contactus/backend v0.6.0
@@ -25,16 +25,16 @@ require (
 	github.com/sneat-co/sneat-go-core v0.71.8
 	github.com/sneat-co/sneat-go-core/convospec v0.1.3
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/aichat v0.15.0
+	github.com/strongo/aichat v0.15.3
 	github.com/strongo/buildinfo v0.3.2
-	github.com/strongo/cli-helpers v0.27.1
-	github.com/strongo/deviceauth v0.1.3
-	github.com/strongo/strongoapp v0.31.71
+	github.com/strongo/cli-helpers v0.27.2
+	github.com/strongo/deviceauth v0.2.0
+	github.com/strongo/strongoapp v0.31.72
 	github.com/tuigoff/tuigoff v0.8.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.47.0
-	google.golang.org/api v0.306.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/api v0.310.0
+	google.golang.org/grpc v1.85.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -45,8 +45,8 @@ require (
 	cloud.google.com/go/auth v0.24.1-0.20261001053825-dbc26066f70a // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.3.0 // indirect
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
-	cloud.google.com/go/longrunning v1.2.0 // indirect
-	github.com/RoaringBitmap/roaring/v2 v2.29.0 // indirect
+	cloud.google.com/go/longrunning v1.3.0 // indirect
+	github.com/RoaringBitmap/roaring/v2 v2.30.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/alexsergivan/transliterator v1.0.1 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.61.0 // indirect
@@ -72,7 +72,7 @@ require (
 	github.com/crediterra/money v0.4.2 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/evertras/bubble-table v0.23.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -80,8 +80,8 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gofrs/flock v0.13.1 // indirect
 	github.com/google/s2a-go v0.1.11 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.3.23 // indirect
-	github.com/googleapis/gax-go/v2 v2.26.2 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.3.24 // indirect
+	github.com/googleapis/gax-go/v2 v2.27.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
@@ -95,6 +95,7 @@ require (
 	github.com/muesli/mango-cobra v1.2.0 // indirect
 	github.com/muesli/mango-pflag v0.1.0 // indirect
 	github.com/muesli/roff v0.1.0 // indirect
+	github.com/openvaultdb/openvaultdb-go v0.26.3 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
@@ -115,8 +116,8 @@ require (
 	github.com/strongo/i18n v0.8.23 // indirect
 	github.com/strongo/logus v0.4.7 // indirect
 	github.com/strongo/random v0.0.3 // indirect
-	github.com/strongo/slice v0.3.13 // indirect
-	github.com/strongo/validation v0.0.16 // indirect
+	github.com/strongo/slice v0.3.14 // indirect
+	github.com/strongo/validation v0.0.17 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
@@ -128,9 +129,10 @@ require (
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.70.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
-	go.opentelemetry.io/otel v1.45.0 // indirect
-	go.opentelemetry.io/otel/metric v1.45.0 // indirect
-	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.opentelemetry.io/otel v1.47.0 // indirect
+	go.opentelemetry.io/otel/log v1.47.0 // indirect
+	go.opentelemetry.io/otel/metric v1.47.0 // indirect
+	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
@@ -139,8 +141,8 @@ require (
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
-	google.golang.org/genproto v0.0.0-20260803160001-6ac0973c030d // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
+	google.golang.org/genproto v0.0.0-20261012220534-4341edf3f941 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
