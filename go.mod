@@ -11,7 +11,7 @@ require (
 	cloud.google.com/go/firestore v1.27.0
 	github.com/bots-go-framework/bots-go-core v0.3.7
 	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/dal-go/dalgo v0.95.1
+	github.com/dal-go/dalgo v0.95.4
 	github.com/dal-go/dalgo2firestore v0.10.40
 	github.com/dal-go/dalgo2openvaultdb v0.3.3
 	github.com/dal-go/record v0.1.5
@@ -22,14 +22,14 @@ require (
 	github.com/sneat-co/sneat-bots v0.30.31
 	github.com/sneat-co/sneat-core-modules v0.80.4
 	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.12
-	github.com/sneat-co/sneat-go-core v0.71.8
+	github.com/sneat-co/sneat-go-core v0.72.2
 	github.com/sneat-co/sneat-go-core/convospec v0.1.3
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/aichat v0.15.0
 	github.com/strongo/buildinfo v0.3.2
 	github.com/strongo/cli-helpers v0.27.1
 	github.com/strongo/deviceauth v0.1.3
-	github.com/strongo/strongoapp v0.31.71
+	github.com/strongo/strongoapp v0.31.72
 	github.com/tuigoff/tuigoff v0.8.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.47.0
@@ -46,7 +46,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.3.0 // indirect
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
-	github.com/RoaringBitmap/roaring/v2 v2.29.0 // indirect
+	github.com/RoaringBitmap/roaring/v2 v2.30.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/alexsergivan/transliterator v1.0.1 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.61.0 // indirect
@@ -109,14 +109,14 @@ require (
 	github.com/sneat-co/trackus/backend v0.1.8 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
-	github.com/strongo/analytics v0.2.10 // indirect
+	github.com/strongo/analytics v0.2.12 // indirect
 	github.com/strongo/decimal v0.1.3 // indirect
-	github.com/strongo/delaying v0.2.9 // indirect
+	github.com/strongo/delaying v0.2.10 // indirect
 	github.com/strongo/i18n v0.8.23 // indirect
-	github.com/strongo/logus v0.4.7 // indirect
+	github.com/strongo/logus v0.4.8 // indirect
 	github.com/strongo/random v0.0.3 // indirect
-	github.com/strongo/slice v0.3.13 // indirect
-	github.com/strongo/validation v0.0.16 // indirect
+	github.com/strongo/slice v0.3.14 // indirect
+	github.com/strongo/validation v0.0.17 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
