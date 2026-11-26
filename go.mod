@@ -1,6 +1,6 @@
 module github.com/sneat-co/sneat-cli
 
-go 1.27.0
+go 1.27.2
 
 require (
 	charm.land/bubbles/v2 v2.2.1
@@ -9,7 +9,7 @@ require (
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.6
 	cloud.google.com/go/firestore v1.29.2
-	github.com/bots-go-framework/bots-go-core v0.3.7
+	github.com/bots-go-framework/bots-go-core v0.3.8
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/dal-go/dalgo v0.102.6
 	github.com/dal-go/dalgo2firestore v0.11.4
@@ -18,10 +18,10 @@ require (
 	github.com/sneat-co/calendarius/backend v0.11.7
 	github.com/sneat-co/contactus/backend v0.6.0
 	github.com/sneat-co/listus/backend v0.1.18
-	github.com/sneat-co/sneat-ai-backend v0.10.2
-	github.com/sneat-co/sneat-bots v0.30.31
-	github.com/sneat-co/sneat-core-modules v0.80.4
-	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.13
+	github.com/sneat-co/sneat-ai-backend v0.11.8
+	github.com/sneat-co/sneat-bots v0.30.57
+	github.com/sneat-co/sneat-core-modules v0.128.4
+	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.14-0.20261115060709-e43f72be49fe
 	github.com/sneat-co/sneat-go-core v0.81.7
 	github.com/sneat-co/sneat-go-core/convospec v0.1.3
 	github.com/spf13/cobra v1.10.2
@@ -48,7 +48,7 @@ require (
 	github.com/RoaringBitmap/roaring/v2 v2.30.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/alexsergivan/transliterator v1.0.1 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.61.0 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.80.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -84,7 +84,6 @@ require (
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
@@ -101,19 +100,19 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
 	github.com/sneat-co/assetus/backend v0.11.2 // indirect
-	github.com/sneat-co/commitius/backend v0.9.6 // indirect
+	github.com/sneat-co/commitius/backend v0.17.0 // indirect
 	github.com/sneat-co/sneat-ext-contracts/calendarius v0.27.8 // indirect
-	github.com/sneat-co/sneat-ext-contracts/listus v0.0.11 // indirect
-	github.com/sneat-co/sneat-ext-contracts/media v0.1.1 // indirect
-	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.3 // indirect
-	github.com/sneat-co/sneat-translations v0.10.11 // indirect
+	github.com/sneat-co/sneat-ext-contracts/listus v0.0.12 // indirect
+	github.com/sneat-co/sneat-ext-contracts/media v0.1.2 // indirect
+	github.com/sneat-co/sneat-ext-contracts/trackus v0.1.4 // indirect
+	github.com/sneat-co/sneat-translations v0.10.18 // indirect
 	github.com/sneat-co/trackus/backend v0.1.8 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/strongo/analytics v0.2.13 // indirect
-	github.com/strongo/decimal v0.1.3 // indirect
+	github.com/strongo/decimal v0.1.5 // indirect
 	github.com/strongo/delaying v0.2.11 // indirect
-	github.com/strongo/i18n v0.8.23 // indirect
+	github.com/strongo/i18n v0.8.25 // indirect
 	github.com/strongo/logus v0.4.9 // indirect
 	github.com/strongo/random v0.0.3 // indirect
 	github.com/strongo/slice v0.3.15 // indirect

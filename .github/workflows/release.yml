@@ -55,7 +55,7 @@ jobs:
       # stop a release. datatug-cli shipped v0.13.2 that way. Names
       # the workflow's `name:`, not its filename.
       require_workflow_success: 'Go CI'
-      go_version: '1.27.0'
+      go_version: '1.27.4'
       # sneat-cli imports several private sneat-co Go modules (sneat-bots,
       # sneat-core-modules, calendarius/backend, contactus/backend, ...).
       # GoReleaser's `go mod tidy` before-hook needs GOPRIVATE + GH_TOKEN to
