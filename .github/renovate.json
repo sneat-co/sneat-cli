@@ -3,5 +3,6 @@
   "extends": [
     "github>sneat-co/sneat-renovate-go",
     "github>sneat-co/cicd"
-  ]
+  ],
+  "postUpdateOptions": ["gomodTidy"]
 }
