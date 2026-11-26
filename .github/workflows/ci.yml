@@ -33,6 +33,7 @@ jobs:
       # computed the same proposed version, found it already tagged, and
       # published nothing — a green run with no release.
       disable-version-bumping: true
+      go_version: '1.27.4'
       GOPRIVATE: github.com/sneat-co
       code_coverage: true
       min_test_coverage_percent: 100
