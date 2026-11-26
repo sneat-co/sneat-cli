@@ -12,8 +12,8 @@ require (
 	github.com/bots-go-framework/bots-go-core v0.3.7
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/dal-go/dalgo v0.102.6
-	github.com/dal-go/dalgo2firestore v0.11.2
-	github.com/dal-go/dalgo2openvaultdb v0.4.15
+	github.com/dal-go/dalgo2firestore v0.11.4
+	github.com/dal-go/dalgo2openvaultdb v0.4.16
 	github.com/dal-go/record v0.1.5
 	github.com/sneat-co/calendarius/backend v0.11.7
 	github.com/sneat-co/contactus/backend v0.6.0
@@ -21,19 +21,19 @@ require (
 	github.com/sneat-co/sneat-ai-backend v0.10.2
 	github.com/sneat-co/sneat-bots v0.30.31
 	github.com/sneat-co/sneat-core-modules v0.80.4
-	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.12
+	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.13
 	github.com/sneat-co/sneat-go-core v0.81.7
 	github.com/sneat-co/sneat-go-core/convospec v0.1.3
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/aichat v0.15.6
-	github.com/strongo/buildinfo v0.3.5
+	github.com/strongo/buildinfo v0.3.6
 	github.com/strongo/cli-helpers v0.27.2
 	github.com/strongo/deviceauth v0.2.2
 	github.com/strongo/strongoapp v0.31.74
 	github.com/tuigoff/tuigoff v0.8.0
 	golang.org/x/oauth2 v0.38.0
-	golang.org/x/term v0.47.0
-	google.golang.org/api v0.315.0
+	golang.org/x/term v0.48.0
+	google.golang.org/api v0.317.0
 	google.golang.org/grpc v1.85.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -135,14 +135,14 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	go.yaml.in/yaml/v4 v4.0.0 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/genproto v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261104224025-d1e00e9f33ab // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
