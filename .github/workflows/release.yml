@@ -20,7 +20,9 @@ on:
 
 # One release at a time; a second push queues instead of racing the first.
 concurrency:
-  group: release
+  # Per ref: a tag-push release must never be replaced by a main-push one
+  # (one pending run per group), or the tag is never published.
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -40,7 +42,7 @@ jobs:
     # macos_signing_preflight job, gated exactly on this input. Bump this
     # pin deliberately, and re-verify the preflight job is still wired,
     # rather than tracking `@v1`.
-    uses: strongo/cicd/.github/workflows/release.yml@v1.25.2
+    uses: strongo/cicd/.github/workflows/release.yml@v1.25.6
     permissions:
       contents: write
       # Lets the require_workflow_success guard read the quality
