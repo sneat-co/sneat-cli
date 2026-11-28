@@ -1,0 +1,13 @@
+version: 1
+rules:
+  - purpose: "Most pull requests: this file asks nobody; GitHub's own rules and required CI checks decide."
+    paths: ["**"]
+    verdict: { claude: comments, seats: 0 }
+    advisory: ["claude/code_review"]  # without this line, Code Review no longer starts automatically
+  - purpose: "A Renovate pull request that someone else also committed to (the renovate-copilot-fix workflow) is blocked until Claude's review passes; then Claude approves. With no review result, one person decides."
+    paths: ["**"]
+    if: "pr/opened_by = bot:renovate AND ANY pr/authors != bot:renovate"
+    verdict: { claude: blocks }
+    override:
+      - { if: "claude/code_review = error OR claude/code_review = incomplete", verdict: { claude: comments, seats: 1 } }
+      - { if: "claude/code_review = pass", verdict: { claude: approves, seats: 0 } }
