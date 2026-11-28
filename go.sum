@@ -104,6 +104,8 @@ github.com/crediterra/money v0.4.2 h1:jywtH44L+BwPV3Yy+VxAmvk18eayaUXfVxvz1dnk5w
 github.com/crediterra/money v0.4.2/go.mod h1:v1LjiUrGIVmK0L070iz4ghVDhqVGiyd9vNX0XJOLGak=
 github.com/dal-go/dalgo v0.102.6 h1:iBogUOXpGe6N9ZvSnyWILLZ1YYPnJrWFvd6wiyjBkuY=
 github.com/dal-go/dalgo v0.102.6/go.mod h1:KmMQvq9i/7sz2bCH859CbQqgx2XalOi7n1oWMhWMYlc=
+github.com/dal-go/dalgo v0.104.0 h1:IJ6vT7vUBFqSepqeHhtT6+3xPqeICwiizzemIeUELpc=
+github.com/dal-go/dalgo v0.104.0/go.mod h1:KmMQvq9i/7sz2bCH859CbQqgx2XalOi7n1oWMhWMYlc=
 github.com/dal-go/dalgo2firestore v0.11.4 h1:tAPIBI3boWEZ+8epyiKLCjOw2RqNZyXs7dFiesNbbwY=
 github.com/dal-go/dalgo2firestore v0.11.4/go.mod h1:94BvvHdA4UAt7b0oh/VSNDCpH0mlhvkh94grGuYTP6s=
 github.com/dal-go/dalgo2http v0.4.0 h1:vtkwd8x88kP4XLEZCt7kTFa5xJfQojJWJRKBHGEBg0k=
@@ -271,6 +273,8 @@ github.com/sneat-co/sneat-ext-contracts/trackus v0.1.3 h1:cuLqTDEsqEFm0NEsq9mDyy
 github.com/sneat-co/sneat-ext-contracts/trackus v0.1.3/go.mod h1:2NwlFiOgm86h7enEAOXekQ5eqJwZf1SxQ18rOffQS40=
 github.com/sneat-co/sneat-go-core v0.81.7 h1:8s5G++1/5v+h7Uy0MrcDR/k+esRkWXh525xYkRgRXh8=
 github.com/sneat-co/sneat-go-core v0.81.7/go.mod h1:PuRVej99/nnd3xc1n//PSfPBJhNxRYxWSR/MVZAepbk=
+github.com/sneat-co/sneat-go-core v0.85.2 h1:yEaX7jBJA+3zyGYycxne9GK1w21q5+pvf66i22sZgPE=
+github.com/sneat-co/sneat-go-core v0.85.2/go.mod h1:rmxXOpYy9MlU6wKV61q8KCx+Sb+nZKpgkmmQe4DClCY=
 github.com/sneat-co/sneat-go-core/convospec v0.1.3 h1:ZES65OiPETldWdnpaEllJ0cXBRfVkl/tmvNazVX6mvY=
 github.com/sneat-co/sneat-go-core/convospec v0.1.3/go.mod h1:mGoi3H0Uc5d4ZRGvInUV6+/3KmGgNFC9a7r04nYYuA0=
 github.com/sneat-co/sneat-translations v0.10.11 h1:oAy74OUcP/4EPeb/amMt1lJZxwDITb/TJn/TW9LGOMk=
@@ -316,6 +320,8 @@ github.com/strongo/strongoapp v0.31.74 h1:sDC4AdcE0cPlTrwUMCACaA9UmjwEghddz4GJMa
 github.com/strongo/strongoapp v0.31.74/go.mod h1:y+O27BZplOl2wUd0778tM9NxJyqz6BsaCi51IBrUO1I=
 github.com/strongo/validation v0.0.18 h1:RlSCPsgAYaNU+jl4XDhbaQQn4fNoyNGIUd/fh5EcfXM=
 github.com/strongo/validation v0.0.18/go.mod h1:lyS4a8AddH+6xB7omJN6Ycx/oetqTkQD7vJvDQ71+EI=
+github.com/strongo/validation v0.0.19 h1:oUGIS2OAlHnl7cR8U5xJVZWYy8NYcfegTVy1dTGx50Y=
+github.com/strongo/validation v0.0.19/go.mod h1:lyS4a8AddH+6xB7omJN6Ycx/oetqTkQD7vJvDQ71+EI=
 github.com/technoweenie/multipartstreamer v1.0.1 h1:XRztA5MXiR1TIRHxH2uNxXxaIkKQDeX7m2XsSOlQEnM=
 github.com/technoweenie/multipartstreamer v1.0.1/go.mod h1:jNVxdtShOxzAsukZwTSw6MDx5eUJoiEBsSvzDU9uzog=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
