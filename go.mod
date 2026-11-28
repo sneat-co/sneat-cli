@@ -11,7 +11,7 @@ require (
 	cloud.google.com/go/firestore v1.29.2
 	github.com/bots-go-framework/bots-go-core v0.3.7
 	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/dal-go/dalgo v0.102.6
+	github.com/dal-go/dalgo v0.104.0
 	github.com/dal-go/dalgo2firestore v0.11.4
 	github.com/dal-go/dalgo2openvaultdb v0.4.16
 	github.com/dal-go/record v0.1.5
@@ -22,7 +22,7 @@ require (
 	github.com/sneat-co/sneat-bots v0.30.31
 	github.com/sneat-co/sneat-core-modules v0.80.4
 	github.com/sneat-co/sneat-ext-contracts/contactus v0.12.13
-	github.com/sneat-co/sneat-go-core v0.81.7
+	github.com/sneat-co/sneat-go-core v0.85.2
 	github.com/sneat-co/sneat-go-core/convospec v0.1.3
 	github.com/spf13/cobra v1.10.2
 	github.com/strongo/aichat v0.15.6
@@ -117,7 +117,7 @@ require (
 	github.com/strongo/logus v0.4.9 // indirect
 	github.com/strongo/random v0.0.3 // indirect
 	github.com/strongo/slice v0.3.15 // indirect
-	github.com/strongo/validation v0.0.18 // indirect
+	github.com/strongo/validation v0.0.19 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
