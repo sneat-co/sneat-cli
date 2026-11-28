@@ -3,17 +3,17 @@ module github.com/sneat-co/sneat-cli
 go 1.27.0
 
 require (
-	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.1.1
+	charm.land/bubbles/v2 v2.2.2
+	charm.land/bubbletea/v2 v2.2.0
 	charm.land/fang/v2 v2.0.1
 	charm.land/huh/v2 v2.0.3
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.1
 	cloud.google.com/go/firestore v1.29.2
 	github.com/bots-go-framework/bots-go-core v0.3.7
-	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/dal-go/dalgo v0.102.6
+	github.com/charmbracelet/x/ansi v0.12.0
+	github.com/dal-go/dalgo v0.104.0
 	github.com/dal-go/dalgo2firestore v0.11.4
-	github.com/dal-go/dalgo2openvaultdb v0.4.16
+	github.com/dal-go/dalgo2openvaultdb v0.4.17
 	github.com/dal-go/record v0.1.5
 	github.com/sneat-co/calendarius/backend v0.11.7
 	github.com/sneat-co/contactus/backend v0.6.0
@@ -25,12 +25,12 @@ require (
 	github.com/sneat-co/sneat-go-core v0.81.7
 	github.com/sneat-co/sneat-go-core/convospec v0.1.3
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/aichat v0.15.6
+	github.com/strongo/aichat v0.15.7
 	github.com/strongo/buildinfo v0.3.6
 	github.com/strongo/cli-helpers v0.27.2
 	github.com/strongo/deviceauth v0.2.2
 	github.com/strongo/strongoapp v0.31.74
-	github.com/tuigoff/tuigoff v0.8.0
+	github.com/tuigoff/tuigoff v0.8.1
 	golang.org/x/oauth2 v0.38.0
 	golang.org/x/term v0.48.0
 	google.golang.org/api v0.317.0
@@ -86,7 +86,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
-	github.com/mattn/go-runewidth v0.0.30 // indirect
+	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
@@ -98,7 +98,7 @@ require (
 	github.com/openvaultdb/openvaultdb-go v0.26.3 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/rivo/uniseg v0.4.8-0.20261110175422-3a370411ca06 // indirect
 	github.com/sahilm/fuzzy v0.1.3 // indirect
 	github.com/sneat-co/assetus/backend v0.11.2 // indirect
 	github.com/sneat-co/commitius/backend v0.9.6 // indirect
